@@ -40,4 +40,5 @@ func init() {
 	container.Put(NewEvent, container.Name("api.event"))
 	container.Put(NewChart, container.Name("api.chart"))
 	container.Put(NewDashboard, container.Name("api.dashboard"))
+	container.Put(NewHost, container.Name("api.host"))
 }

@@ -41,6 +41,10 @@ export class SystemApi {
     summarize() {
         return ajax.get<Summary>('/system/summarize')
     }
+
+    mode() {
+        return ajax.get<{ mode: string }>('/system/mode')
+    }
 }
 
 export default new SystemApi

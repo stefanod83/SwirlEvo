@@ -1,52 +1,56 @@
 # SWIRL
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/cuigh/swirl.svg)](https://hub.docker.com/r/cuigh/swirl/)
-[![Swirl](https://goreportcard.com/badge/cuigh/swirl)](https://goreportcard.com/report/cuigh/swirl)
+**Swirl** is a web management tool for Docker, supporting both **Swarm cluster** and **Standalone host** modes.
 
-**Swirl** is a web management tool for Docker, focused on swarm cluster.
-
-> Warning: v1.0+ is not fully compatible with previous versions, it is recommended to redeploy instead of upgrading directly.
+> Version 2.0 introduces dual-mode operation: manage Docker Swarm clusters (existing) or standalone Docker hosts (new). All dependencies updated to modern versions.
 
 ## Features
 
-* Swarm components management
-* Image and container management
+* **Dual mode**: Swarm cluster management OR standalone Docker host management
+* Swarm components management (services, tasks, stacks, configs, secrets, nodes)
+* Image and container management (per-host in standalone mode)
 * Compose management with deployment support
-* Service monitoring based on [Prometheus](https://hub.docker.com/r/cuigh/prometheus/) and [cadvisor](https://github.com/google/cadvisor)
+* **Standalone host management**: add remote Docker hosts via TCP, TLS, or socket
+* Service monitoring based on Prometheus and cadvisor
 * Service auto scaling
 * LDAP authentication support
 * Full permission control based on RBAC model
-* Scale out as you want
-* Multiple language support
-* And more...
+* Multiple language support (English, Chinese)
 
-## Snapshots
+## Operating Modes
 
-### Home
+### Swarm Mode (default)
 
-![Home](docs/images/home.png)
+Traditional Docker Swarm cluster management. Requires Docker Swarm initialized on at least one node. Uses socat agent containers for node-level access.
 
-### Service list
+### Standalone Mode
 
-![Service list](docs/images/services.png)
+Manage individual Docker hosts without Swarm. Add remote hosts via the UI with different connection methods:
 
-### Service stats
+- **Docker Socket**: Local Unix socket (`unix:///var/run/docker.sock`)
+- **TCP**: Remote Docker daemon (`tcp://192.168.1.100:2375`)
+- **TCP + TLS**: Secure remote connection with certificates
+- **SSH**: SSH tunnel to remote Docker daemon
 
-![Service stats](docs/images/service-stats.png)
-
-### Stack list
-
-![Stack list](docs/images/stacks.png)
-
-### Settings
-
-![Setting](docs/images/settings.png)
+Set `MODE=standalone` environment variable to activate.
 
 ## Configuration
 
-### With config file
+### Environment Variables
 
-All options can be set with `config/app.yml`.
+| Name               | Default                          | Description                        |
+|--------------------|----------------------------------|------------------------------------|
+| MODE               | swarm                            | Operating mode: `swarm` or `standalone` |
+| DB_TYPE            | mongo                            | Storage engine: `mongo` or `bolt`  |
+| DB_ADDRESS         | mongodb://localhost:27017/swirl  | Database connection string         |
+| TOKEN_EXPIRY       | 30m                              | JWT token lifetime                 |
+| DOCKER_ENDPOINT    | (from env)                       | Docker daemon endpoint             |
+| DOCKER_API_VERSION | (auto-negotiated)                | Docker API version (optional)      |
+| AGENTS             | (empty)                          | Swarm agent services (swarm mode)  |
+
+### Config File
+
+All options can be set with `config/app.yml`:
 
 ```yaml
 name: swirl
@@ -54,15 +58,13 @@ banner: false
 
 web:
   entries:
-    - address: :8002
+    - address: :8001
   authorize: '?'
 
 swirl:
+  mode: swarm        # or "standalone"
   db_type: mongo
   db_address: mongodb://localhost:27017/swirl
-#  token_expiry: 30m
-#  docker_api_version: '1.41'
-#  docker_endpoint: tcp://docker-proxy:2375
 
 log:
   loggers:
@@ -74,113 +76,93 @@ log:
     layout: '[{L}]{T}: {M}{N}'
 ```
 
-### With environment variables
-
-Only these options can be set by environment variables for now.
-
-| Name               | Value                            |
-|--------------------|----------------------------------|
-| DB_TYPE            | mongo(default),bolt              |
-| DB_ADDRESS         | mongodb://localhost:27017/swirl  |
-| TOKEN_EXPIRY       | 30m                              |
-| DOCKER_ENDPOINT    | tcp://docker-proxy:2375          |
-| DOCKER_API_VERSION | 1.41                             |
-
-### With swarm config
-
-Docker support mounting configuration file through swarm from v17.06, so you can store your config in swarm and mount it to your program.
-
 ## Deployment
 
-Swirl support two storage engines now: mongo and bolt. **bolt** is suitable for development environment, **Swirl** can only deploy one replica if you use **bolt** storage engine.
+### Standalone Mode — Docker Compose (simplest)
 
-### Standalone
-
-Just copy the swirl binary and config directory to the host, and run it.
+Single container with BoltDB (no external database needed):
 
 ```bash
-./swirl
+docker compose -f compose.standalone-bolt.yml up -d
 ```
 
-### Docker
+With MongoDB:
 
-* Use **bolt** storage engine
+```bash
+docker compose -f compose.standalone.yml up -d
+```
+
+### Standalone Mode — Docker Run
 
 ```bash
 docker run -d -p 8001:8001 \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /data/swirl:/data/swirl \
+    -v /data/swirl:/data \
+    -e MODE=standalone \
     -e DB_TYPE=bolt \
-    -e DB_ADDRESS=/data/swirl \
+    -e DB_ADDRESS=/data \
     --name=swirl \
     cuigh/swirl
 ```
 
-* Use **MongoDB** storage engine
+### Swarm Mode — Docker Stack
 
 ```bash
-docker run -d -p 8001:8001 \
-    --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
-    -e DB_TYPE=mongo \
-    -e DB_ADDRESS=mongodb://localhost:27017/swirl \
-    --name=swirl \
-    cuigh/swirl
+docker stack deploy -c compose.yml swirl
 ```
 
-### Docker swarm
-
-* Use **bolt** storage engine
-
-```bash
-docker service create \
-  --name=swirl \
-  --publish=8001:8001/tcp \
-  --env DB_TYPE=bolt \
-  --env DB_ADDRESS=/data/swirl \
-  --constraint=node.hostname==manager1 \
-  --mount=type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
-  --mount=type=bind,src=/data/swirl,dst=/data/swirl \
-  cuigh/swirl
-```
-
-* Use **MongoDB** storage engine
+### Swarm Mode — Docker Service
 
 ```bash
 docker service create \
   --name=swirl \
   --publish=8001:8001/tcp \
   --env DB_ADDRESS=mongodb://localhost:27017/swirl \
+  --env AGENTS=swirl_manager_agent,swirl_worker_agent \
   --constraint=node.role==manager \
   --mount=type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
   cuigh/swirl
 ```
 
-### Docker compose
+## Advanced Features
 
-```bash
-docker stack deploy -c compose.yml swirl
-```
-
-## Advanced features
-
-**Swirl** use service labels to support some features, the labels in the table below are currently supported.
-
-| Name        | Description          | Examples                |
+| Label       | Description          | Example                 |
 |-------------|----------------------|-------------------------|
 | swirl.scale | Service auto scaling | `min=1,max=5,cpu=30:50` |
 
 ## Build
 
-To build **Swirl** from source, you need `yarn` and `go(v1.16+)` installed.
+Requirements: Node.js 22+, Go 1.22+
 
 ```sh
-$ cd ui 
-$ yarn
-$ yarn build
-$ cd ..
-$ go build
+cd ui && npm install && npm run build && cd ..
+go build
+```
+
+### Docker Build
+
+```bash
+docker build -t swirl .
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────┐
+│  Vue 3 + Naive-UI + TypeScript  │  Frontend (ui/)
+└────────────┬────────────────────┘
+             │ REST API
+┌────────────▼────────────────────┐
+│  API Handlers (api/*.go)        │  Auth via struct tags
+├─────────────────────────────────┤
+│  Business Logic (biz/*.go)      │  Interfaces + DI
+├─────────────────────────────────┤
+│  Docker SDK Wrapper (docker/)   │  Swarm agents + HostManager
+├─────────────────────────────────┤
+│  DAO Layer (dao/)               │  MongoDB or BoltDB
+└─────────────────────────────────┘
 ```
 
 ## License
 
-This product is licensed to you under the MIT License. You may not use this product except in compliance with the License. See LICENSE and NOTICE for more information.
+This product is licensed under the MIT License.

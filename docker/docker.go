@@ -29,12 +29,14 @@ type Docker struct {
 	nodes    cache.Value
 	agents   sync.Map
 	networks sync.Map
+	Hosts    *HostManager
 }
 
 func NewDocker() *Docker {
 	d := &Docker{
 		logger: log.Get("docker"),
 		nodes:  cache.Value{TTL: 30 * time.Minute},
+		Hosts:  NewHostManager(),
 	}
 	d.nodes.Load = d.loadCache
 	return d
@@ -79,7 +81,33 @@ func (d *Docker) client() (c *client.Client, err error) {
 	return d.c, nil
 }
 
+// agent returns a Docker client for node-targeted operations.
+// In standalone mode, 'node' is a host ID resolved via HostManager.
+// In swarm mode, 'node' is a Swarm node ID resolved via socat agents.
 func (d *Docker) agent(node string) (*client.Client, error) {
+	if misc.IsStandalone() {
+		return d.standaloneAgent(node)
+	}
+	return d.swarmAgent(node)
+}
+
+// standaloneAgent resolves a host ID to a Docker client via HostManager.
+// If node is empty, returns the primary client (local Docker).
+func (d *Docker) standaloneAgent(node string) (*client.Client, error) {
+	if node == "" || node == "-" {
+		return d.client()
+	}
+	// In standalone mode, node is a hostID. The endpoint is looked up
+	// by the biz layer which passes it via HostManager before calling
+	// docker operations. Here we just retrieve the cached client.
+	if v, ok := d.Hosts.clients.Load(node); ok {
+		return v.(*client.Client), nil
+	}
+	// Fallback to primary client if host not registered
+	return d.client()
+}
+
+func (d *Docker) swarmAgent(node string) (*client.Client, error) {
 	host, err := d.getAgent(node)
 	if err != nil {
 		d.logger.Error("failed to find node agent: ", err)

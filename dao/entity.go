@@ -240,6 +240,37 @@ func (cd *Dashboard) ID() string {
 	return cd.Name + ":" + cd.Key
 }
 
+// Host represents a standalone Docker host managed by Swirl.
+type Host struct {
+	ID        string   `json:"id" bson:"_id"`
+	Name      string   `json:"name" bson:"name" valid:"required"`
+	Endpoint  string   `json:"endpoint" bson:"endpoint" valid:"required"` // unix://, tcp://, ssh://
+	AuthMethod string  `json:"authMethod" bson:"auth_method"`             // socket, tcp, tcp+tls, ssh, agent
+	TLSCACert string   `json:"tlsCaCert,omitempty" bson:"tls_ca_cert,omitempty"`
+	TLSCert   string   `json:"tlsCert,omitempty" bson:"tls_cert,omitempty"`
+	TLSKey    string   `json:"-" bson:"tls_key,omitempty"`
+	SSHUser   string   `json:"sshUser,omitempty" bson:"ssh_user,omitempty"`
+	SSHKey    string   `json:"-" bson:"ssh_key,omitempty"`
+	Status    string   `json:"status" bson:"status"`       // connected, disconnected, error
+	Error     string   `json:"error,omitempty" bson:"error,omitempty"`
+	EngineVer string   `json:"engineVersion,omitempty" bson:"engine_ver,omitempty"`
+	OS        string   `json:"os,omitempty" bson:"os,omitempty"`
+	Arch      string   `json:"arch,omitempty" bson:"arch,omitempty"`
+	CPUs      int      `json:"cpus,omitempty" bson:"cpus,omitempty"`
+	Memory    int64    `json:"memory,omitempty" bson:"memory,omitempty"`
+	CreatedAt Time     `json:"createdAt" bson:"created_at"`
+	UpdatedAt Time     `json:"updatedAt" bson:"updated_at"`
+	CreatedBy Operator `json:"createdBy" bson:"created_by"`
+	UpdatedBy Operator `json:"updatedBy" bson:"updated_by"`
+}
+
+type HostSearchArgs struct {
+	Name      string `bind:"name"`
+	Status    string `bind:"status"`
+	PageIndex int    `bind:"pageIndex"`
+	PageSize  int    `bind:"pageSize"`
+}
+
 type Session struct {
 	ID        string    `json:"id" bson:"_id"` // token
 	UserID    string    `json:"userId" bson:"user_id"`

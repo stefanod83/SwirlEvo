@@ -76,6 +76,14 @@ type Interface interface {
 
 	DashboardGet(ctx context.Context, name, key string) (dashboard *Dashboard, err error)
 	DashboardUpdate(ctx context.Context, dashboard *Dashboard) error
+
+	HostGet(ctx context.Context, id string) (*Host, error)
+	HostGetAll(ctx context.Context) ([]*Host, error)
+	HostSearch(ctx context.Context, args *HostSearchArgs) (hosts []*Host, count int, err error)
+	HostCreate(ctx context.Context, host *Host) error
+	HostUpdate(ctx context.Context, host *Host) error
+	HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer string) error
+	HostDelete(ctx context.Context, id string) error
 }
 
 func newInterface() (i Interface) {

@@ -1,0 +1,16 @@
+services:
+  swirl:
+    image: cuigh/swirl:latest
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - MODE=standalone
+      - DB_TYPE=bolt
+      - DB_ADDRESS=/data
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - swirl-data:/data
+
+volumes:
+  swirl-data:

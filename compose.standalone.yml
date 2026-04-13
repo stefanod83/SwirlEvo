@@ -1,0 +1,31 @@
+services:
+  mongodb:
+    image: mongo:latest
+    restart: unless-stopped
+    expose:
+      - 27017
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - internal
+
+  swirl:
+    image: cuigh/swirl:latest
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - MODE=standalone
+      - DB_ADDRESS=mongodb://mongodb:27017/swirl
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - internal
+    depends_on:
+      - mongodb
+
+volumes:
+  mongo-data:
+
+networks:
+  internal:

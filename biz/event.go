@@ -29,6 +29,7 @@ const (
 	EventTypeRole      EventType = "Role"
 	EventTypeChart     EventType = "Chart"
 	EventTypeSetting   EventType = "Setting"
+	EventTypeHost      EventType = "Host"
 )
 
 type EventAction string
@@ -64,6 +65,7 @@ type EventBiz interface {
 	CreateRole(action EventAction, id, name string, user web.User)
 	CreateChart(action EventAction, id, title string, user web.User)
 	CreateSetting(action EventAction, user web.User)
+	CreateHost(action EventAction, id, name string, user web.User)
 }
 
 func NewEvent(d dao.Interface) EventBiz {
@@ -177,4 +179,9 @@ func (b *eventBiz) CreateUser(action EventAction, id, name string, user web.User
 func (b *eventBiz) CreateChart(action EventAction, id, title string, user web.User) {
 	args := data.Map{"id": id, "name": title}
 	b.create(EventTypeChart, action, args, user)
+}
+
+func (b *eventBiz) CreateHost(action EventAction, id, name string, user web.User) {
+	args := data.Map{"id": id, "name": name}
+	b.create(EventTypeHost, action, args, user)
 }

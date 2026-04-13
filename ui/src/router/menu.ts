@@ -160,6 +160,19 @@ export const menuOptions: MenuOption[] = [
     ],
   },
   {
+    label: 'Hosts',
+    key: "hosts",
+    icon: renderIcon(ServerOutline),
+    children: [
+      {
+        label: 'Docker Hosts',
+        key: "host_list",
+        path: "/standalone/hosts",
+        icon: renderIcon(ServerOutline),
+      },
+    ],
+  },
+  {
     label: t('fields.local'),
     key: "local",
     icon: renderIcon(CubeOutline),

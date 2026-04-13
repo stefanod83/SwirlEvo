@@ -19,6 +19,7 @@ type SystemHandler struct {
 	CreateAdmin web.HandlerFunc `path:"/create-admin" method:"post" auth:"*" desc:"initialize administrator account"`
 	Version     web.HandlerFunc `path:"/version" auth:"*" desc:"fetch app version"`
 	Summarize   web.HandlerFunc `path:"/summarize" auth:"?" desc:"fetch statistics data"`
+	Mode        web.HandlerFunc `path:"/mode" auth:"?" desc:"get operating mode"`
 }
 
 // NewSystem creates an instance of SystemHandler
@@ -28,6 +29,7 @@ func NewSystem(d *docker.Docker, b biz.SystemBiz, ub biz.UserBiz) *SystemHandler
 		CreateAdmin: systemCreateAdmin(ub),
 		Version:     systemVersion,
 		Summarize:   systemSummarize(d),
+		Mode:        systemMode,
 	}
 }
 
@@ -78,6 +80,10 @@ func systemSummarize(d *docker.Docker) web.HandlerFunc {
 
 		return success(c, summary)
 	}
+}
+
+func systemMode(c web.Context) error {
+	return success(c, data.Map{"mode": misc.Options.Mode})
 }
 
 func systemCreateAdmin(ub biz.UserBiz) web.HandlerFunc {

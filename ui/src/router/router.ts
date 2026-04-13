@@ -278,6 +278,38 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    name: 'host_list',
+    path: "/standalone/hosts",
+    component: () => import('../pages/host/List.vue'),
+    meta: {
+      auth: 'host.view',
+    }
+  },
+  {
+    name: 'host_detail',
+    path: "/standalone/hosts/:id",
+    component: () => import('../pages/host/View.vue'),
+    meta: {
+      auth: 'host.view',
+    }
+  },
+  {
+    name: 'host_new',
+    path: "/standalone/hosts/new",
+    component: () => import('../pages/host/Edit.vue'),
+    meta: {
+      auth: 'host.edit',
+    }
+  },
+  {
+    name: 'host_edit',
+    path: "/standalone/hosts/:id/edit",
+    component: () => import('../pages/host/Edit.vue'),
+    meta: {
+      auth: 'host.edit',
+    }
+  },
+  {
     name: "image_list",
     path: "/local/images",
     component: () => import('../pages/image/List.vue'),

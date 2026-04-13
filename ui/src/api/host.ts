@@ -1,0 +1,55 @@
+import ajax from './ajax'
+
+export interface Host {
+  id: string
+  name: string
+  endpoint: string
+  authMethod: string
+  tlsCaCert?: string
+  tlsCert?: string
+  sshUser?: string
+  status: string
+  error?: string
+  engineVersion?: string
+  os?: string
+  arch?: string
+  cpus?: number
+  memory?: number
+  createdAt: number
+  updatedAt: number
+  createdBy: { id: string; name: string }
+  updatedBy: { id: string; name: string }
+}
+
+export interface HostInfo {
+  engineVersion: string
+  os: string
+  arch: string
+  cpus: number
+  memory: number
+  hostname: string
+}
+
+export function search(name?: string, status?: string, pageIndex?: number, pageSize?: number) {
+  return ajax.get('/host/search', { params: { name, status, pageIndex, pageSize } })
+}
+
+export function find(id: string) {
+  return ajax.get('/host/find', { params: { id } })
+}
+
+export function save(host: Partial<Host>) {
+  return ajax.post('/host/save', host)
+}
+
+export function remove(id: string, name: string) {
+  return ajax.post('/host/delete', { id, name })
+}
+
+export function test(endpoint: string) {
+  return ajax.post('/host/test', { endpoint })
+}
+
+export function sync(id: string) {
+  return ajax.post('/host/sync', { id })
+}

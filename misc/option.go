@@ -17,10 +17,12 @@ var Options = &struct {
 	TokenKey         string
 	TokenExpiry      time.Duration
 	Agents           []string
+	Mode             string // "swarm" or "standalone"
 }{
 	DBType:      "mongo",
 	DBAddress:   "mongodb://localhost:27017/swirl",
 	TokenExpiry: 30 * time.Minute,
+	Mode:        "swarm",
 }
 
 func bindOptions() {
@@ -32,6 +34,7 @@ func bindOptions() {
 		"token_key",
 		"token_expiry",
 		"agents",
+		"mode",
 	}
 	for _, key := range keys {
 		config.BindEnv("swirl."+key, strings.ToUpper(key))
@@ -67,6 +70,11 @@ type Setting struct {
 	Metric struct {
 		Prometheus string `json:"prometheus"`
 	} `json:"metric"`
+}
+
+// IsStandalone returns true when Swirl is running in standalone mode.
+func IsStandalone() bool {
+	return Options.Mode == "standalone"
 }
 
 func init() {
