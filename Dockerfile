@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build -ldflags "-s -w"
 
 # ---- Release ----
 FROM alpine
-LABEL maintainer="cuigh <noname@live.com>"
+LABEL maintainer="Stefaweb <stefanod83@gmail.com>"
 WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=golang /app/swirl .

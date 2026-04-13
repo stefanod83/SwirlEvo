@@ -1,91 +1,106 @@
-version: '3.8'
-
 services:
-  swirl:
-    image: cuigh/swirl
-    environment:
-      DB_ADDRESS: mongodb://<database_address>
-      DOCKER_ENDPOINT: tcp://swirl_manager_agent:2375
-      AGENTS: swirl_manager_agent,swirl_worker_agent
-    networks:
-      - net
-    ports:
-      - "8001:8001"
+  mongodb:
+    image: mongo:latest
     deploy:
-      replicas: 2
+      replicas: 1
+      restart_policy:
+        condition: any
+        max_attempts: 0
       placement:
-        constraints: [ node.role == worker ]
+        constraints:
+          - node.role == manager
+          - node.labels.manager == 00
+    expose:
+      - 27017
+    volumes:
+      - /mnt/gluster/managers/containers/swirl-dev/mongo:/data/db
+    networks:
+      - internal
 
   manager_agent:
-    image: cuigh/socat
-    networks:
-      - net
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+    image: cuigh/socat:latest
     deploy:
       mode: global
+      restart_policy:
+        condition: any
+        max_attempts: 0
       placement:
-        constraints: [ node.role == manager ]
+        constraints:
+          - node.role == manager
+      endpoint_mode: dnsrr
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - internal
+    depends_on:
+      - mongodb
 
   worker_agent:
-    image: cuigh/socat
-    networks:
-      - net
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+    image: cuigh/socat:latest
     deploy:
       mode: global
+      restart_policy:
+        condition: any
+        max_attempts: 0
       placement:
-        constraints: [ node.role == worker ]
+        constraints:
+          - node.role == worker
+      endpoint_mode: dnsrr
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - internal
+    depends_on:
+      - mongodb
 
-#  prometheus:
-#    image: prom/prometheus
-#    networks:
-#      - net
-#    volumes:
-#      - prometheus:/prometheus
-#    configs:
-#      - source: prometheus.yml
-#        target: /etc/prometheus/prometheus.yml
-#    deploy:
-#      replicas: 1
-#      placement:
-#        constraints: [ node.labels.app.prometheus == true ]
-
-#  cadvisor:
-#    image: gcr.io/cadvisor/cadvisor
-#    networks:
-#      - net
-#    volumes:
-#      - /:/rootfs:ro
-#      - /dev/disk/:/dev/disk:ro
-#      - /sys:/sys:ro
-#      - /var/run:/var/run:ro
-#      - /var/lib/docker:/var/lib/docker:ro
-#    privileged: true
-#    deploy:
-#      mode: global
-#
-#  node:
-#    image: quay.io/prometheus/node-exporter
-#    command:
-#      - '--path.rootfs=/host'
-#    networks:
-#      - host
-#    pid: host
-#    volumes:
-#      - /:/host:ro,rslave
-#    deploy:
-#      mode: global
-
-#volumes:
-#  prometheus:
-
-#configs:
-#  prometheus.yml:
-#    external: true
+  swirl:
+    image: registry.example.com:443/cuigh/swirl:0.8.6
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        max_attempts: 0
+      placement:
+        constraints:
+          - node.role == manager
+          - node.labels.manager == 00
+      labels:
+        com.centurylinklabs.watchtower.enable: "true"
+        traefik.enable: "true"
+        traefik.http.routers.swirl.entrypoints: "https"
+        traefik.http.routers.swirl.middlewares: "internalnet@file"
+        traefik.http.routers.swirl.rule: "Host(`swirl-dkrdev.example.com`)"
+        traefik.http.routers.swirl.tls: "true"
+        traefik.http.services.swirl.loadbalancer.passHostHeader: "true"
+        traefik.http.services.swirl.loadbalancer.server.port: "8001"
+        # Abilita le sticky sessions
+        traefik.http.services.swirl.loadbalancer.sticky.cookie: "true"
+        # Opzionale: dai un nome al cookie per debuggarlo meglio
+        traefik.http.services.swirl.loadbalancer.sticky.cookie.name: "sticky_dkrdev"
+        # Se usi HTTPS (consigliato in produzione)
+        traefik.http.services.swirl.loadbalancer.sticky.cookie.secure: "true"
+    ports:
+      - "8001:8001"
+    environment:
+      # USA i nomi reali dei servizi (stack prefissato)
+      - AGENTS=swirl-dev_manager_agent,swirl-dev_worker_agent
+      - DB_ADDRESS=mongodb://mongodb:27017/swirl
+      - DOCKER_ENDPOINT=tcp://manager_agent:2375
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/gluster/managers/containers/swirl-dev/data:/data/swirl
+    networks:
+      - internal
+      - traefik-net
+      - egress
+    depends_on:
+      - worker_agent
+      - manager_agent
 
 networks:
-#  host:
-#    external: true
-  net:
+  internal:
+  traefik-net:
+    external: true
+  egress:
+    external: true
+    
