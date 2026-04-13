@@ -62,6 +62,10 @@ func systemSummarize(d *docker.Docker) web.HandlerFunc {
 			StackCount   int `json:"stackCount"`
 		}{}
 
+		if misc.IsStandalone() {
+			return success(c, summary)
+		}
+
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
 

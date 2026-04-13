@@ -7,6 +7,7 @@ import (
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/docker"
+	"github.com/cuigh/swirl/misc"
 	"github.com/docker/docker/api/types/swarm"
 )
 
@@ -43,6 +44,10 @@ func (b *nodeBiz) Find(ctx context.Context, id string) (node *Node, raw string, 
 }
 
 func (b *nodeBiz) List(agent bool) ([]*docker.Node, error) {
+	if misc.IsStandalone() {
+		return []*docker.Node{}, nil
+	}
+
 	m, err := b.d.NodeMap()
 	if err != nil {
 		return nil, err
@@ -61,6 +66,10 @@ func (b *nodeBiz) List(agent bool) ([]*docker.Node, error) {
 }
 
 func (b *nodeBiz) Search(ctx context.Context) ([]*Node, error) {
+	if misc.IsStandalone() {
+		return []*Node{}, nil
+	}
+
 	list, err := b.d.NodeList(ctx)
 	if err != nil {
 		return nil, err

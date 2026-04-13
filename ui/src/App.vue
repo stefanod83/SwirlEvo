@@ -10,7 +10,7 @@
       <n-message-provider>
         <n-notification-provider>
           <n-dialog-provider>
-            <root />
+            <Root />
           </n-dialog-provider>
         </n-notification-provider>
       </n-message-provider>
@@ -20,7 +20,7 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent } from "vue";
+import { computed, defineComponent, h } from "vue";
 import {
   zhCN,
   dateZhCN,
@@ -47,14 +47,14 @@ import DefaultLayout from "./layouts/Default.vue";
 import SimpleLayout from "./layouts/Simple.vue";
 import EmptyLayout from "./layouts/Empty.vue";
 
+const layouts: Record<string, any> = {
+  default: DefaultLayout,
+  simple: SimpleLayout,
+  empty: EmptyLayout,
+}
+
 const Root = defineComponent({
-  name: "App",
-  components: {
-    DefaultLayout,
-    SimpleLayout,
-    EmptyLayout,
-  },
-  template: '<component :is="layout"></component>',
+  name: "Root",
   setup() {
     window.message = useMessage();
     window.dialog = useDialog();
@@ -62,9 +62,8 @@ const Root = defineComponent({
     initLoadingBar(useLoadingBar());
 
     const route = useRoute();
-    return {
-      layout: computed(() => (route.meta.layout || "default") + "-layout"),
-    };
+    const layout = computed(() => layouts[(route.meta.layout as string) || "default"] || DefaultLayout);
+    return () => h(layout.value);
   },
 })
 

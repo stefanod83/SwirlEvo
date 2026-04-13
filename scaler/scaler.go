@@ -55,6 +55,10 @@ func NewScaler(d *docker.Docker, mb biz.MetricBiz) *Scaler {
 func (s *Scaler) Start() {
 	const labelScale = "swirl.scale"
 
+	if misc.IsStandalone() {
+		return
+	}
+
 	if len(s.checkers) > 0 {
 		return
 	}
