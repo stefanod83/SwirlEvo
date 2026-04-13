@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,6 +35,10 @@ type Dao struct {
 func New(addr string) (dao.Interface, error) {
 	if addr == "" {
 		addr = "/data/swirl"
+	}
+
+	if err := os.MkdirAll(addr, 0755); err != nil {
+		return nil, errors.Wrap(err, "failed to create bolt data directory")
 	}
 
 	db, err := bolt.Open(filepath.Join(addr, "swirl.db"), 0600, nil)

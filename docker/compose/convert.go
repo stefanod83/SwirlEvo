@@ -59,28 +59,28 @@ func Networks(namespace Namespace, networks networkMap, servicesNetworks map[str
 	externalNetworks := []string{}
 	result := make(map[string]network.CreateOptions)
 	for internalName := range servicesNetworks {
-		network := networks[internalName]
-		if network.External.External {
-			externalNetworks = append(externalNetworks, network.Name)
+		nw := networks[internalName]
+		if nw.External.External {
+			externalNetworks = append(externalNetworks, nw.Name)
 			continue
 		}
 
 		createOpts := network.CreateOptions{
-			Labels:     AddStackLabel(namespace, network.Labels),
-			Driver:     network.Driver,
-			Options:    network.DriverOpts,
-			Internal:   network.Internal,
-			Attachable: network.Attachable,
+			Labels:     AddStackLabel(namespace, nw.Labels),
+			Driver:     nw.Driver,
+			Options:    nw.DriverOpts,
+			Internal:   nw.Internal,
+			Attachable: nw.Attachable,
 		}
 
-		if network.Ipam.Driver != "" || len(network.Ipam.Config) > 0 {
+		if nw.Ipam.Driver != "" || len(nw.Ipam.Config) > 0 {
 			createOpts.IPAM = &network.IPAM{}
 		}
 
-		if network.Ipam.Driver != "" {
-			createOpts.IPAM.Driver = network.Ipam.Driver
+		if nw.Ipam.Driver != "" {
+			createOpts.IPAM.Driver = nw.Ipam.Driver
 		}
-		for _, ipamConfig := range network.Ipam.Config {
+		for _, ipamConfig := range nw.Ipam.Config {
 			config := network.IPAMConfig{
 				Subnet: ipamConfig.Subnet,
 			}
@@ -88,8 +88,8 @@ func Networks(namespace Namespace, networks networkMap, servicesNetworks map[str
 		}
 
 		networkName := namespace.Scope(internalName)
-		if network.Name != "" {
-			networkName = network.Name
+		if nw.Name != "" {
+			networkName = nw.Name
 		}
 		result[networkName] = createOpts
 	}

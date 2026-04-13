@@ -33,7 +33,7 @@ func (b *networkBiz) Create(ctx context.Context, n *Network, user web.User) (err
 		Internal:   n.Internal,
 		Attachable: n.Attachable,
 		Ingress:    n.Ingress,
-		EnableIPv6: n.IPv6,
+		EnableIPv6: &n.IPv6,
 		IPAM:       &network.IPAM{},
 		Options:    toMap(n.Options),
 		Labels:     toMap(n.Labels),
@@ -54,14 +54,14 @@ func (b *networkBiz) Create(ctx context.Context, n *Network, user web.User) (err
 	return
 }
 
-func (b *networkBiz) Find(ctx context.Context, name string) (network *Network, raw string, err error) {
+func (b *networkBiz) Find(ctx context.Context, name string) (nw *Network, raw string, err error) {
 	var (
 		nr network.Inspect
 		r  []byte
 	)
 	nr, r, err = b.d.NetworkInspect(ctx, name)
 	if err == nil {
-		network = newNetwork(&nr)
+		nw = newNetwork(&nr)
 		raw, err = indentJSON(r)
 	}
 	return

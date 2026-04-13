@@ -6,7 +6,7 @@ RUN yarn install
 RUN yarn run build
 
 # ---- Build Go----
-FROM golang:1.22-alpine AS golang
+FROM golang:1.25-alpine AS golang
 WORKDIR /app
 COPY --from=node /app/dist ui/dist
 COPY . .

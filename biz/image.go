@@ -181,9 +181,8 @@ func newImageDetail(is *image.InspectResponse, items []image.HistoryResponseItem
 			Data: mapToOptions(is.GraphDriver.Data),
 		},
 		RootFS: ImageRootFS{
-			Type:      is.RootFS.Type,
-			Layers:    is.RootFS.Layers,
-			BaseLayer: is.RootFS.BaseLayer,
+			Type:   is.RootFS.Type,
+			Layers: is.RootFS.Layers,
 		},
 		Histories: histories,
 	}

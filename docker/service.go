@@ -195,7 +195,7 @@ func (d *Docker) ServiceScale(ctx context.Context, name string, count, version u
 func (d *Docker) ServiceCreate(ctx context.Context, spec *swarm.ServiceSpec, registryAuth string) error {
 	return d.call(func(c *client.Client) (err error) {
 		opts := types.ServiceCreateOptions{EncodedRegistryAuth: registryAuth}
-		var resp types.ServiceCreateResponse
+		var resp swarm.ServiceCreateResponse
 		resp, err = c.ServiceCreate(ctx, *spec, opts)
 		if err == nil && len(resp.Warnings) > 0 {
 			d.logger.Warnf("service %s was created but got warnings: %v", spec.Name, resp.Warnings)
@@ -208,7 +208,7 @@ func (d *Docker) ServiceCreate(ctx context.Context, spec *swarm.ServiceSpec, reg
 func (d *Docker) ServiceUpdate(ctx context.Context, spec *swarm.ServiceSpec, version uint64) error {
 	return d.call(func(c *client.Client) (err error) {
 		var (
-			resp    types.ServiceUpdateResponse
+			resp    swarm.ServiceUpdateResponse
 			options = types.ServiceUpdateOptions{
 				RegistryAuthFrom: types.RegistryAuthFromSpec,
 				QueryRegistry:    false,

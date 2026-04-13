@@ -7,7 +7,7 @@ import (
 
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/dao"
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/registry"
 )
 
 type RegistryBiz interface {
@@ -76,7 +76,7 @@ func (b *registryBiz) GetAuth(ctx context.Context, url string) (auth string, err
 		buf []byte
 	)
 	if r, err = b.d.RegistryGetByURL(ctx, url); err == nil && r != nil {
-		cfg := &types.AuthConfig{
+		cfg := &registry.AuthConfig{
 			ServerAddress: r.URL,
 			Username:      r.Username,
 			Password:      r.Password,

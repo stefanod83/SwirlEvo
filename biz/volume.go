@@ -27,7 +27,7 @@ type volumeBiz struct {
 	eb EventBiz
 }
 
-func (b *volumeBiz) Find(ctx context.Context, node, name string) (volume *Volume, raw string, err error) {
+func (b *volumeBiz) Find(ctx context.Context, node, name string) (vol *Volume, raw string, err error) {
 	var (
 		v volume.Volume
 		r []byte
@@ -38,7 +38,7 @@ func (b *volumeBiz) Find(ctx context.Context, node, name string) (volume *Volume
 	}
 
 	if err == nil {
-		volume = newVolume(&v)
+		vol = newVolume(&v)
 	}
 	return
 }
