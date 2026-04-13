@@ -7,7 +7,6 @@ import (
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/docker"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/volume"
 )
 
@@ -30,7 +29,7 @@ type volumeBiz struct {
 
 func (b *volumeBiz) Find(ctx context.Context, node, name string) (volume *Volume, raw string, err error) {
 	var (
-		v types.Volume
+		v volume.Volume
 		r []byte
 	)
 
@@ -66,7 +65,7 @@ func (b *volumeBiz) Delete(ctx context.Context, node, name string, user web.User
 }
 
 func (b *volumeBiz) Create(ctx context.Context, vol *Volume, user web.User) (err error) {
-	options := &volume.VolumeCreateBody{
+	options := &volume.CreateOptions{
 		Name:       vol.Name,
 		Driver:     vol.Driver,
 		DriverOpts: toMap(vol.Options),
@@ -86,7 +85,7 @@ func (b *volumeBiz) Create(ctx context.Context, vol *Volume, user web.User) (err
 }
 
 func (b *volumeBiz) Prune(ctx context.Context, node string, user web.User) (count int, size uint64, err error) {
-	var report types.VolumesPruneReport
+	var report volume.PruneReport
 	report, err = b.d.VolumePrune(ctx, node)
 	if err == nil {
 		count, size = len(report.VolumesDeleted), report.SpaceReclaimed
@@ -110,7 +109,7 @@ type Volume struct {
 	Size         int64                  `json:"size"`
 }
 
-func newVolume(v *types.Volume) *Volume {
+func newVolume(v *volume.Volume) *Volume {
 	createdAt, _ := time.Parse(time.RFC3339Nano, v.CreatedAt)
 	vol := &Volume{
 		Name:       v.Name,

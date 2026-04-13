@@ -6,7 +6,6 @@ import (
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/docker"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 )
 
@@ -28,7 +27,7 @@ type networkBiz struct {
 }
 
 func (b *networkBiz) Create(ctx context.Context, n *Network, user web.User) (err error) {
-	nc := &types.NetworkCreate{
+	nc := &network.CreateOptions{
 		Driver:     n.Driver,
 		Scope:      n.Scope,
 		Internal:   n.Internal,
@@ -57,7 +56,7 @@ func (b *networkBiz) Create(ctx context.Context, n *Network, user web.User) (err
 
 func (b *networkBiz) Find(ctx context.Context, name string) (network *Network, raw string, err error) {
 	var (
-		nr types.NetworkResource
+		nr network.Inspect
 		r  []byte
 	)
 	nr, r, err = b.d.NetworkInspect(ctx, name)
@@ -131,7 +130,7 @@ type NetworkContainer struct {
 	IPv6 string `json:"ipv6"` // IPv6 address
 }
 
-func newNetwork(nr *types.NetworkResource) *Network {
+func newNetwork(nr *network.Inspect) *Network {
 	n := &Network{
 		ID:         nr.ID,
 		Name:       nr.Name,

@@ -7,8 +7,9 @@ import (
 	"github.com/cuigh/swirl/docker/compose"
 	composetypes "github.com/cuigh/swirl/docker/compose/types"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
+	dcontainer "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/client"
 )
@@ -43,7 +44,7 @@ func (d *Docker) StackRemove(ctx context.Context, name string) error {
 	return d.call(func(c *client.Client) (err error) {
 		var (
 			services []swarm.Service
-			networks []types.NetworkResource
+			networks []network.Inspect
 			secrets  []swarm.Secret
 			configs  []swarm.Config
 			errs     []error
@@ -57,7 +58,7 @@ func (d *Docker) StackRemove(ctx context.Context, name string) error {
 			return
 		}
 
-		networks, err = c.NetworkList(ctx, types.NetworkListOptions{Filters: args})
+		networks, err = c.NetworkList(ctx, network.ListOptions{Filters: args})
 		if err != nil {
 			return
 		}
@@ -187,12 +188,12 @@ func (d *Docker) StackCount(ctx context.Context) (count int, err error) {
 
 func validateExternalNetworks(ctx context.Context, c *client.Client, externalNetworks []string) error {
 	for _, networkName := range externalNetworks {
-		if !container.NetworkMode(networkName).IsUserDefined() {
+		if !dcontainer.NetworkMode(networkName).IsUserDefined() {
 			// Networks that are not user defined always exist on all nodes as
 			// local-scoped networks, so there's no need to inspect them.
 			continue
 		}
-		network, err := c.NetworkInspect(ctx, networkName, types.NetworkInspectOptions{})
+		network, err := c.NetworkInspect(ctx, networkName, network.InspectOptions{})
 		switch {
 		case client.IsErrNotFound(err):
 			return errors.Format("network %q is declared as external, but could not be found. You need to create a swarm-scoped network before the stack is deployed", networkName)
@@ -205,8 +206,8 @@ func validateExternalNetworks(ctx context.Context, c *client.Client, externalNet
 	return nil
 }
 
-func (d *Docker) createNetworks(ctx context.Context, c *client.Client, namespace compose.Namespace, networks map[string]types.NetworkCreate) error {
-	opts := types.NetworkListOptions{
+func (d *Docker) createNetworks(ctx context.Context, c *client.Client, namespace compose.Namespace, networks map[string]network.CreateOptions) error {
+	opts := network.ListOptions{
 		Filters: filters.NewArgs(),
 	}
 	opts.Filters.Add("label", stackLabel+"="+namespace.Name())
@@ -215,7 +216,7 @@ func (d *Docker) createNetworks(ctx context.Context, c *client.Client, namespace
 		return err
 	}
 
-	existingNetworkMap := make(map[string]types.NetworkResource)
+	existingNetworkMap := make(map[string]network.Inspect)
 	for _, network := range existingNetworks {
 		existingNetworkMap[network.Name] = network
 	}

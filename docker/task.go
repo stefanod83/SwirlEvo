@@ -9,6 +9,7 @@ import (
 
 	"github.com/cuigh/swirl/misc"
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/client"
@@ -60,12 +61,11 @@ func (d *Docker) TaskLogs(ctx context.Context, id string, lines int, timestamps 
 	err = d.call(func(c *client.Client) (err error) {
 		var (
 			rc   io.ReadCloser
-			opts = types.ContainerLogsOptions{
+			opts = container.LogsOptions{
 				ShowStdout: true,
 				ShowStderr: true,
 				Tail:       strconv.Itoa(lines),
 				Timestamps: timestamps,
-				//Since: (time.Hour * 24).String()
 			}
 		)
 		if rc, err = c.TaskLogs(ctx, id, opts); err == nil {

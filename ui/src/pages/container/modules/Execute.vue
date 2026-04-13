@@ -20,10 +20,10 @@ import {
   NInputGroupLabel,
 } from "naive-ui";
 import { useStore } from "vuex";
-import 'xterm/css/xterm.css'
-import { Terminal } from 'xterm'
-import { FitAddon } from 'xterm-addon-fit'
-import { AttachAddon } from 'xterm-addon-attach'
+import '@xterm/xterm/css/xterm.css'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import { AttachAddon } from '@xterm/addon-attach'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()

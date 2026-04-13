@@ -9,20 +9,21 @@ import (
 
 	"github.com/cuigh/swirl/misc"
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // ContainerList return containers on the host.
-func (d *Docker) ContainerList(ctx context.Context, node, name, status string, pageIndex, pageSize int) (containers []types.Container, total int, err error) {
+func (d *Docker) ContainerList(ctx context.Context, node, name, status string, pageIndex, pageSize int) (containers []container.Summary, total int, err error) {
 	var c *client.Client
 	c, err = d.agent(node)
 	if err != nil {
 		return
 	}
 
-	opts := types.ContainerListOptions{Filters: filters.NewArgs()}
+	opts := container.ListOptions{Filters: filters.NewArgs()}
 	if status == "" {
 		opts.All = true
 	} else {
@@ -42,10 +43,10 @@ func (d *Docker) ContainerList(ctx context.Context, node, name, status string, p
 }
 
 // ContainerInspect return container raw information.
-func (d *Docker) ContainerInspect(ctx context.Context, node, id string) (container types.ContainerJSON, raw []byte, err error) {
+func (d *Docker) ContainerInspect(ctx context.Context, node, id string) (ctr container.InspectResponse, raw []byte, err error) {
 	var c *client.Client
 	if c, err = d.agent(node); err == nil {
-		container, raw, err = c.ContainerInspectWithRaw(ctx, id, true)
+		ctr, raw, err = c.ContainerInspectWithRaw(ctx, id, true)
 	}
 	return
 }
@@ -54,26 +55,25 @@ func (d *Docker) ContainerInspect(ctx context.Context, node, id string) (contain
 func (d *Docker) ContainerRemove(ctx context.Context, node, id string) (err error) {
 	var c *client.Client
 	if c, err = d.agent(node); err == nil {
-		err = c.ContainerRemove(ctx, id, types.ContainerRemoveOptions{})
+		err = c.ContainerRemove(ctx, id, container.RemoveOptions{})
 	}
 	return
 }
 
 // ContainerExecCreate creates an exec instance.
-func (d *Docker) ContainerExecCreate(ctx context.Context, node, id string, cmd string) (resp types.IDResponse, err error) {
+func (d *Docker) ContainerExecCreate(ctx context.Context, node, id string, cmd string) (resp container.ExecCreateResponse, err error) {
 	var c *client.Client
 	c, err = d.agent(node)
 	if err != nil {
 		return
 	}
 
-	opts := types.ExecConfig{
+	opts := container.ExecOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
-		//User: "root",
-		Cmd: strings.Split(cmd, " "),
+		Cmd:          strings.Split(cmd, " "),
 	}
 	resp, err = c.ContainerExecCreate(ctx, id, opts)
 	return
@@ -87,7 +87,7 @@ func (d *Docker) ContainerExecAttach(ctx context.Context, node, id string) (resp
 		return
 	}
 
-	opts := types.ExecStartCheck{
+	opts := container.ExecStartOptions{
 		Detach: false,
 		Tty:    true,
 	}
@@ -102,7 +102,7 @@ func (d *Docker) ContainerExecStart(ctx context.Context, node, id string) (err e
 		return err
 	}
 
-	opts := types.ExecStartCheck{
+	opts := container.ExecStartOptions{
 		Detach: false,
 		Tty:    true,
 	}
@@ -119,12 +119,11 @@ func (d *Docker) ContainerLogs(ctx context.Context, node, id string, lines int, 
 
 	var (
 		rc   io.ReadCloser
-		opts = types.ContainerLogsOptions{
+		opts = container.LogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 			Tail:       strconv.Itoa(lines),
 			Timestamps: timestamps,
-			//Since: (time.Hour * 24).String()
 		}
 	)
 	if rc, err = c.ContainerLogs(ctx, id, opts); err == nil {
@@ -138,7 +137,7 @@ func (d *Docker) ContainerLogs(ctx context.Context, node, id string, lines int, 
 }
 
 // ContainerPrune remove all unused containers.
-func (d *Docker) ContainerPrune(ctx context.Context, node string) (report types.ContainersPruneReport, err error) {
+func (d *Docker) ContainerPrune(ctx context.Context, node string) (report container.PruneReport, err error) {
 	var c *client.Client
 	if c, err = d.agent(node); err == nil {
 		report, err = c.ContainersPrune(ctx, filters.NewArgs())

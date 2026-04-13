@@ -10,7 +10,7 @@ import (
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/errors"
 	"github.com/cuigh/auxo/ext/times"
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/registry"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/bsontype"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -115,7 +115,7 @@ func (r *Registry) Match(image string) bool {
 }
 
 func (r *Registry) GetEncodedAuth() string {
-	cfg := &types.AuthConfig{
+	cfg := &registry.AuthConfig{
 		ServerAddress: r.URL,
 		Username:      r.Username,
 		Password:      r.Password,

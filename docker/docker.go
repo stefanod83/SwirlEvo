@@ -64,7 +64,13 @@ func (d *Docker) client() (c *client.Client, err error) {
 			} else {
 				opt = client.WithHost(misc.Options.DockerEndpoint)
 			}
-			d.c, err = client.NewClientWithOpts(opt, client.WithVersion(misc.Options.DockerAPIVersion))
+			var versionOpt client.Opt
+			if misc.Options.DockerAPIVersion != "" {
+				versionOpt = client.WithVersion(misc.Options.DockerAPIVersion)
+			} else {
+				versionOpt = client.WithAPIVersionNegotiation()
+			}
+			d.c, err = client.NewClientWithOpts(opt, versionOpt)
 			if err != nil {
 				return
 			}
@@ -85,9 +91,15 @@ func (d *Docker) agent(node string) (*client.Client, error) {
 
 	value, _ := d.agents.LoadOrStore(node, &lazy.Value{
 		New: func() (interface{}, error) {
+			var vOpt client.Opt
+			if misc.Options.DockerAPIVersion != "" {
+				vOpt = client.WithVersion(misc.Options.DockerAPIVersion)
+			} else {
+				vOpt = client.WithAPIVersionNegotiation()
+			}
 			c, e := client.NewClientWithOpts(
 				client.WithHost("tcp://"+host),
-				client.WithVersion(misc.Options.DockerAPIVersion),
+				vOpt,
 			)
 			return c, e
 		},

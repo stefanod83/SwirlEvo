@@ -1,12 +1,12 @@
 # ---- Build UI----
-FROM node:alpine AS node
+FROM node:22-alpine AS node
 WORKDIR /app
 COPY ui .
 RUN yarn install
 RUN yarn run build
 
 # ---- Build Go----
-FROM golang:1.17-alpine AS golang
+FROM golang:1.22-alpine AS golang
 WORKDIR /app
 COPY --from=node /app/dist ui/dist
 COPY . .
