@@ -1,8 +1,10 @@
-# SWIRL
+# SwirlEvo
 
-**Swirl** is a web management tool for Docker, supporting both **Swarm cluster** and **Standalone host** modes.
+**SwirlEvo** is a web management tool for Docker, supporting both **Swarm cluster** and **Standalone host** modes.
 
-> Version 2.0 introduces dual-mode operation: manage Docker Swarm clusters (existing) or standalone Docker hosts (new) with Portainer-style container lifecycle and compose-stack deployment per host.
+Repository: <https://github.com/stefanod83/SwirlEvo>
+
+> SwirlEvo continues and extends [Swirl](https://github.com/cuigh/swirl) by [@cuigh](https://github.com/cuigh) (MIT License). The original project's Swarm management is preserved; v2.0 adds standalone-host management, a Portainer-style container lifecycle, compose-stack deployment per host, an external-stack importer and a global host selector.
 
 ## Features
 
@@ -41,8 +43,12 @@ No Swarm required. Register Docker hosts via the UI. Per-host container/image/vo
 
 Menu in standalone mode:
 ```
-Home · Docker (Hosts/Registries/Networks/Containers/Stacks) · Local (Images/Volumes) · System
+Home · Docker (Hosts/Registries) · Local (Containers/Stacks/Networks/Images/Volumes) · System
 ```
+
+The `Local` group sits below `Docker` because all its pages depend on the host
+selected in the global header dropdown. The active group stays expanded as you
+navigate inside it.
 
 Swarm-only endpoints (`/service/*`, `/task/*`, `/config/*`, `/secret/*`) return **404** in standalone mode. The auto-scaler is disabled. The router guard also blocks swarm-only routes from being reached by URL.
 
@@ -60,6 +66,9 @@ Values:
 - **A single host** — every per-host page filters automatically on that host. The Home summary recalculates counters for that host.
 
 Auto-select: if only one host is registered, it's selected automatically and the "All" option is hidden. The selector is hidden entirely in swarm mode (it's only relevant for standalone).
+
+The host list refreshes immediately after add/remove operations on the Hosts
+page (Vuex action `reloadHosts` re-fetches from `/api/host/search`).
 
 ### Importing external stacks
 
@@ -180,17 +189,40 @@ Deploy lifecycle: **Save** (persist only) / **Deploy** (persist + apply) / **Sta
 
 - **Delete** (red): normal `docker rmi`; fails if the image is referenced by a container or has multiple tags.
 - **Force delete** (red, confirmation dialog): `Force=true, PruneChildren=true` — removes the image from every repository (untags all) and deletes layers even if referenced.
-- **Unused badge**: shown when the image is not referenced by any container (running or stopped).
+- **Unused badge**: shown when the image is not referenced by any container (running or stopped). The reference count is recomputed server-side from the live container list, not read from the unreliable `Containers` field of `image.Summary`.
+- **Bulk delete** / **Bulk force delete** in the page header: select rows via checkbox column, click the `Delete (N)` / `Force delete (N)` buttons. Errors per item are aggregated and reported.
+
+## Volume management
+
+- **Unused badge**: appears when no container mounts the volume. The reference count is recomputed by scanning container mounts (the `volume.UsageData.RefCount` returned by Docker is `-1` unless explicitly computed by the daemon).
+- **Bulk delete** in the page header.
+
+## Network management
+
+- Standalone mode has its own pages (`/standalone/networks`, `/standalone/networks/new`) that filter by the host selected in the global header. The form hides Swarm-only fields (`overlay` driver, scope, attachable, ingress) — see `pages/network/StandaloneNew.vue`.
+- **Bulk delete** in the page header.
 
 ## Container management
 
-Per-host actions available from the Containers list in both swarm and standalone mode:
+Per-host actions available from the Containers list in both swarm and standalone mode (component: `ui/src/components/ContainerTable.vue`, shared between the standalone Containers page and the Stack Details "Containers" tab):
 - Start, Stop, Restart, Pause/Unpause, Kill
 - Rename
 - Logs (streamed)
 - Exec (WebSocket TTY)
 - Stats (one-shot snapshot via the API)
 - Delete — disabled while the container is `running` or `paused`.
+
+The Containers page in standalone mode also exposes:
+- A **Stack** filter dropdown alongside the name search — populated with the compose stacks discovered on the selected host.
+- A **Stack** column in the table (link to the corresponding stack details).
+
+## UI utilities
+
+- **Refresh** button in every list page (header action) re-runs `fetchData()`.
+- **Page-size persistence**: the chosen rows-per-page value (10/20/50/100) is saved to `localStorage` (key `tablePageSize`) and reapplied to every table after reload. Implemented in `ui/src/utils/data-table.ts::useDataTable`.
+- **Active menu group** stays expanded while navigating inside it (`Default.vue::ensureActiveExpanded` runs on mount and on each route change, doing a union with user-expanded keys to preserve manual collapses elsewhere).
+- **State column on the left** in Containers and Stacks tables for quicker scanning.
+- **Stack list** drops the `Host` column (already redundant with the global selector) and shows the host name as subtitle next to the page title — same pattern as the Stack Details page.
 
 ## Advanced Features
 
@@ -257,4 +289,5 @@ docker compose -f docker-compose.standalone-bolt.yml up -d
 
 ## License
 
-MIT License.
+MIT License — see [LICENSE](LICENSE).
+Copyright © 2017 cuigh (original Swirl); 2025 Stefano Donno (SwirlEvo additions).

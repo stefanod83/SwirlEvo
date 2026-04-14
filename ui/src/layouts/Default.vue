@@ -46,7 +46,7 @@
               size="small"
               :bordered="false"
               tag="a"
-              href="https://github.com/cuigh/swirl"
+              href="https://github.com/stefanod83/SwirlEvo"
               target="_blank"
             >
               <template #icon>
