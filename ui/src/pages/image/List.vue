@@ -1,14 +1,32 @@
 <template>
   <x-page-header>
     <template #action>
-      <n-button secondary size="small" type="warning" @click="prune">
-        <template #icon>
-          <n-icon>
-            <close-icon />
-          </n-icon>
-        </template>
-        {{ t('buttons.prune') }}
-      </n-button>
+      <n-space :size="8">
+        <n-button secondary size="small" @click="() => fetchData()">
+          <template #icon>
+            <n-icon><refresh-outline /></n-icon>
+          </template>
+          {{ t('buttons.refresh') || 'Refresh' }}
+        </n-button>
+        <n-button secondary size="small" type="error" :disabled="!checkedIds.length" @click="bulkDelete(false)">
+          <template #icon>
+            <n-icon><trash-outline /></n-icon>
+          </template>
+          {{ t('buttons.delete') }} ({{ checkedIds.length }})
+        </n-button>
+        <n-button secondary size="small" type="error" :disabled="!checkedIds.length" @click="bulkDelete(true)">
+          <template #icon>
+            <n-icon><flash-off-outline /></n-icon>
+          </template>
+          {{ t('buttons.force_delete') || 'Force delete' }} ({{ checkedIds.length }})
+        </n-button>
+        <n-button secondary size="small" type="warning" @click="prune">
+          <template #icon>
+            <n-icon><close-icon /></n-icon>
+          </template>
+          {{ t('buttons.prune') }}
+        </n-button>
+      </n-space>
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
@@ -30,12 +48,14 @@
       </n-space>
       <n-data-table
         remote
-        :row-key="row => row.name"
+        :row-key="(row: any) => row.id"
         size="small"
         :columns="columns"
         :data="state.data"
         :pagination="pagination"
         :loading="state.loading"
+        :checked-row-keys="checkedIds"
+        @update:checked-row-keys="(k: any) => checkedIds = k"
         @update:page="fetchData"
         @update-page-size="changePageSize"
         scroll-x="max-content"
@@ -63,6 +83,7 @@ import {
   CloseOutline as CloseIcon,
   TrashOutline,
   FlashOffOutline,
+  RefreshOutline,
 } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import imageApi from "@/api/image";
@@ -87,6 +108,7 @@ const filter = reactive({
 });
 const nodes: any = ref([])
 const showEmpty = computed(() => isStandalone.value && !selectedHostId.value)
+const checkedIds = ref([] as string[])
 
 function actionButton(type: 'default' | 'error' | 'warning' | 'success' | 'info', iconCmp: any, tooltip: string, onClick: () => void) {
   return h(NTooltip, { trigger: 'hover' }, {
@@ -126,6 +148,7 @@ function confirmForceDelete(i: Image, index: number) {
   })
 }
 const columns = [
+  { type: 'selection' as const },
   {
     title: t('fields.id'),
     key: "id",
@@ -177,6 +200,29 @@ const columns = [
 ];
 const { state, pagination, fetchData, changePageSize } = useDataTable(imageApi.search, filter, false)
 
+async function bulkDelete(force: boolean) {
+  if (!checkedIds.value.length) return
+  dialog.warning({
+    title: force ? (t('buttons.force_delete') || 'Force delete') : t('buttons.delete'),
+    content: force
+      ? (t('prompts.force_delete') || 'This will remove these images from all repositories, even if referenced by containers. Proceed?')
+      : t('prompts.delete'),
+    positiveText: t('buttons.confirm'),
+    negativeText: t('buttons.cancel'),
+    onPositiveClick: async () => {
+      const errors: string[] = []
+      for (const id of [...checkedIds.value]) {
+        try { await imageApi.delete(filter.node, id, "", force) }
+        catch (e: any) { errors.push(`${id.substring(7,19)}: ${e?.message || e}`) }
+      }
+      checkedIds.value = []
+      if (errors.length) message.error(errors.join('\n'))
+      else message.success(t('buttons.delete'))
+      fetchData()
+    }
+  })
+}
+
 async function prune() {
   window.dialog.warning({
     title: t('dialogs.prune_image.title'),
@@ -195,7 +241,13 @@ async function prune() {
 }
 
 watch(selectedHostId, (v) => {
-  if (v) { filter.node = v; fetchData() }
+  if (v) {
+    filter.node = v
+    // Immediate visual feedback while the refetch is in flight.
+    state.data = [] as any
+    checkedIds.value = []
+    fetchData()
+  }
 })
 
 onMounted(async () => {

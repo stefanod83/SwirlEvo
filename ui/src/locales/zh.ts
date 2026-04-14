@@ -40,6 +40,7 @@ export default {
         "force_delete": "强制删除",
         "import_redeploy": "导入并重新部署",
         "download": "下载",
+        "refresh": "刷新",
     },
     "perms": {
         "view": "浏览",

@@ -1,22 +1,32 @@
 <template>
   <x-page-header>
     <template #action>
-      <n-button secondary size="small" type="warning" @click="prune">
-        <template #icon>
-          <n-icon>
-            <close-icon />
-          </n-icon>
-        </template>
-        {{ t('buttons.prune') }}
-      </n-button>
-      <n-button secondary size="small" @click="$router.push({name: 'volume_new', params: {node: filter.node || '-'}})">
-        <template #icon>
-          <n-icon>
-            <add-icon />
-          </n-icon>
-        </template>
-        {{ t('buttons.new') }}
-      </n-button>
+      <n-space :size="8">
+        <n-button secondary size="small" @click="() => fetchData()">
+          <template #icon>
+            <n-icon><refresh-outline /></n-icon>
+          </template>
+          {{ t('buttons.refresh') || 'Refresh' }}
+        </n-button>
+        <n-button secondary size="small" type="error" :disabled="!checkedNames.length" @click="bulkDelete">
+          <template #icon>
+            <n-icon><trash-outline /></n-icon>
+          </template>
+          {{ t('buttons.delete') }} ({{ checkedNames.length }})
+        </n-button>
+        <n-button secondary size="small" type="warning" @click="prune">
+          <template #icon>
+            <n-icon><close-icon /></n-icon>
+          </template>
+          {{ t('buttons.prune') }}
+        </n-button>
+        <n-button secondary size="small" @click="$router.push({name: 'volume_new', params: {node: filter.node || '-'}})">
+          <template #icon>
+            <n-icon><add-icon /></n-icon>
+          </template>
+          {{ t('buttons.new') }}
+        </n-button>
+      </n-space>
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
@@ -38,12 +48,14 @@
       </n-space>
       <n-data-table
         remote
-        :row-key="row => row.name"
+        :row-key="(row: any) => row.name"
         size="small"
         :columns="columns"
         :data="state.data"
         :pagination="pagination"
         :loading="state.loading"
+        :checked-row-keys="checkedNames"
+        @update:checked-row-keys="(k: any) => checkedNames = k"
         @update:page="fetchData"
         @update-page-size="changePageSize"
         scroll-x="max-content"
@@ -63,7 +75,8 @@ import {
   NSelect,
   NTag,
 } from "naive-ui";
-import { AddOutline as AddIcon, CloseOutline as CloseIcon } from "@vicons/ionicons5";
+import { AddOutline as AddIcon, CloseOutline as CloseIcon, TrashOutline, RefreshOutline } from "@vicons/ionicons5";
+import { useDialog, useMessage } from "naive-ui";
 import XPageHeader from "@/components/PageHeader.vue";
 import volumeApi from "@/api/volume";
 import type { Volume } from "@/api/volume";
@@ -77,6 +90,8 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const store = useStore()
+const dialog = useDialog()
+const message = useMessage()
 const isStandalone = computed(() => store.state.mode === 'standalone')
 const selectedHostId = computed(() => store.state.selectedHostId as string | null)
 const filter = reactive({
@@ -85,7 +100,9 @@ const filter = reactive({
 });
 const nodes: any = ref([])
 const showEmpty = computed(() => isStandalone.value && !selectedHostId.value)
-const columns = [
+const checkedNames = ref([] as string[])
+const columns: any[] = [
+  { type: 'selection' },
   {
     title: t('fields.name'),
     key: "name",
@@ -135,6 +152,27 @@ async function remove(name: string, index: number) {
   state.data.splice(index, 1)
 }
 
+async function bulkDelete() {
+  if (!checkedNames.value.length) return
+  dialog.warning({
+    title: t('buttons.delete'),
+    content: t('prompts.delete'),
+    positiveText: t('buttons.confirm'),
+    negativeText: t('buttons.cancel'),
+    onPositiveClick: async () => {
+      const errors: string[] = []
+      for (const name of [...checkedNames.value]) {
+        try { await volumeApi.delete(filter.node, name) }
+        catch (e: any) { errors.push(`${name}: ${e?.message || e}`) }
+      }
+      checkedNames.value = []
+      if (errors.length) message.error(errors.join('\n'))
+      else message.success(t('buttons.delete'))
+      fetchData()
+    }
+  })
+}
+
 async function prune() {
   window.dialog.warning({
     title: t('dialogs.prune_volume.title'),
@@ -153,7 +191,12 @@ async function prune() {
 }
 
 watch(selectedHostId, (v) => {
-  if (v) { filter.node = v; fetchData() }
+  if (v) {
+    filter.node = v
+    state.data = [] as any
+    checkedNames.value = []
+    fetchData()
+  }
 })
 
 onMounted(async () => {

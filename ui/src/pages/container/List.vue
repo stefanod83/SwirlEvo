@@ -1,14 +1,20 @@
 <template>
   <x-page-header>
     <template #action>
-      <n-button secondary size="small" type="warning" @click="prune" :disabled="!filter.node">
-        <template #icon>
-          <n-icon>
-            <close-icon />
-          </n-icon>
-        </template>
-        {{ t('buttons.prune') }}
-      </n-button>
+      <n-space :size="8">
+        <n-button secondary size="small" @click="() => fetchData()">
+          <template #icon>
+            <n-icon><refresh-outline /></n-icon>
+          </template>
+          {{ t('buttons.refresh') || 'Refresh' }}
+        </n-button>
+        <n-button secondary size="small" type="warning" @click="prune" :disabled="!filter.node">
+          <template #icon>
+            <n-icon><close-icon /></n-icon>
+          </template>
+          {{ t('buttons.prune') }}
+        </n-button>
+      </n-space>
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
@@ -66,6 +72,7 @@ import {
 } from "naive-ui";
 import {
   CloseOutline as CloseIcon,
+  RefreshOutline,
 } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import containerApi from "@/api/container";

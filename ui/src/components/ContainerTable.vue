@@ -77,9 +77,18 @@ function projectOf(c: Container): string {
 const columns = computed(() => {
   const base: any[] = [
     {
+      title: t('fields.state'),
+      key: "state",
+      fixed: "left" as const,
+      width: 90,
+      render(c: Container) {
+        const type = c.state === 'running' ? 'success' : (c.state === 'paused' ? 'warning' : 'error')
+        return renderTag(c.state, type as any)
+      }
+    },
+    {
       title: t('fields.name'),
       key: "name",
-      fixed: "left" as const,
       render: (c: Container) => {
         const node = c.labels?.find(l => l.name === 'com.docker.swarm.node.id')
         const name = c.name.length > 32 ? c.name.substring(0, 32) + '...' : c.name
@@ -103,14 +112,6 @@ const columns = computed(() => {
     })
   }
   base.push(
-    {
-      title: t('fields.state'),
-      key: "state",
-      render(c: Container) {
-        const type = c.state === 'running' ? 'success' : (c.state === 'paused' ? 'warning' : 'error')
-        return renderTag(c.state, type as any)
-      }
-    },
     {
       title: t('fields.status'),
       key: "status",

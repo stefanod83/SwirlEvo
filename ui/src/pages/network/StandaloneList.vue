@@ -1,87 +1,136 @@
 <template>
   <x-page-header :subtitle="t('texts.records', { total: model.length }, model.length)">
     <template #action>
-      <n-button secondary size="small" :disabled="!selectedHostId" @click="$router.push({ name: 'std_network_new' })">
-        <template #icon>
-          <n-icon>
-            <add-icon />
-          </n-icon>
-        </template>
-        {{ t('buttons.new') }}
-      </n-button>
+      <n-space :size="8">
+        <n-button secondary size="small" @click="fetchData">
+          <template #icon>
+            <n-icon><refresh-outline /></n-icon>
+          </template>
+          {{ t('buttons.refresh') || 'Refresh' }}
+        </n-button>
+        <n-button secondary size="small" type="error" :disabled="!checkedIds.length" @click="bulkDelete">
+          <template #icon>
+            <n-icon><trash-outline /></n-icon>
+          </template>
+          {{ t('buttons.delete') }} ({{ checkedIds.length }})
+        </n-button>
+        <n-button secondary size="small" :disabled="!selectedHostId" @click="$router.push({ name: 'std_network_new' })">
+          <template #icon>
+            <n-icon><add-icon /></n-icon>
+          </template>
+          {{ t('buttons.new') }}
+        </n-button>
+      </n-space>
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
     <x-empty-host-prompt v-if="showEmpty" :resource="t('objects.network', 2)" />
-    <n-table v-else size="small" :bordered="true" :single-line="false">
-      <thead>
-        <tr>
-          <th>{{ t('fields.name') }}</th>
-          <th>{{ t('fields.id') }}</th>
-          <th>{{ t('fields.scope') }}</th>
-          <th>{{ t('fields.driver') }}</th>
-          <th>{{ t('fields.actions') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(r, index) of model" :key="r.name">
-          <td>{{ r.name }}</td>
-          <td>{{ r.id }}</td>
-          <td>
-            <n-tag round size="small" :type="r.scope === 'swarm' ? 'success' : 'default'">{{ r.scope }}</n-tag>
-          </td>
-          <td>
-            <n-tag round size="small" :type="r.driver === 'overlay' ? 'success' : 'default'">{{ r.driver }}</n-tag>
-          </td>
-          <td>
-            <n-popconfirm :show-icon="false" @positive-click="deleteNetwork(r.id, r.name, index)">
-              <template #trigger>
-                <n-button size="tiny" quaternary type="error">{{ t('buttons.delete') }}</n-button>
-              </template>
-              {{ t('prompts.delete') }}
-            </n-popconfirm>
-          </td>
-        </tr>
-      </tbody>
-    </n-table>
+    <n-data-table
+      v-else
+      :row-key="(row: any) => row.id"
+      size="small"
+      :columns="columns"
+      :data="model"
+      :loading="loading"
+      :checked-row-keys="checkedIds"
+      @update:checked-row-keys="(k: any) => checkedIds = k"
+      scroll-x="max-content"
+    />
   </n-space>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import {
-  NSpace,
-  NButton,
-  NTable,
-  NPopconfirm,
-  NTag,
-  NIcon,
+  NSpace, NButton, NDataTable, NIcon,
+  useDialog, useMessage,
 } from "naive-ui";
-import { AddOutline as AddIcon } from "@vicons/ionicons5";
+import { AddOutline as AddIcon, TrashOutline, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
 import networkApi from "@/api/network";
 import type { Network } from "@/api/network";
+import { renderButton, renderTag } from "@/utils/render";
 import { useStore } from "vuex";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const store = useStore()
+const dialog = useDialog()
+const message = useMessage()
 const selectedHostId = computed(() => store.state.selectedHostId as string | null)
 const showEmpty = computed(() => !selectedHostId.value)
-const model = ref([] as Network[]);
+const model = ref([] as Network[])
+const loading = ref(false)
+const checkedIds = ref([] as string[])
 
-async function deleteNetwork(id: string, name: string, index: number) {
-  await networkApi.delete(id, name, selectedHostId.value || '');
-  model.value.splice(index, 1)
+async function removeOne(id: string, name: string) {
+  await networkApi.delete(id, name, selectedHostId.value || '')
+  model.value = model.value.filter(n => n.id !== id)
 }
+
+async function bulkDelete() {
+  if (!checkedIds.value.length) return
+  dialog.warning({
+    title: t('buttons.delete'),
+    content: t('prompts.delete'),
+    positiveText: t('buttons.confirm'),
+    negativeText: t('buttons.cancel'),
+    onPositiveClick: async () => {
+      const errors: string[] = []
+      const ids = [...checkedIds.value]
+      for (const id of ids) {
+        const item = model.value.find(n => n.id === id)
+        if (!item) continue
+        try { await networkApi.delete(id, item.name, selectedHostId.value || '') }
+        catch (e: any) { errors.push(`${item.name}: ${e?.message || e}`) }
+      }
+      checkedIds.value = []
+      if (errors.length) message.error(errors.join('\n'))
+      else message.success(t('buttons.delete'))
+      fetchData()
+    }
+  })
+}
+
+const columns: any[] = [
+  { type: 'selection' },
+  { title: t('fields.name'), key: 'name' },
+  { title: t('fields.id'), key: 'id' },
+  {
+    title: t('fields.scope'),
+    key: 'scope',
+    render: (r: Network) => renderTag(r.scope, r.scope === 'swarm' ? 'success' : 'default' as any),
+  },
+  {
+    title: t('fields.driver'),
+    key: 'driver',
+    render: (r: Network) => renderTag(r.driver, r.driver === 'overlay' ? 'success' : 'default' as any),
+  },
+  {
+    title: t('fields.actions'),
+    key: 'actions',
+    width: 120,
+    render: (r: Network) => renderButton('error', t('buttons.delete'), () => removeOne(r.id, r.name), t('prompts.delete')),
+  },
+]
 
 async function fetchData() {
   if (!selectedHostId.value) { model.value = []; return }
-  let r = await networkApi.search(selectedHostId.value);
-  model.value = r.data || [];
+  loading.value = true
+  try {
+    const r = await networkApi.search(selectedHostId.value)
+    model.value = r.data || []
+  } finally {
+    loading.value = false
+  }
 }
 
-watch(selectedHostId, fetchData)
-onMounted(fetchData);
+watch(selectedHostId, () => {
+  model.value = []
+  checkedIds.value = []
+  fetchData()
+})
+
+onMounted(fetchData)
 </script>

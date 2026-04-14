@@ -40,6 +40,7 @@ export default {
         "force_delete": "Force delete",
         "import_redeploy": "Import & Redeploy",
         "download": "Download",
+        "refresh": "Refresh",
     },
     "perms": {
         "view": "View",

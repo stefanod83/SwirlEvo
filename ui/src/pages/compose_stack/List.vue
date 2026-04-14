@@ -1,14 +1,20 @@
 <template>
-  <x-page-header>
+  <x-page-header :subtitle="hostSubtitle">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'std_stack_new' })">
-        <template #icon>
-          <n-icon>
-            <add-icon />
-          </n-icon>
-        </template>
-        {{ t('buttons.new') }}
-      </n-button>
+      <n-space :size="8">
+        <n-button secondary size="small" @click="() => fetchData()">
+          <template #icon>
+            <n-icon><refresh-outline /></n-icon>
+          </template>
+          {{ t('buttons.refresh') || 'Refresh' }}
+        </n-button>
+        <n-button secondary size="small" @click="$router.push({ name: 'std_stack_new' })">
+          <template #icon>
+            <n-icon><add-icon /></n-icon>
+          </template>
+          {{ t('buttons.new') }}
+        </n-button>
+      </n-space>
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
@@ -63,6 +69,10 @@ const store = useStore()
 const selectedHostId = computed(() => store.state.selectedHostId as string | null)
 const filter = reactive({ hostId: '', name: '' })
 const showEmpty = computed(() => !selectedHostId.value)
+const hostSubtitle = computed(() => {
+  const h = (store.state.hosts as any[]).find(x => x.id === selectedHostId.value)
+  return h?.name || ''
+})
 
 function actionButton(type: 'default' | 'error' | 'warning' | 'success' | 'info', iconCmp: any, tooltip: string, disabled: boolean, onClick: () => void) {
   return h(NTooltip, { trigger: 'hover' }, {
@@ -110,9 +120,13 @@ function confirmRemove(s: ComposeStackSummary) {
 
 const columns = [
   {
-    title: t('objects.host'),
-    key: "hostName",
-    render: (s: ComposeStackSummary) => s.hostName || s.hostId || '',
+    title: t('fields.status'),
+    key: "status",
+    width: 90,
+    render: (s: ComposeStackSummary) => {
+      const type = s.status === 'active' ? 'success' : (s.status === 'partial' ? 'warning' : 'default')
+      return renderTag(s.status || '-', type as any)
+    }
   },
   {
     title: t('fields.name'),
@@ -125,14 +139,6 @@ const columns = [
       }
       return renderLink({ name: 'std_stack_detail', params: { id: s.id } }, s.name)
     },
-  },
-  {
-    title: t('fields.status'),
-    key: "status",
-    render: (s: ComposeStackSummary) => {
-      const type = s.status === 'active' ? 'success' : (s.status === 'partial' ? 'warning' : 'default')
-      return renderTag(s.status || '-', type as any)
-    }
   },
   {
     title: t('fields.services') || 'Services',

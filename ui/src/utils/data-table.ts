@@ -1,6 +1,18 @@
 import { isRef, onMounted, reactive } from "vue"
 import { t } from "@/locales";
 
+const PAGE_SIZE_KEY = 'tablePageSize'
+
+function loadPageSize(): number {
+    const raw = localStorage.getItem(PAGE_SIZE_KEY)
+    const n = raw ? parseInt(raw, 10) : 0
+    return n > 0 ? n : 10
+}
+
+function savePageSize(n: number) {
+    try { localStorage.setItem(PAGE_SIZE_KEY, String(n)) } catch {}
+}
+
 export function useDataTable(loader: Function, filter: Object | Function, autoFetch: boolean = true) {
     const state = reactive({
         loading: false,
@@ -9,10 +21,10 @@ export function useDataTable(loader: Function, filter: Object | Function, autoFe
     const pagination = reactive({
         page: 1,
         pageCount: 1,
-        pageSize: 10,
+        pageSize: loadPageSize(),
         itemCount: 0,
         showSizePicker: true,
-        pageSizes: [10, 20, 50],
+        pageSizes: [10, 20, 50, 100],
         prefix({ itemCount }: any) {
             return t('texts.records', { total: itemCount } as any, itemCount)
         }
@@ -39,6 +51,7 @@ export function useDataTable(loader: Function, filter: Object | Function, autoFe
     const changePageSize = function (size: number) {
         pagination.page = 1
         pagination.pageSize = size
+        savePageSize(size)
         fetchData()
     }
 
