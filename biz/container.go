@@ -13,7 +13,7 @@ import (
 )
 
 type ContainerBiz interface {
-	Search(ctx context.Context, node, name, status string, pageIndex, pageSize int) ([]*Container, int, error)
+	Search(ctx context.Context, node, name, status, project string, pageIndex, pageSize int) ([]*Container, int, error)
 	Find(ctx context.Context, node, id string) (ctr *Container, raw string, err error)
 	Delete(ctx context.Context, node, id, name string, user web.User) (err error)
 	FetchLogs(ctx context.Context, node, id string, lines int, timestamps bool) (stdout, stderr string, err error)
@@ -60,8 +60,8 @@ func (b *containerBiz) Find(ctx context.Context, node, id string) (c *Container,
 	return
 }
 
-func (b *containerBiz) Search(ctx context.Context, node, name, status string, pageIndex, pageSize int) (containers []*Container, total int, err error) {
-	list, total, err := b.d.ContainerList(ctx, node, name, status, pageIndex, pageSize)
+func (b *containerBiz) Search(ctx context.Context, node, name, status, project string, pageIndex, pageSize int) (containers []*Container, total int, err error) {
+	list, total, err := b.d.ContainerList(ctx, node, name, status, project, pageIndex, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -76,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import {
   NSpace,
   NGrid,
@@ -102,6 +102,7 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const store = useStore()
 const isStandalone = computed(() => store.state.mode === 'standalone')
+const selectedHostId = computed(() => store.state.selectedHostId as string | null)
 const summary = ref({
   nodeCount: 0,
   networkCount: 0,
@@ -113,9 +114,11 @@ const summary = ref({
 } as Summary)
 
 async function initData() {
-  const r = await systemApi.summarize();
+  const r = await systemApi.summarize(isStandalone.value && selectedHostId.value ? selectedHostId.value : '');
   summary.value = r.data as Summary;
 }
+
+watch(selectedHostId, () => { if (isStandalone.value) initData() })
 
 onMounted(() => {
   initData()

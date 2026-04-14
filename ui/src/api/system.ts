@@ -41,8 +41,8 @@ export class SystemApi {
         return ajax.get<Version>('/system/version')
     }
 
-    summarize() {
-        return ajax.get<Summary>('/system/summarize')
+    summarize(hostId: string = '') {
+        return ajax.get<Summary>('/system/summarize', { hostId })
     }
 
     mode() {

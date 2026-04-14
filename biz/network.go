@@ -10,10 +10,10 @@ import (
 )
 
 type NetworkBiz interface {
-	Search(ctx context.Context) ([]*Network, error)
-	Find(ctx context.Context, name string) (network *Network, raw string, err error)
-	Delete(ctx context.Context, id, name string, user web.User) (err error)
-	Create(ctx context.Context, n *Network, user web.User) (err error)
+	Search(ctx context.Context, node string) ([]*Network, error)
+	Find(ctx context.Context, node, name string) (network *Network, raw string, err error)
+	Delete(ctx context.Context, node, id, name string, user web.User) (err error)
+	Create(ctx context.Context, node string, n *Network, user web.User) (err error)
 	Disconnect(ctx context.Context, networkId, networkName, container string, user web.User) (err error)
 }
 
@@ -26,7 +26,7 @@ type networkBiz struct {
 	eb EventBiz
 }
 
-func (b *networkBiz) Create(ctx context.Context, n *Network, user web.User) (err error) {
+func (b *networkBiz) Create(ctx context.Context, node string, n *Network, user web.User) (err error) {
 	nc := &network.CreateOptions{
 		Driver:     n.Driver,
 		Scope:      n.Scope,
@@ -47,19 +47,19 @@ func (b *networkBiz) Create(ctx context.Context, n *Network, user web.User) (err
 			IPRange: c.Range,
 		})
 	}
-	err = b.d.NetworkCreate(ctx, n.Name, nc)
+	err = b.d.NetworkCreateOnNode(ctx, node, n.Name, nc)
 	if err != nil {
 		b.eb.CreateNetwork(EventActionCreate, n.Name, n.Name, user)
 	}
 	return
 }
 
-func (b *networkBiz) Find(ctx context.Context, name string) (nw *Network, raw string, err error) {
+func (b *networkBiz) Find(ctx context.Context, node, name string) (nw *Network, raw string, err error) {
 	var (
 		nr network.Inspect
 		r  []byte
 	)
-	nr, r, err = b.d.NetworkInspect(ctx, name)
+	nr, r, err = b.d.NetworkInspectOnNode(ctx, node, name)
 	if err == nil {
 		nw = newNetwork(&nr)
 		raw, err = indentJSON(r)
@@ -67,8 +67,8 @@ func (b *networkBiz) Find(ctx context.Context, name string) (nw *Network, raw st
 	return
 }
 
-func (b *networkBiz) Search(ctx context.Context) ([]*Network, error) {
-	list, err := b.d.NetworkList(ctx)
+func (b *networkBiz) Search(ctx context.Context, node string) ([]*Network, error) {
+	list, err := b.d.NetworkListOnNode(ctx, node)
 	if err != nil {
 		return nil, err
 	}
@@ -80,8 +80,8 @@ func (b *networkBiz) Search(ctx context.Context) ([]*Network, error) {
 	return networks, nil
 }
 
-func (b *networkBiz) Delete(ctx context.Context, id, name string, user web.User) (err error) {
-	err = b.d.NetworkRemove(ctx, name)
+func (b *networkBiz) Delete(ctx context.Context, node, id, name string, user web.User) (err error) {
+	err = b.d.NetworkRemoveOnNode(ctx, node, name)
 	if err == nil {
 		b.eb.CreateNetwork(EventActionDelete, id, name, user)
 	}

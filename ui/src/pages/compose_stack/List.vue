@@ -12,50 +12,44 @@
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
-    <n-space :size="12">
-      <n-select
-        filterable
-        clearable
+    <x-empty-host-prompt v-if="showEmpty" :resource="t('objects.stack', 2)" />
+    <template v-else>
+      <n-space :size="12">
+        <n-input size="small" v-model:value="filter.name" :placeholder="t('fields.name')" clearable />
+        <n-button size="small" type="primary" @click="() => fetchData()">{{ t('buttons.search') }}</n-button>
+      </n-space>
+      <n-data-table
+        remote
+        :row-key="(row: any) => row.hostId + '|' + row.name"
         size="small"
-        :consistent-menu-width="false"
-        :placeholder="t('objects.host')"
-        v-model:value="filter.hostId"
-        :options="hosts"
-        style="width: 240px"
-        v-if="hosts && hosts.length"
+        :columns="columns"
+        :data="state.data"
+        :pagination="pagination"
+        :loading="state.loading"
+        @update:page="fetchData"
+        @update-page-size="changePageSize"
+        scroll-x="max-content"
       />
-      <n-input size="small" v-model:value="filter.name" :placeholder="t('fields.name')" clearable />
-      <n-button size="small" type="primary" @click="() => fetchData()">{{ t('buttons.search') }}</n-button>
-    </n-space>
-    <n-data-table
-      remote
-      :row-key="(row: any) => row.hostId + '|' + row.name"
-      size="small"
-      :columns="columns"
-      :data="state.data"
-      :pagination="pagination"
-      :loading="state.loading"
-      @update:page="fetchData"
-      @update-page-size="changePageSize"
-      scroll-x="max-content"
-    />
+    </template>
   </n-space>
 </template>
 
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from "vue";
 import {
-  NSpace, NButton, NButtonGroup, NDataTable, NInput, NSelect, NIcon, NTooltip,
+  NSpace, NButton, NButtonGroup, NDataTable, NInput, NIcon, NTag, NTooltip,
   useDialog, useMessage,
 } from "naive-ui";
+import { computed, watch } from "vue";
+import { useStore } from "vuex";
+import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
 import {
   AddOutline as AddIcon,
-  PlayOutline, StopOutline, TrashOutline, CreateOutline, RefreshOutline,
+  PlayOutline, StopOutline, TrashOutline, CreateOutline, RefreshOutline, EyeOutline, DownloadOutline,
 } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import composeStackApi from "@/api/compose_stack";
 import type { ComposeStackSummary } from "@/api/compose_stack";
-import * as hostApi from "@/api/host";
 import { useDataTable } from "@/utils/data-table";
 import { renderLink, renderTag } from "@/utils/render";
 import { useRouter } from "vue-router";
@@ -65,8 +59,10 @@ const { t } = useI18n()
 const router = useRouter()
 const dialog = useDialog()
 const message = useMessage()
+const store = useStore()
+const selectedHostId = computed(() => store.state.selectedHostId as string | null)
 const filter = reactive({ hostId: '', name: '' })
-const hosts: any = ref([])
+const showEmpty = computed(() => !selectedHostId.value)
 
 function actionButton(type: 'default' | 'error' | 'warning' | 'success' | 'info', iconCmp: any, tooltip: string, disabled: boolean, onClick: () => void) {
   return h(NTooltip, { trigger: 'hover' }, {
@@ -80,13 +76,35 @@ async function runAction(fn: () => Promise<any>, msg: string) {
   catch (e: any) { message.error(e?.message || String(e)) }
 }
 
+async function downloadStack(id: string, name: string) {
+  try {
+    const r = await composeStackApi.find(id)
+    const content = r.data?.content || ''
+    if (!content) { message.warning('No compose content available'); return }
+    const blob = new Blob([content], { type: 'application/x-yaml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${name || 'stack'}.yml`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    message.error(e?.message || String(e))
+  }
+}
+
 function confirmRemove(s: ComposeStackSummary) {
+  const isExternal = !s.id
   dialog.warning({
     title: t('buttons.delete'),
     content: t('prompts.delete'),
     positiveText: t('buttons.confirm'),
     negativeText: t('buttons.cancel'),
-    onPositiveClick: () => runAction(() => composeStackApi.remove(s.id, false), t('buttons.delete')),
+    onPositiveClick: () => runAction(() => composeStackApi.remove(
+      isExternal ? { hostId: s.hostId, name: s.name, removeVolumes: false } : { id: s.id, removeVolumes: false }
+    ), t('buttons.delete')),
   })
 }
 
@@ -100,7 +118,11 @@ const columns = [
     title: t('fields.name'),
     key: "name",
     render: (s: ComposeStackSummary) => {
-      if (!s.id) return s.name + ' (external)'
+      if (!s.id) {
+        const link = renderLink({ name: 'std_stack_external_detail', params: { hostId: s.hostId, name: s.name } }, s.name)
+        const badge = h(NTag, { size: 'small', type: 'default', round: true, style: 'margin-left:6px' }, { default: () => t('fields.external') || 'external' })
+        return h('span', null, [link, badge])
+      }
       return renderLink({ name: 'std_stack_detail', params: { id: s.id } }, s.name)
     },
   },
@@ -126,16 +148,29 @@ const columns = [
     key: "actions",
     width: 260,
     render(s: ComposeStackSummary) {
-      if (!s.id) return h('span', { style: 'color:#999' }, t('texts.external_stack') || 'external — import to manage')
+      if (!s.id) {
+        const externalButtons = [
+          actionButton('success', PlayOutline, t('buttons.start'), s.status === 'active',
+            () => runAction(() => composeStackApi.start({ hostId: s.hostId, name: s.name }), t('buttons.start'))),
+          actionButton('warning', StopOutline, t('buttons.stop'), s.status === 'inactive',
+            () => runAction(() => composeStackApi.stop({ hostId: s.hostId, name: s.name }), t('buttons.stop'))),
+          actionButton('info', EyeOutline, t('buttons.view') || 'Details', false,
+            () => router.push({ name: 'std_stack_external_detail', params: { hostId: s.hostId, name: s.name } })),
+          actionButton('error', TrashOutline, t('buttons.delete'), false, () => confirmRemove(s)),
+        ]
+        return h(NButtonGroup, null, { default: () => externalButtons })
+      }
       const buttons = [
         actionButton('success', PlayOutline, t('buttons.start'), s.status === 'active',
-          () => runAction(() => composeStackApi.start(s.id), t('buttons.start'))),
+          () => runAction(() => composeStackApi.start({ id: s.id }), t('buttons.start'))),
         actionButton('warning', StopOutline, t('buttons.stop'), s.status === 'inactive',
-          () => runAction(() => composeStackApi.stop(s.id), t('buttons.stop'))),
+          () => runAction(() => composeStackApi.stop({ id: s.id }), t('buttons.stop'))),
         actionButton('info', RefreshOutline, t('buttons.deploy'), false,
           () => router.push({ name: 'std_stack_edit', params: { id: s.id } })),
         actionButton('default', CreateOutline, t('buttons.edit'), false,
           () => router.push({ name: 'std_stack_edit', params: { id: s.id } })),
+        actionButton('default', DownloadOutline, t('buttons.download') || 'Download', false,
+          () => downloadStack(s.id, s.name)),
         actionButton('error', TrashOutline, t('buttons.delete'), false, () => confirmRemove(s)),
       ]
       return h(NButtonGroup, null, { default: () => buttons })
@@ -144,10 +179,15 @@ const columns = [
 ];
 const { state, pagination, fetchData, changePageSize } = useDataTable(composeStackApi.search, filter, false)
 
-onMounted(async () => {
-  const r = await hostApi.search('', '', 1, 1000)
-  const data = r.data as any
-  hosts.value = (data?.items || []).map((h: any) => ({ label: h.name, value: h.id }))
-  fetchData()
+watch(selectedHostId, (v) => {
+  filter.hostId = v || ''
+  if (v) fetchData()
+})
+
+onMounted(() => {
+  if (selectedHostId.value) {
+    filter.hostId = selectedHostId.value
+    fetchData()
+  }
 })
 </script>

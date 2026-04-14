@@ -61,11 +61,13 @@ import {
 import XPageHeader from "@/components/PageHeader.vue";
 import * as hostApi from "@/api/host";
 import type { HostInfo } from "@/api/host";
+import { useStore } from "vuex";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
 const router = useRouter();
+const store = useStore();
 const testing = ref(false);
 const testResult = ref(null as null | { success: boolean; info?: HostInfo; error?: string });
 
@@ -90,6 +92,7 @@ const authOptions = [
 
 async function save() {
   await hostApi.save(model);
+  await store.dispatch('reloadHosts')
   router.push({ name: 'host_list' })
 }
 

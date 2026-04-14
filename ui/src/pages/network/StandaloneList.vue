@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="t('texts.records', { total: model.length }, model.length)">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'network_new' })">
+      <n-button secondary size="small" :disabled="!selectedHostId" @click="$router.push({ name: 'std_network_new' })">
         <template #icon>
           <n-icon>
             <add-icon />
@@ -25,23 +25,13 @@
       </thead>
       <tbody>
         <tr v-for="(r, index) of model" :key="r.name">
-          <td>
-            <x-anchor :url="{ name: 'network_detail', params: { name: r.name } }">{{ r.name }}</x-anchor>
-          </td>
+          <td>{{ r.name }}</td>
           <td>{{ r.id }}</td>
           <td>
-            <n-tag
-              round
-              size="small"
-              :type="r.scope === 'swarm' ? 'success' : 'default'"
-            >{{ r.scope }}</n-tag>
+            <n-tag round size="small" :type="r.scope === 'swarm' ? 'success' : 'default'">{{ r.scope }}</n-tag>
           </td>
           <td>
-            <n-tag
-              round
-              size="small"
-              :type="r.driver === 'overlay' ? 'success' : 'default'"
-            >{{ r.driver }}</n-tag>
+            <n-tag round size="small" :type="r.driver === 'overlay' ? 'success' : 'default'">{{ r.driver }}</n-tag>
           </td>
           <td>
             <n-popconfirm :show-icon="false" @positive-click="deleteNetwork(r.id, r.name, index)">
@@ -58,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import {
   NSpace,
   NButton,
@@ -68,32 +58,30 @@ import {
   NIcon,
 } from "naive-ui";
 import { AddOutline as AddIcon } from "@vicons/ionicons5";
-import XAnchor from "@/components/Anchor.vue";
 import XPageHeader from "@/components/PageHeader.vue";
+import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
 import networkApi from "@/api/network";
 import type { Network } from "@/api/network";
-import { computed, watch } from "vue";
 import { useStore } from "vuex";
-import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const store = useStore()
-const isStandalone = computed(() => store.state.mode === 'standalone')
 const selectedHostId = computed(() => store.state.selectedHostId as string | null)
-const showEmpty = computed(() => isStandalone.value && !selectedHostId.value)
+const showEmpty = computed(() => !selectedHostId.value)
 const model = ref([] as Network[]);
 
 async function deleteNetwork(id: string, name: string, index: number) {
-  await networkApi.delete(id, name);
+  await networkApi.delete(id, name, selectedHostId.value || '');
   model.value.splice(index, 1)
 }
 
 async function fetchData() {
-  let r = await networkApi.search();
+  if (!selectedHostId.value) { model.value = []; return }
+  let r = await networkApi.search(selectedHostId.value);
   model.value = r.data || [];
 }
 
-watch(selectedHostId, (v) => { if (v || !isStandalone.value) fetchData() })
-onMounted(() => { if (!showEmpty.value) fetchData() })
+watch(selectedHostId, fetchData)
+onMounted(fetchData);
 </script>

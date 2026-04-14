@@ -73,6 +73,27 @@ func systemSummarize(d *docker.Docker, hb biz.HostBiz) web.HandlerFunc {
 		defer cancel()
 
 		if misc.IsStandalone() {
+			hostID := c.Query("hostId")
+			if hostID != "" {
+				host, fErr := hb.Find(ctx, hostID)
+				if fErr != nil {
+					return fErr
+				}
+				if host == nil {
+					return success(c, summary)
+				}
+				summary.HostCount = 1
+				if host.Status == "connected" {
+					if n, e := d.ContainerCount(ctx, host.ID); e == nil {
+						summary.ContainerCount = n
+					}
+					if n, e := d.ImageCount(ctx, host.ID); e == nil {
+						summary.ImageCount = n
+					}
+				}
+				return success(c, summary)
+			}
+
 			hosts, hErr := hb.GetAll(ctx)
 			if hErr != nil {
 				return hErr
@@ -89,7 +110,6 @@ func systemSummarize(d *docker.Docker, hb biz.HostBiz) web.HandlerFunc {
 					summary.ImageCount += n
 				}
 			}
-			// StackCount will be filled in Phase E when compose stacks exist
 			return success(c, summary)
 		}
 

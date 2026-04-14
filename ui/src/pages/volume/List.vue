@@ -20,32 +20,35 @@
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
-    <n-space :size="12">
-      <n-select
-        filterable
+    <x-empty-host-prompt v-if="showEmpty" :resource="t('objects.volume', 2)" />
+    <template v-else>
+      <n-space :size="12">
+        <n-select
+          v-if="!isStandalone && nodes && nodes.length"
+          filterable
+          size="small"
+          :consistent-menu-width="false"
+          :placeholder="t('objects.node')"
+          v-model:value="filter.node"
+          :options="nodes"
+          style="width: 200px"
+        />
+        <n-input size="small" v-model:value="filter.name" :placeholder="t('fields.name')" clearable />
+        <n-button size="small" type="primary" @click="() => fetchData()">{{ t('buttons.search') }}</n-button>
+      </n-space>
+      <n-data-table
+        remote
+        :row-key="row => row.name"
         size="small"
-        :consistent-menu-width="false"
-        :placeholder="t('objects.node')"
-        v-model:value="filter.node"
-        :options="nodes"
-        style="width: 200px"
-        v-if="nodes && nodes.length"
+        :columns="columns"
+        :data="state.data"
+        :pagination="pagination"
+        :loading="state.loading"
+        @update:page="fetchData"
+        @update-page-size="changePageSize"
+        scroll-x="max-content"
       />
-      <n-input size="small" v-model:value="filter.name" :placeholder="t('fields.name')" clearable />
-      <n-button size="small" type="primary" @click="() => fetchData()">{{ t('buttons.search') }}</n-button>
-    </n-space>
-    <n-data-table
-      remote
-      :row-key="row => row.name"
-      size="small"
-      :columns="columns"
-      :data="state.data"
-      :pagination="pagination"
-      :loading="state.loading"
-      @update:page="fetchData"
-      @update-page-size="changePageSize"
-      scroll-x="max-content"
-    />
+    </template>
   </n-space>
 </template>
 
@@ -64,17 +67,24 @@ import { AddOutline as AddIcon, CloseOutline as CloseIcon } from "@vicons/ionico
 import XPageHeader from "@/components/PageHeader.vue";
 import volumeApi from "@/api/volume";
 import type { Volume } from "@/api/volume";
-import { listHostsOrNodes } from "@/utils/host-node";
+import nodeApi from "@/api/node";
+import { useStore } from "vuex";
+import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
+import { computed, watch } from "vue";
 import { useDataTable } from "@/utils/data-table";
 import { formatSize, renderButton, renderLink, renderTag } from "@/utils/render";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+const store = useStore()
+const isStandalone = computed(() => store.state.mode === 'standalone')
+const selectedHostId = computed(() => store.state.selectedHostId as string | null)
 const filter = reactive({
   node: '',
   name: '',
 });
 const nodes: any = ref([])
+const showEmpty = computed(() => isStandalone.value && !selectedHostId.value)
 const columns = [
   {
     title: t('fields.name'),
@@ -142,11 +152,21 @@ async function prune() {
   })
 }
 
+watch(selectedHostId, (v) => {
+  if (v) { filter.node = v; fetchData() }
+})
+
 onMounted(async () => {
-  nodes.value = await listHostsOrNodes()
-  if (nodes.value.length) {
-    filter.node = nodes.value[0].value
+  if (isStandalone.value) {
+    if (selectedHostId.value) {
+      filter.node = selectedHostId.value
+      fetchData()
+    }
+  } else {
+    const r = await nodeApi.list(true)
+    nodes.value = (r.data || []).map((n: any) => ({ label: n.name, value: n.id }))
+    if (nodes.value.length) filter.node = nodes.value[0].value
+    fetchData()
   }
-  fetchData()
 })
 </script>

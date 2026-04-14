@@ -33,6 +33,7 @@
           <img src="/favicon.ico" v-if="!isMobile" />
           Swirl
         </n-text>
+        <x-host-selector style="margin-left: 16px" />
       </div>
       <n-space justify="end" align="center" class="header-right" :size="0">
         <div style="margin-right: 10px; line-height: 56px">
@@ -147,6 +148,7 @@ import { RouterView, useRouter, useRoute } from "vue-router";
 import { useStore } from "vuex";
 import { useIsMobile, useIsTablet } from "@/utils";
 import { findMenuValue, renderMenuLabel, buildMenuOptions, findActiveOptions } from "@/router/menu";
+import XHostSelector from "@/components/HostSelector.vue";
 import systemApi from "@/api/system";
 import type { Version } from "@/api/system";
 import { Mutations } from "@/store/mutations";
@@ -191,10 +193,15 @@ function logout() {
   router.push("/login");
 }
 
-watch(() => route.path, (_path: string) => {
-  let keys = findActiveOptions(menuOptions.value, route).map((opt: any) => opt.key) as string[]
-  expandedKeys.value = keys;
-})
+function ensureActiveExpanded() {
+  const keys = findActiveOptions(menuOptions.value, route).map((opt: any) => opt.key) as string[]
+  // union with user-expanded keys, so manual expansion is preserved but active
+  // parent is always open.
+  const union = new Set([...expandedKeys.value, ...keys])
+  expandedKeys.value = Array.from(union)
+}
+
+watch(() => route.path, ensureActiveExpanded, { immediate: true })
 
 onMounted(async () => {
   const r = await systemApi.version();

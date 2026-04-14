@@ -57,6 +57,7 @@ func containerSearch(b biz.ContainerBiz) web.HandlerFunc {
 		Node      string `json:"node" bind:"node"`
 		Name      string `json:"name" bind:"name"`
 		Status    string `json:"status" bind:"status"`
+		Project   string `json:"project" bind:"project"`
 		PageIndex int    `json:"pageIndex" bind:"pageIndex"`
 		PageSize  int    `json:"pageSize" bind:"pageSize"`
 	}
@@ -72,7 +73,7 @@ func containerSearch(b biz.ContainerBiz) web.HandlerFunc {
 			ctx, cancel := misc.Context(defaultTimeout)
 			defer cancel()
 
-			containers, total, err = b.Search(ctx, args.Node, args.Name, args.Status, args.PageIndex, args.PageSize)
+			containers, total, err = b.Search(ctx, args.Node, args.Name, args.Status, args.Project, args.PageIndex, args.PageSize)
 		}
 
 		if err != nil {

@@ -28,6 +28,33 @@ export interface ComposeStackSummary {
     updatedAt?: string;
 }
 
+export interface ComposeContainerBrief {
+    id: string;
+    name: string;
+    service?: string;
+    image: string;
+    state: string;
+    status: string;
+    ports?: { ip: string; privatePort: number; publicPort: number; type: string }[];
+    created: string;
+}
+
+export interface ComposeStackDetail {
+    id?: string;
+    hostId: string;
+    hostName?: string;
+    name: string;
+    content?: string;
+    reconstructed: boolean;
+    status: string;
+    managed: boolean;
+    services: string[];
+    networks: string[];
+    volumes: string[];
+    containers: ComposeContainerBrief[];
+    updatedAt?: string;
+}
+
 export interface ComposeStackSearchArgs {
     hostId?: string;
     name?: string;
@@ -35,9 +62,20 @@ export interface ComposeStackSearchArgs {
     pageSize: number;
 }
 
+export interface ActionRef {
+    id?: string;
+    hostId?: string;
+    name?: string;
+    removeVolumes?: boolean;
+}
+
 export class ComposeStackApi {
     find(id: string) {
         return ajax.get<ComposeStack>('/compose-stack/find', { id })
+    }
+
+    findDetail(hostId: string, name: string) {
+        return ajax.get<ComposeStackDetail>('/compose-stack/find-detail', { hostId, name })
     }
 
     search(args: ComposeStackSearchArgs) {
@@ -52,16 +90,20 @@ export class ComposeStackApi {
         return ajax.post<{ id: string }>('/compose-stack/deploy', { ...stack, pullImages })
     }
 
-    start(id: string) {
-        return ajax.post<Result<Object>>('/compose-stack/start', { id })
+    import_(stack: ComposeStack, redeploy = false, pullImages = false) {
+        return ajax.post<{ id: string }>('/compose-stack/import', { ...stack, redeploy, pullImages })
     }
 
-    stop(id: string) {
-        return ajax.post<Result<Object>>('/compose-stack/stop', { id })
+    start(ref: ActionRef) {
+        return ajax.post<Result<Object>>('/compose-stack/start', ref)
     }
 
-    remove(id: string, removeVolumes = false) {
-        return ajax.post<Result<Object>>('/compose-stack/remove', { id, removeVolumes })
+    stop(ref: ActionRef) {
+        return ajax.post<Result<Object>>('/compose-stack/stop', ref)
+    }
+
+    remove(ref: ActionRef) {
+        return ajax.post<Result<Object>>('/compose-stack/remove', ref)
     }
 }
 

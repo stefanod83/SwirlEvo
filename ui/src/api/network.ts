@@ -42,20 +42,20 @@ export interface FindResult {
 }
 
 export class NetworkApi {
-    find(name: string) {
-        return ajax.get<FindResult>('/network/find', { name })
+    find(name: string, node = '') {
+        return ajax.get<FindResult>('/network/find', { name, node })
     }
 
-    search() {
-        return ajax.get<Network[]>('/network/search')
+    search(node = '') {
+        return ajax.get<Network[]>('/network/search', { node })
     }
 
-    save(network: Network) {
-        return ajax.post<Result<Object>>('/network/save', network)
+    save(network: Network, node = '') {
+        return ajax.post<Result<Object>>('/network/save', { ...network, node })
     }
 
-    delete(id: string, name: string) {
-        return ajax.post<Result<Object>>('/network/delete', { id, name })
+    delete(id: string, name: string, node = '') {
+        return ajax.post<Result<Object>>('/network/delete', { id, name, node })
     }
 
     disconnect(networkId: string, networkName: string, container: string) {

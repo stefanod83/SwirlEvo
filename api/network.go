@@ -32,7 +32,8 @@ func networkSearch(nb biz.NetworkBiz) web.HandlerFunc {
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
 
-		networks, err := nb.Search(ctx)
+		node := c.Query("node")
+		networks, err := nb.Search(ctx, node)
 		if err != nil {
 			return err
 		}
@@ -45,8 +46,9 @@ func networkFind(nb biz.NetworkBiz) web.HandlerFunc {
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
 
+		node := c.Query("node")
 		name := c.Query("name")
-		network, raw, err := nb.Find(ctx, name)
+		network, raw, err := nb.Find(ctx, node, name)
 		if err != nil {
 			return err
 		}
@@ -56,6 +58,7 @@ func networkFind(nb biz.NetworkBiz) web.HandlerFunc {
 
 func networkDelete(nb biz.NetworkBiz) web.HandlerFunc {
 	type Args struct {
+		Node string `json:"node"`
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
@@ -66,21 +69,25 @@ func networkDelete(nb biz.NetworkBiz) web.HandlerFunc {
 			ctx, cancel := misc.Context(defaultTimeout)
 			defer cancel()
 
-			err = nb.Delete(ctx, args.ID, args.Name, c.User())
+			err = nb.Delete(ctx, args.Node, args.ID, args.Name, c.User())
 		}
 		return ajax(c, err)
 	}
 }
 
 func networkSave(nb biz.NetworkBiz) web.HandlerFunc {
+	type Args struct {
+		Node string `json:"node"`
+		biz.Network
+	}
 	return func(c web.Context) error {
-		n := &biz.Network{}
-		err := c.Bind(n, true)
+		a := &Args{}
+		err := c.Bind(a, true)
 		if err == nil {
 			ctx, cancel := misc.Context(defaultTimeout)
 			defer cancel()
 
-			err = nb.Create(ctx, n, c.User())
+			err = nb.Create(ctx, a.Node, &a.Network, c.User())
 		}
 		return ajax(c, err)
 	}

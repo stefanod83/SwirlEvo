@@ -33,6 +33,64 @@ func (d *Docker) NetworkList(ctx context.Context) (networks []network.Inspect, e
 	return
 }
 
+// NetworkListOnNode returns networks on the given host (standalone mode).
+// Empty node falls back to NetworkList (primary client / swarm).
+func (d *Docker) NetworkListOnNode(ctx context.Context, node string) ([]network.Inspect, error) {
+	if node == "" {
+		return d.NetworkList(ctx)
+	}
+	c, err := d.agent(node)
+	if err != nil {
+		return nil, err
+	}
+	list, err := c.NetworkList(ctx, network.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	return list, nil
+}
+
+// NetworkCreateOnNode creates a network on the given host.
+func (d *Docker) NetworkCreateOnNode(ctx context.Context, node, name string, options *network.CreateOptions) error {
+	if node == "" {
+		return d.NetworkCreate(ctx, name, options)
+	}
+	c, err := d.agent(node)
+	if err != nil {
+		return err
+	}
+	resp, err := c.NetworkCreate(ctx, name, *options)
+	if err == nil && resp.Warning != "" {
+		d.logger.Warnf("network '%s' was created but got warning: %s", name, resp.Warning)
+	}
+	return err
+}
+
+// NetworkRemoveOnNode removes a network on the given host.
+func (d *Docker) NetworkRemoveOnNode(ctx context.Context, node, name string) error {
+	if node == "" {
+		return d.NetworkRemove(ctx, name)
+	}
+	c, err := d.agent(node)
+	if err != nil {
+		return err
+	}
+	return c.NetworkRemove(ctx, name)
+}
+
+// NetworkInspectOnNode inspects a network on the given host.
+func (d *Docker) NetworkInspectOnNode(ctx context.Context, node, name string) (network.Inspect, []byte, error) {
+	if node == "" {
+		return d.NetworkInspect(ctx, name)
+	}
+	c, err := d.agent(node)
+	if err != nil {
+		return network.Inspect{}, nil, err
+	}
+	return c.NetworkInspectWithRaw(ctx, name, network.InspectOptions{})
+}
+
 // NetworkCount return number of networks.
 func (d *Docker) NetworkCount(ctx context.Context) (count int, err error) {
 	err = d.call(func(c *client.Client) (err error) {

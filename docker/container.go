@@ -39,7 +39,7 @@ func (d *Docker) ContainerListAll(ctx context.Context, node string) ([]container
 }
 
 // ContainerList return containers on the host.
-func (d *Docker) ContainerList(ctx context.Context, node, name, status string, pageIndex, pageSize int) (containers []container.Summary, total int, err error) {
+func (d *Docker) ContainerList(ctx context.Context, node, name, status, project string, pageIndex, pageSize int) (containers []container.Summary, total int, err error) {
 	var c *client.Client
 	c, err = d.agent(node)
 	if err != nil {
@@ -54,6 +54,9 @@ func (d *Docker) ContainerList(ctx context.Context, node, name, status string, p
 	}
 	if name != "" {
 		opts.Filters.Add("name", name)
+	}
+	if project != "" {
+		opts.Filters.Add("label", "com.docker.compose.project="+project)
 	}
 
 	containers, err = c.ContainerList(ctx, opts)

@@ -75,9 +75,11 @@ import XPageHeader from "@/components/PageHeader.vue";
 import XAnchor from "@/components/Anchor.vue";
 import * as hostApi from "@/api/host";
 import type { Host } from "@/api/host";
+import { useStore } from "vuex";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+const store = useStore();
 const model = ref([] as Host[]);
 const total = ref(0);
 
@@ -93,6 +95,7 @@ async function deleteHost(id: string, name: string, index: number) {
   await hostApi.remove(id, name);
   model.value.splice(index, 1)
   total.value--
+  await store.dispatch('reloadHosts')
 }
 
 async function syncHost(id: string) {

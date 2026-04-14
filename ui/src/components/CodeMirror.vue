@@ -40,12 +40,16 @@ export default defineComponent({
     readonly: {
       type: Boolean,
       default: false
+    },
+    height: {
+      type: String,
+      default: '',
     }
   },
   setup(props, context) {
     const themeVars = useThemeVars()
     const store = useStore();
-    const { modelValue, defaultValue, readonly } = toRefs(props);
+    const { modelValue, defaultValue, readonly, height } = toRefs(props);
     const editorRef = ref();
     let editor: CodeMirror.EditorFromTextArea | null;
 
@@ -74,9 +78,20 @@ export default defineComponent({
       editor.on("change", () => {
         context.emit("update:modelValue", editor?.getValue());
       });
-      if (defaultValue.value) {
+      // If modelValue was populated before the editor was mounted (typical when
+      // CodeMirror lives inside a lazy-rendered tab), the watch above will not
+      // trigger — push the value here.
+      if (modelValue.value) {
+        editor.setValue(modelValue.value);
+      } else if (defaultValue.value) {
         editor.setValue(defaultValue.value);
       }
+      if (height.value) {
+        editor.setSize(null, height.value);
+      }
+      // Force a refresh so the editor lays out correctly when mounted inside
+      // a previously-hidden tab pane.
+      setTimeout(() => editor?.refresh(), 50);
     });
     onBeforeUnmount(() => {
       if (null !== editor) {

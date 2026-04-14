@@ -18,13 +18,52 @@ import (
 type ComposeStackBiz interface {
 	Search(ctx context.Context, args *dao.ComposeStackSearchArgs) ([]*ComposeStackSummary, int, error)
 	Find(ctx context.Context, id string) (*dao.ComposeStack, error)
+	// FindDetail returns the enriched detail of a stack (managed or external).
+	FindDetail(ctx context.Context, hostID, name string) (*ComposeStackDetail, error)
 	// Save persists the compose stack without deploying. Pass an empty ID to create a new one.
 	Save(ctx context.Context, stack *dao.ComposeStack, user web.User) (string, error)
 	// Deploy parses + applies the compose file. If the stack does not exist yet it is persisted first.
 	Deploy(ctx context.Context, stack *dao.ComposeStack, pullImages bool, user web.User) (string, error)
+	// Import promotes an external stack to managed. If stack.Content is empty,
+	// the engine reconstructs a YAML from running containers. If redeploy is
+	// true, the stack is (re)deployed against the imported/edited YAML.
+	Import(ctx context.Context, stack *dao.ComposeStack, redeploy, pullImages bool, user web.User) (string, error)
 	Start(ctx context.Context, id string, user web.User) error
 	Stop(ctx context.Context, id string, user web.User) error
 	Remove(ctx context.Context, id string, removeVolumes bool, user web.User) error
+	// External actions — act directly on a discovered stack by (hostID, name).
+	StartExternal(ctx context.Context, hostID, name string, user web.User) error
+	StopExternal(ctx context.Context, hostID, name string, user web.User) error
+	RemoveExternal(ctx context.Context, hostID, name string, removeVolumes bool, user web.User) error
+}
+
+// ComposeStackDetail is the enriched detail returned for a single stack.
+type ComposeStackDetail struct {
+	ID            string                  `json:"id,omitempty"`
+	HostID        string                  `json:"hostId"`
+	HostName      string                  `json:"hostName,omitempty"`
+	Name          string                  `json:"name"`
+	Content       string                  `json:"content,omitempty"`
+	Reconstructed bool                    `json:"reconstructed"`
+	Status        string                  `json:"status"`
+	Managed       bool                    `json:"managed"`
+	Services      []string                `json:"services"`
+	Networks      []string                `json:"networks"`
+	Volumes       []string                `json:"volumes"`
+	Containers    []ComposeContainerBrief `json:"containers"`
+	UpdatedAt     string                  `json:"updatedAt,omitempty"`
+}
+
+// ComposeContainerBrief is a lightweight container summary embedded in a stack detail.
+type ComposeContainerBrief struct {
+	ID      string           `json:"id"`
+	Name    string           `json:"name"`
+	Service string           `json:"service,omitempty"`
+	Image   string           `json:"image"`
+	State   string           `json:"state"`
+	Status  string           `json:"status"`
+	Ports   []*ContainerPort `json:"ports,omitempty"`
+	Created string           `json:"created"`
 }
 
 // ComposeStackSummary is returned in list responses.
@@ -316,6 +355,189 @@ func toLower(b byte) byte {
 		return b + 32
 	}
 	return b
+}
+
+// FindDetail returns a ComposeStackDetail for the given project on a host,
+// merging persisted metadata (if any) with live discovery and optional YAML
+// reconstruction for external stacks.
+func (b *composeStackBiz) FindDetail(ctx context.Context, hostID, name string) (*ComposeStackDetail, error) {
+	host, err := b.hb.Find(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	if host == nil {
+		return nil, errors.New("host not found")
+	}
+	if host.Status != "connected" {
+		return nil, errors.New("host is not connected")
+	}
+	cli, err := b.d.Hosts.GetClient(host.ID, host.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	engine := compose.NewStandaloneEngine(cli)
+
+	pd, err := engine.GetProject(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	detail := &ComposeStackDetail{
+		HostID:   host.ID,
+		HostName: host.Name,
+		Name:     name,
+		Status:   pd.Status,
+		Services: pd.Services,
+		Networks: pd.Networks,
+		Volumes:  pd.Volumes,
+	}
+
+	// Map container summaries to brief form.
+	for _, c := range pd.Containers {
+		cname := ""
+		if len(c.Names) > 0 {
+			cname = c.Names[0]
+		}
+		svc := c.Labels[compose.LabelService]
+		brief := ComposeContainerBrief{
+			ID:      c.ID,
+			Name:    cname,
+			Service: svc,
+			Image:   c.Image,
+			State:   c.State,
+			Status:  c.Status,
+			Created: formatTime(time.Unix(c.Created, 0)),
+		}
+		for _, p := range c.Ports {
+			brief.Ports = append(brief.Ports, &ContainerPort{
+				IP:          p.IP,
+				PrivatePort: p.PrivatePort,
+				PublicPort:  p.PublicPort,
+				Type:        p.Type,
+			})
+		}
+		detail.Containers = append(detail.Containers, brief)
+	}
+
+	// Overlay persisted record when present.
+	persisted, err := b.di.ComposeStackGetByName(ctx, hostID, name)
+	if err != nil {
+		return nil, err
+	}
+	if persisted != nil {
+		detail.ID = persisted.ID
+		detail.Managed = true
+		detail.Content = persisted.Content
+		detail.UpdatedAt = formatTime(time.Time(persisted.UpdatedAt))
+		return detail, nil
+	}
+
+	// External stack: best-effort YAML reconstruction.
+	if yaml, rErr := engine.ReconstructCompose(ctx, name); rErr == nil {
+		detail.Content = yaml
+		detail.Reconstructed = true
+	}
+	return detail, nil
+}
+
+// Import promotes an external (discovered) stack to managed. If the content is
+// empty the engine reconstructs a YAML from the running containers.
+// When redeploy is true the imported stack is (re)deployed with the YAML,
+// fully recreating its containers. When false the record is just persisted and
+// the running containers remain untouched.
+func (b *composeStackBiz) Import(ctx context.Context, stack *dao.ComposeStack, redeploy, pullImages bool, user web.User) (string, error) {
+	if stack.HostID == "" || stack.Name == "" {
+		return "", errors.New("hostId and name are required")
+	}
+
+	// Prevent duplicates.
+	if existing, err := b.di.ComposeStackGetByName(ctx, stack.HostID, stack.Name); err != nil {
+		return "", err
+	} else if existing != nil {
+		return "", errors.New("stack already managed")
+	}
+
+	if stack.Content == "" {
+		host, err := b.hb.Find(ctx, stack.HostID)
+		if err != nil {
+			return "", err
+		}
+		if host == nil {
+			return "", errors.New("host not found")
+		}
+		cli, err := b.d.Hosts.GetClient(host.ID, host.Endpoint)
+		if err != nil {
+			return "", err
+		}
+		engine := compose.NewStandaloneEngine(cli)
+		yaml, err := engine.ReconstructCompose(ctx, stack.Name)
+		if err != nil {
+			return "", err
+		}
+		stack.Content = yaml
+	}
+
+	if redeploy {
+		id, err := b.Deploy(ctx, stack, pullImages, user)
+		return id, err
+	}
+	// no redeploy: just persist. Status reflects current live state.
+	stack.Status = "active"
+	id, err := b.Save(ctx, stack, user)
+	return id, err
+}
+
+// StartExternal starts all containers of an unmanaged project on a host.
+func (b *composeStackBiz) StartExternal(ctx context.Context, hostID, name string, user web.User) error {
+	cli, err := b.hostClient(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	engine := compose.NewStandaloneEngine(cli)
+	if err := engine.Start(ctx, name); err != nil {
+		return err
+	}
+	b.eb.CreateStack(EventActionDeploy, name, user)
+	return nil
+}
+
+// StopExternal stops all running containers of an unmanaged project on a host.
+func (b *composeStackBiz) StopExternal(ctx context.Context, hostID, name string, user web.User) error {
+	cli, err := b.hostClient(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	engine := compose.NewStandaloneEngine(cli)
+	if err := engine.Stop(ctx, name); err != nil {
+		return err
+	}
+	b.eb.CreateStack(EventActionShutdown, name, user)
+	return nil
+}
+
+// RemoveExternal removes all containers of an unmanaged project on a host.
+func (b *composeStackBiz) RemoveExternal(ctx context.Context, hostID, name string, removeVolumes bool, user web.User) error {
+	cli, err := b.hostClient(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	engine := compose.NewStandaloneEngine(cli)
+	if err := engine.Remove(ctx, name, removeVolumes); err != nil {
+		return err
+	}
+	b.eb.CreateStack(EventActionDelete, name, user)
+	return nil
+}
+
+func (b *composeStackBiz) hostClient(ctx context.Context, hostID string) (*dockerclient.Client, error) {
+	host, err := b.hb.Find(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	if host == nil {
+		return nil, errors.New("host not found")
+	}
+	return b.d.Hosts.GetClient(host.ID, host.Endpoint)
 }
 
 func init() {

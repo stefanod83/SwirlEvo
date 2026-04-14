@@ -1,7 +1,7 @@
 <template>
   <x-page-header>
     <template #action>
-      <n-button secondary size="small" type="warning" @click="prune">
+      <n-button secondary size="small" type="warning" @click="prune" :disabled="!filter.node">
         <template #icon>
           <n-icon>
             <close-icon />
@@ -12,166 +12,101 @@
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
-    <n-space :size="12">
-      <n-select
-        filterable
-        size="small"
-        :consistent-menu-width="false"
-        :placeholder="isStandalone ? t('objects.host') : t('objects.node')"
-        v-model:value="filter.node"
-        :options="nodes"
-        @update:value="fetchData"
-        style="width: 240px"
-        v-if="nodes && nodes.length"
+    <x-empty-host-prompt v-if="showEmpty" :resource="t('objects.container', 2)" />
+    <template v-else>
+      <n-space :size="12">
+        <n-select
+          v-if="!isStandalone && nodes && nodes.length"
+          filterable
+          size="small"
+          :consistent-menu-width="false"
+          :placeholder="t('objects.node')"
+          v-model:value="filter.node"
+          :options="nodes"
+          @update:value="() => fetchData()"
+          style="width: 240px"
+        />
+        <n-select
+          v-if="isStandalone && filter.node"
+          size="small"
+          :consistent-menu-width="false"
+          :placeholder="t('objects.stack')"
+          v-model:value="filter.project"
+          :options="stackOptions"
+          @update:value="() => fetchData()"
+          style="width: 220px"
+        />
+        <n-input size="small" v-model:value="filter.name" :placeholder="t('fields.name')" clearable />
+        <n-button size="small" type="primary" @click="() => fetchData()">{{ t('buttons.search') }}</n-button>
+      </n-space>
+      <x-container-table
+        :node="filter.node"
+        :data="state.data as any"
+        :loading="state.loading"
+        :pagination="pagination"
+        :show-stack-column="isStandalone"
+        @refresh="fetchData"
+        @update:page="fetchData"
+        @update-page-size="changePageSize"
       />
-      <n-input size="small" v-model:value="filter.name" :placeholder="t('fields.name')" clearable />
-      <n-button size="small" type="primary" @click="() => fetchData()">{{ t('buttons.search') }}</n-button>
-    </n-space>
-    <n-data-table
-      remote
-      :row-key="(row: any) => row.id"
-      size="small"
-      :columns="columns"
-      :data="state.data"
-      :pagination="pagination"
-      :loading="state.loading"
-      @update:page="fetchData"
-      @update-page-size="changePageSize"
-      scroll-x="max-content"
-    />
+    </template>
   </n-space>
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import {
   NSpace,
   NButton,
-  NButtonGroup,
-  NDataTable,
   NInput,
-  NSelect,
   NIcon,
-  NTooltip,
+  NSelect,
   useDialog,
   useMessage,
 } from "naive-ui";
 import {
   CloseOutline as CloseIcon,
-  PlayOutline,
-  StopOutline,
-  RefreshOutline,
-  PauseOutline,
-  FlashOffOutline,
-  TrashOutline,
-  EyeOutline,
 } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import containerApi from "@/api/container";
-import type { Container } from "@/api/container";
-import { listHostsOrNodes } from "@/utils/host-node";
+import composeStackApi from "@/api/compose_stack";
+import nodeApi from "@/api/node";
+import XContainerTable from "@/components/ContainerTable.vue";
+import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
 import { useDataTable } from "@/utils/data-table";
-import { formatSize, renderLink, renderTag } from "@/utils/render";
-import { useRouter } from "vue-router";
+import { formatSize } from "@/utils/render";
 import { useStore } from "vuex";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
-const router = useRouter()
 const store = useStore()
 const dialog = useDialog()
 const message = useMessage()
 const isStandalone = computed(() => store.state.mode === 'standalone')
-const filter = reactive({ node: '', name: '' });
+const selectedHostId = computed(() => store.state.selectedHostId as string | null)
+const filter = reactive({ node: '', name: '', project: '' })
 const nodes: any = ref([])
+const stackOptions: any = ref([])
+const showEmpty = computed(() => isStandalone.value && !selectedHostId.value)
 
-function actionButton(type: 'default' | 'error' | 'warning' | 'success' | 'info', iconCmp: any, tooltip: string, disabled: boolean, onClick: () => void) {
-  return h(NTooltip, { trigger: 'hover' }, {
-    trigger: () => h(NButton, {
-      size: 'tiny', quaternary: true, type, disabled, onClick,
-    }, { icon: () => h(NIcon, null, { default: () => h(iconCmp) }) }),
-    default: () => tooltip,
-  })
-}
+const { state, pagination, fetchData, changePageSize } = useDataTable(containerApi.search, filter, false)
 
-async function runAction(fn: () => Promise<any>, successMsg: string) {
+async function loadStacks() {
+  if (!isStandalone.value || !filter.node) {
+    stackOptions.value = []
+    return
+  }
   try {
-    await fn();
-    message.success(successMsg);
-    await fetchData();
-  } catch (e: any) {
-    message.error(e?.message || String(e))
+    const r = await composeStackApi.search({ hostId: filter.node, pageIndex: 1, pageSize: 1000 })
+    const items = (r.data as any)?.items || []
+    stackOptions.value = [
+      { label: t('fields.all_stacks'), value: '' },
+      ...items.map((s: any) => ({ label: s.name, value: s.name }))
+    ]
+  } catch {
+    stackOptions.value = []
   }
 }
-
-function confirmDelete(c: Container) {
-  dialog.warning({
-    title: t('buttons.delete'),
-    content: t('prompts.delete'),
-    positiveText: t('buttons.confirm'),
-    negativeText: t('buttons.cancel'),
-    onPositiveClick: () => runAction(() => containerApi.delete(filter.node, c.id, c.name), t('buttons.delete')),
-  })
-}
-
-const columns = [
-  {
-    title: t('fields.name'),
-    key: "name",
-    fixed: "left" as const,
-    render: (c: Container) => {
-      const node = c.labels?.find(l => l.name === 'com.docker.swarm.node.id')
-      const name = c.name.length > 32 ? c.name.substring(0, 32) + '...' : c.name
-      return renderLink({ name: 'container_detail', params: { id: c.id, node: node?.value || filter.node || '-' } }, name)
-    },
-  },
-  {
-    title: t('objects.image'),
-    key: "image",
-  },
-  {
-    title: t('fields.state'),
-    key: "state",
-    render(c: Container) {
-      const type = c.state === 'running' ? 'success' : (c.state === 'paused' ? 'warning' : 'error')
-      return renderTag(c.state, type as any)
-    }
-  },
-  {
-    title: t('fields.status'),
-    key: "status",
-  },
-  {
-    title: t('fields.created_at'),
-    key: "createdAt"
-  },
-  {
-    title: t('fields.actions'),
-    key: "actions",
-    width: 320,
-    render(c: Container) {
-      const running = c.state === 'running'
-      const paused = c.state === 'paused'
-      const buttons = [
-        actionButton('success', PlayOutline, t('buttons.start'), running || paused,
-          () => runAction(() => containerApi.start(filter.node, c.id, c.name), t('buttons.start'))),
-        actionButton('warning', StopOutline, t('buttons.stop'), !running,
-          () => runAction(() => containerApi.stop(filter.node, c.id, c.name), t('buttons.stop'))),
-        actionButton('info', RefreshOutline, t('buttons.restart'), !running,
-          () => runAction(() => containerApi.restart(filter.node, c.id, c.name), t('buttons.restart'))),
-        actionButton('warning', PauseOutline, paused ? t('buttons.unpause') : t('buttons.pause'), !running && !paused,
-          () => runAction(() => paused ? containerApi.unpause(filter.node, c.id, c.name) : containerApi.pause(filter.node, c.id, c.name), paused ? t('buttons.unpause') : t('buttons.pause'))),
-        actionButton('error', FlashOffOutline, t('buttons.kill'), !running,
-          () => runAction(() => containerApi.kill(filter.node, c.id, c.name), t('buttons.kill'))),
-        actionButton('default', EyeOutline, t('buttons.view') || 'Details', false,
-          () => router.push({ name: 'container_detail', params: { id: c.id, node: filter.node || '-' } })),
-        actionButton('error', TrashOutline, t('buttons.delete'), running || paused, () => confirmDelete(c)),
-      ]
-      return h(NButtonGroup, null, { default: () => buttons })
-    },
-  },
-];
-const { state, pagination, fetchData, changePageSize } = useDataTable(containerApi.search, filter, false)
 
 async function prune() {
   dialog.warning({
@@ -190,11 +125,29 @@ async function prune() {
   })
 }
 
-onMounted(async () => {
-  nodes.value = await listHostsOrNodes()
-  if (nodes.value.length) {
-    filter.node = nodes.value[0].value
+watch(selectedHostId, async (v) => {
+  if (v) {
+    filter.node = v
+    filter.project = ''
+    await loadStacks()
+    fetchData()
   }
-  fetchData()
+})
+
+onMounted(async () => {
+  if (isStandalone.value) {
+    if (selectedHostId.value) {
+      filter.node = selectedHostId.value
+      await loadStacks()
+      fetchData()
+    }
+  } else {
+    const r = await nodeApi.list(true)
+    nodes.value = (r.data || []).map((n: any) => ({ label: n.name, value: n.id }))
+    if (nodes.value.length) {
+      filter.node = nodes.value[0].value
+    }
+    fetchData()
+  }
 })
 </script>

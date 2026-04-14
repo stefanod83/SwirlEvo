@@ -318,6 +318,14 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    name: 'std_stack_external_detail',
+    path: "/standalone/stacks/ext/:hostId/:name",
+    component: () => import('../pages/compose_stack/View.vue'),
+    meta: {
+      auth: 'stack.view',
+    }
+  },
+  {
     name: 'std_stack_edit',
     path: "/standalone/stacks/:id/edit",
     component: () => import('../pages/compose_stack/Edit.vue'),
@@ -328,9 +336,17 @@ const routes: RouteRecordRaw[] = [
   {
     name: 'std_network_list',
     path: "/standalone/networks",
-    component: () => import('../pages/network/List.vue'),
+    component: () => import('../pages/network/StandaloneList.vue'),
     meta: {
       auth: 'network.view',
+    }
+  },
+  {
+    name: 'std_network_new',
+    path: "/standalone/networks/new",
+    component: () => import('../pages/network/StandaloneNew.vue'),
+    meta: {
+      auth: 'network.edit',
     }
   },
   {

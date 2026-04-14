@@ -29,8 +29,7 @@
       </n-grid>
       <n-form-item :label="t('fields.content')" path="content">
         <x-code-mirror
-          v-model:value="model.content"
-          mode="yaml"
+          v-model="model.content"
           :style="{ width: '100%', height: '55vh', border: '1px solid #ddd' }"
         />
       </n-form-item>

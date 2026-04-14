@@ -259,12 +259,13 @@ function buildStandaloneMenu(): MenuOption[] {
           path: "/swarm/registries",
           icon: renderIcon(BusinessOutline),
         },
-        {
-          label: t('objects.network'),
-          key: "std_networks",
-          path: "/standalone/networks",
-          icon: renderIcon(GlobeOutline),
-        },
+      ],
+    },
+    {
+      label: t('fields.local'),
+      key: "local",
+      icon: renderIcon(CubeOutline),
+      children: [
         {
           label: t('objects.container'),
           key: "std_container_list",
@@ -277,13 +278,12 @@ function buildStandaloneMenu(): MenuOption[] {
           path: "/standalone/stacks",
           icon: renderIcon(AlbumsOutline),
         },
-      ],
-    },
-    {
-      label: t('fields.local'),
-      key: "local",
-      icon: renderIcon(CubeOutline),
-      children: [
+        {
+          label: t('objects.network'),
+          key: "std_network_list",
+          path: "/standalone/networks",
+          icon: renderIcon(GlobeOutline),
+        },
         {
           label: t('objects.image'),
           key: "images",

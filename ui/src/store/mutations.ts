@@ -4,4 +4,6 @@ export enum Mutations {
     SetPreference = "SET_PREFERENCE",
     SetAjaxLoading = "SET_AJAX_LOADING",
     SetMode = "SET_MODE",
+    SetSelectedHost = "SET_SELECTED_HOST",
+    SetHosts = "SET_HOSTS",
 }

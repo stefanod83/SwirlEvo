@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	composetypes "github.com/cuigh/swirl/docker/compose/types"
@@ -15,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+	"gopkg.in/yaml.v2"
 )
 
 // Standard docker-compose labels — same naming as the official CLI so containers
@@ -455,4 +457,284 @@ func containsStr(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// ProjectDetail collects the live state of a compose project on a host.
+type ProjectDetail struct {
+	Name       string
+	Status     string
+	Services   []string
+	Containers []container.Summary
+	Networks   []string
+	Volumes    []string
+}
+
+// GetProject returns the full project detail by scanning containers with the
+// matching com.docker.compose.project label.
+func (e *StandaloneEngine) GetProject(ctx context.Context, projectName string) (*ProjectDetail, error) {
+	containers, err := e.listProjectContainers(ctx, projectName, true)
+	if err != nil {
+		return nil, err
+	}
+	pd := &ProjectDetail{Name: projectName, Containers: containers}
+
+	serviceSet := map[string]struct{}{}
+	netSet := map[string]struct{}{}
+	volSet := map[string]struct{}{}
+	running := 0
+
+	for _, c := range containers {
+		if c.State == "running" {
+			running++
+		}
+		if svc, ok := c.Labels[LabelService]; ok && svc != "" {
+			serviceSet[svc] = struct{}{}
+		}
+		for _, m := range c.Mounts {
+			if m.Type == mount.TypeVolume && m.Name != "" {
+				volSet[m.Name] = struct{}{}
+			}
+		}
+		if c.NetworkSettings != nil {
+			for n := range c.NetworkSettings.Networks {
+				netSet[n] = struct{}{}
+			}
+		}
+	}
+
+	switch {
+	case len(containers) == 0:
+		pd.Status = "inactive"
+	case running == 0:
+		pd.Status = "inactive"
+	case running == len(containers):
+		pd.Status = "active"
+	default:
+		pd.Status = "partial"
+	}
+
+	pd.Services = sortedSetKeys(serviceSet)
+	pd.Networks = sortedSetKeys(netSet)
+	pd.Volumes = sortedSetKeys(volSet)
+	return pd, nil
+}
+
+func sortedSetKeys(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ReconstructCompose inspects each container of a project and emits a best-effort
+// docker-compose v3 YAML that can be fed back to Deploy. It covers the subset of
+// fields actually supported by StandaloneEngine.createAndStart. Fields not
+// derivable at runtime (build, healthcheck definition, secrets, configs,
+// deploy, depends_on) are omitted — the caller is expected to surface a
+// warning in the UI.
+func (e *StandaloneEngine) ReconstructCompose(ctx context.Context, projectName string) (string, error) {
+	containers, err := e.listProjectContainers(ctx, projectName, true)
+	if err != nil {
+		return "", err
+	}
+	if len(containers) == 0 {
+		return "", fmt.Errorf("project %q has no containers", projectName)
+	}
+
+	type portMapping struct {
+		Target    uint32 `yaml:"target"`
+		Published uint32 `yaml:"published,omitempty"`
+		Protocol  string `yaml:"protocol,omitempty"`
+	}
+	type volumeMapping struct {
+		Type     string `yaml:"type,omitempty"`
+		Source   string `yaml:"source,omitempty"`
+		Target   string `yaml:"target"`
+		ReadOnly bool   `yaml:"read_only,omitempty"`
+	}
+	type serviceSpec struct {
+		Image       string            `yaml:"image,omitempty"`
+		Entrypoint  []string          `yaml:"entrypoint,omitempty"`
+		Command     []string          `yaml:"command,omitempty"`
+		Environment []string          `yaml:"environment,omitempty"`
+		Labels      map[string]string `yaml:"labels,omitempty"`
+		Ports       []portMapping     `yaml:"ports,omitempty"`
+		Volumes     []volumeMapping   `yaml:"volumes,omitempty"`
+		Networks    []string          `yaml:"networks,omitempty"`
+		Restart     string            `yaml:"restart,omitempty"`
+		User        string            `yaml:"user,omitempty"`
+		WorkingDir  string            `yaml:"working_dir,omitempty"`
+		Hostname    string            `yaml:"hostname,omitempty"`
+		Tty         bool              `yaml:"tty,omitempty"`
+		StdinOpen   bool              `yaml:"stdin_open,omitempty"`
+		Privileged  bool              `yaml:"privileged,omitempty"`
+		ReadOnly    bool              `yaml:"read_only,omitempty"`
+		CapAdd      []string          `yaml:"cap_add,omitempty"`
+		CapDrop     []string          `yaml:"cap_drop,omitempty"`
+		DNS         []string          `yaml:"dns,omitempty"`
+		DNSSearch   []string          `yaml:"dns_search,omitempty"`
+	}
+	type spec struct {
+		Version  string                     `yaml:"version,omitempty"`
+		Services map[string]*serviceSpec    `yaml:"services"`
+		Networks map[string]map[string]any  `yaml:"networks,omitempty"`
+		Volumes  map[string]map[string]any  `yaml:"volumes,omitempty"`
+	}
+
+	out := spec{
+		Version:  "3.8",
+		Services: map[string]*serviceSpec{},
+		Networks: map[string]map[string]any{},
+		Volumes:  map[string]map[string]any{},
+	}
+
+	for _, sum := range containers {
+		// prefer the compose service label; fall back to a cleaned container name
+		svcName := sum.Labels[LabelService]
+		if svcName == "" {
+			svcName = strings.TrimPrefix(sum.Names[0], "/")
+			svcName = strings.TrimPrefix(svcName, projectName+"_")
+			svcName = strings.TrimSuffix(svcName, "_1")
+		}
+		if _, dup := out.Services[svcName]; dup {
+			continue // one service may have multiple containers; reuse the first
+		}
+
+		full, err := e.cli.ContainerInspect(ctx, sum.ID)
+		if err != nil {
+			return "", fmt.Errorf("inspect %s: %w", sum.ID[:12], err)
+		}
+
+		s := &serviceSpec{
+			Image:      normalizeImage(full.Config.Image),
+			WorkingDir: full.Config.WorkingDir,
+			User:       full.Config.User,
+			Hostname:   full.Config.Hostname,
+			Tty:        full.Config.Tty,
+			StdinOpen:  full.Config.OpenStdin,
+			Labels:     stripInternalLabels(full.Config.Labels),
+		}
+		if len(full.Config.Entrypoint) > 0 {
+			s.Entrypoint = []string(full.Config.Entrypoint)
+		}
+		if len(full.Config.Cmd) > 0 {
+			s.Command = []string(full.Config.Cmd)
+		}
+		for _, e := range full.Config.Env {
+			s.Environment = append(s.Environment, e)
+		}
+
+		// Ports
+		if full.HostConfig != nil {
+			for port, bindings := range full.HostConfig.PortBindings {
+				tgt := uint32(port.Int())
+				proto := port.Proto()
+				if len(bindings) == 0 {
+					s.Ports = append(s.Ports, portMapping{Target: tgt, Protocol: cleanProto(proto)})
+					continue
+				}
+				for _, b := range bindings {
+					var pub uint32
+					fmt.Sscanf(b.HostPort, "%d", &pub)
+					s.Ports = append(s.Ports, portMapping{Target: tgt, Published: pub, Protocol: cleanProto(proto)})
+				}
+			}
+			// Mounts
+			for _, m := range full.HostConfig.Mounts {
+				vm := volumeMapping{Target: m.Target, ReadOnly: m.ReadOnly}
+				switch m.Type {
+				case mount.TypeBind:
+					vm.Type = "bind"
+					vm.Source = m.Source
+				case mount.TypeTmpfs:
+					vm.Type = "tmpfs"
+				case mount.TypeVolume:
+					vm.Type = "volume"
+					vm.Source = strings.TrimPrefix(m.Source, projectName+"_")
+					if strings.HasPrefix(m.Source, projectName+"_") {
+						out.Volumes[vm.Source] = map[string]any{}
+					} else {
+						vm.Source = m.Source
+						out.Volumes[m.Source] = map[string]any{"external": true, "name": m.Source}
+					}
+				}
+				s.Volumes = append(s.Volumes, vm)
+			}
+			// Restart
+			switch full.HostConfig.RestartPolicy.Name {
+			case container.RestartPolicyAlways:
+				s.Restart = "always"
+			case container.RestartPolicyOnFailure:
+				s.Restart = "on-failure"
+			case container.RestartPolicyUnlessStopped:
+				s.Restart = "unless-stopped"
+			}
+			s.Privileged = full.HostConfig.Privileged
+			s.ReadOnly = full.HostConfig.ReadonlyRootfs
+			s.CapAdd = append(s.CapAdd, full.HostConfig.CapAdd...)
+			s.CapDrop = append(s.CapDrop, full.HostConfig.CapDrop...)
+			s.DNS = append(s.DNS, full.HostConfig.DNS...)
+			s.DNSSearch = append(s.DNSSearch, full.HostConfig.DNSSearch...)
+		}
+
+		// Networks
+		if full.NetworkSettings != nil {
+			for n := range full.NetworkSettings.Networks {
+				short := strings.TrimPrefix(n, projectName+"_")
+				s.Networks = append(s.Networks, short)
+				if strings.HasPrefix(n, projectName+"_") {
+					out.Networks[short] = map[string]any{}
+				} else {
+					out.Networks[short] = map[string]any{"external": true, "name": n}
+				}
+			}
+			sort.Strings(s.Networks)
+		}
+
+		out.Services[svcName] = s
+	}
+
+	buf, err := yaml.Marshal(&out)
+	if err != nil {
+		return "", err
+	}
+	header := "# Reconstructed from running containers. Review before deploying.\n" +
+		"# Fields not derivable at runtime (build, healthcheck, secrets, configs,\n" +
+		"# deploy, depends_on) are omitted.\n\n"
+	return header + string(buf), nil
+}
+
+func normalizeImage(ref string) string {
+	if i := strings.Index(ref, "@sha256:"); i > 0 {
+		return ref[:i]
+	}
+	return ref
+}
+
+func cleanProto(p string) string {
+	if p == "tcp" {
+		return ""
+	}
+	return p
+}
+
+// stripInternalLabels removes labels added by Swirl/docker-compose internals so
+// the reconstructed YAML doesn't echo them back.
+func stripInternalLabels(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range in {
+		if strings.HasPrefix(k, "com.docker.compose.") || strings.HasPrefix(k, "com.swirl.compose.") {
+			continue
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
