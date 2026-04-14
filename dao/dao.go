@@ -82,7 +82,7 @@ type Interface interface {
 	HostSearch(ctx context.Context, args *HostSearchArgs) (hosts []*Host, count int, err error)
 	HostCreate(ctx context.Context, host *Host) error
 	HostUpdate(ctx context.Context, host *Host) error
-	HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer string) error
+	HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer, os, arch string, cpus int, memory int64) error
 	HostDelete(ctx context.Context, id string) error
 
 	ComposeStackGet(ctx context.Context, id string) (*ComposeStack, error)

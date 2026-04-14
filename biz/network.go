@@ -48,7 +48,7 @@ func (b *networkBiz) Create(ctx context.Context, node string, n *Network, user w
 		})
 	}
 	err = b.d.NetworkCreateOnNode(ctx, node, n.Name, nc)
-	if err != nil {
+	if err == nil {
 		b.eb.CreateNetwork(EventActionCreate, n.Name, n.Name, user)
 	}
 	return

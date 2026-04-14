@@ -46,6 +46,15 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    name: 'oauth_complete',
+    path: '/oauth-complete',
+    component: () => import('../pages/OAuthComplete.vue'),
+    meta: {
+      layout: "empty",
+      auth: '*',
+    }
+  },
+  {
     name: 'profile',
     path: "/profile",
     component: () => import('../pages/Profile.vue'),

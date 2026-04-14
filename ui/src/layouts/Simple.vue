@@ -3,7 +3,7 @@
     <n-layout-header bordered>
       <n-text tag="div" class="logo" :depth="1" @click="$router.push('/')">
         <img src="/favicon.ico"/>
-        <span>Swirl</span>
+        <span>SwirlEvo</span>
       </n-text>
     </n-layout-header>
     <n-layout-content

@@ -31,7 +31,7 @@
         </n-popover>
         <n-text tag="div" class="logo" :depth="1" @click="$router.push('/')">
           <img src="/favicon.ico" v-if="!isMobile" />
-          Swirl
+          SwirlEvo
         </n-text>
         <x-host-selector style="margin-left: 16px" />
       </div>
@@ -188,9 +188,28 @@ function selectOption(key: any) {
   }
 }
 
-function logout() {
+async function logout() {
+  // If we have a Keycloak id_token, try to fetch the RP-initiated logout URL.
+  // Failure falls back to local logout only.
+  let kcLogoutURL = ''
+  const idToken = (() => { try { return localStorage.getItem('kc_id_token') || '' } catch { return '' } })()
+  if (idToken) {
+    try {
+      const r = await systemApi.authProviders()
+      if (r.data?.keycloak) {
+        const resp = await fetch('/api/auth/keycloak/logout-url?idToken=' + encodeURIComponent(idToken) + '&redirect=' + encodeURIComponent(window.location.origin + '/login'))
+        const body = await resp.json()
+        if (body?.data?.url) kcLogoutURL = body.data.url
+      }
+    } catch { /* ignore — fall back to local */ }
+    try { localStorage.removeItem('kc_id_token') } catch { /* noop */ }
+  }
   store.commit(Mutations.Logout);
-  router.push("/login");
+  if (kcLogoutURL) {
+    window.location.href = kcLogoutURL
+  } else {
+    router.push("/login");
+  }
 }
 
 function ensureActiveExpanded() {

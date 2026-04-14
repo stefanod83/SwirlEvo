@@ -52,6 +52,7 @@ const (
 	EventActionPause      EventAction = "Pause"
 	EventActionUnpause    EventAction = "Unpause"
 	EventActionRename     EventAction = "Rename"
+	EventActionImport     EventAction = "Import"
 )
 
 type EventBiz interface {

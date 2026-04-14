@@ -56,6 +56,17 @@ Activate with `MODE=standalone`.
 
 ## Standalone UX
 
+### Hosts detail auto-sync
+
+After **Add host** or **Update host**, Swirl calls `Info()` on the Docker
+daemon of that host and persists the result. The Hosts list then shows engine
+version, OS, architecture, CPU count and memory without requiring a manual
+**Sync** action.
+
+If the host is unreachable at save time the record is still written, but with
+`Status=error` and `Error=<network message>`. A later manual **Sync** or a
+successful Update will recover it.
+
 ### Global host selector
 
 In standalone mode, the header (next to the Swirl logo) shows a **Host** dropdown populated from the registered hosts. Its value is shared across all per-host pages via the Vuex store and **persisted in `localStorage`** — so reloading the browser restores the last selection.
@@ -125,6 +136,55 @@ log:
     type: console
     layout: '[{L}]{T}: {M}{N}'
 ```
+
+## Authentication
+
+Swirl supports three login paths; you can enable any combination at runtime
+via **Settings**.
+
+### Internal (default)
+
+Administrator account is created on first boot at `/init`. Additional internal
+users can be added under **System → Users**. Passwords are hashed locally.
+
+### LDAP
+
+Enable under **Settings → LDAP**. Supports simple bind or search-bind flows.
+Attributes `displayName` / `mail` are mapped to the Swirl user record on first
+login; subsequent logins refresh them. LDAP users cannot change their password
+from the profile page.
+
+### Keycloak (OIDC)
+
+Enable under **Settings → Keycloak**. Each field in the panel carries an
+inline *Swirl / Keycloak* hint explaining what the value does on both sides.
+In summary:
+
+1. In your Keycloak realm, create a client of type **OpenID Connect**,
+   access type **confidential**, with **Standard flow** enabled.
+2. Paste the Swirl redirect URI (shown read-only in the panel —
+   `https://<swirl-host>/api/auth/keycloak/callback`) into the client's
+   **Valid Redirect URIs**.
+3. Copy the client ID + the **Credentials → Secret** into the Swirl panel
+   along with the realm's issuer URL
+   (`https://<kc-host>/realms/<realm-name>`).
+4. For group-to-role mapping, create a `groups` **Client Scope** with a
+   *Group Membership* mapper (Full group path **OFF** to send only the group
+   name), assign it to the Swirl client, then fill the **Group → Role**
+   matrix in the Swirl panel.
+5. Optional: tick **Enable upstream logout** so that Swirl's own logout also
+   hits `/protocol/openid-connect/logout`, terminating the SSO session. The
+   Keycloak client must have **Front Channel Logout** enabled for this flow.
+
+On first successful login Swirl creates a local user record with
+`type=keycloak` (if *Auto-create user* is on). Subsequent logins refresh
+`name` and `email` from the ID-token claims and re-evaluate the group → role
+mapping. Swirl stores the OIDC provider metadata in an in-memory cache with
+1-hour TTL; if you rotate the client secret or change the issuer URL you can
+restart Swirl for an immediate refresh.
+
+References: [Keycloak OIDC clients](https://www.keycloak.org/docs/latest/server_admin/#_oidc_clients),
+[Group Membership mapper](https://www.keycloak.org/docs/latest/server_admin/#_group-mappers).
 
 ## Deployment
 
@@ -218,7 +278,8 @@ The Containers page in standalone mode also exposes:
 
 ## UI utilities
 
-- **Refresh** button in every list page (header action) re-runs `fetchData()`.
+- **Refresh** button in every list page (header action) re-runs `fetchData()` — including the **Hosts** page.
+- **Race-free host switch**: the `useDataTable` helper tags every `fetchData()` call with a monotonic request generation. Responses from stale calls (e.g. rapid host switches on Images/Volumes) are discarded so the UI never mixes rows from two different hosts.
 - **Page-size persistence**: the chosen rows-per-page value (10/20/50/100) is saved to `localStorage` (key `tablePageSize`) and reapplied to every table after reload. Implemented in `ui/src/utils/data-table.ts::useDataTable`.
 - **Active menu group** stays expanded while navigating inside it (`Default.vue::ensureActiveExpanded` runs on mount and on each route change, doing a union with user-expanded keys to preserve manual collapses elsewhere).
 - **State column on the left** in Containers and Stacks tables for quicker scanning.

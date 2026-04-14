@@ -68,8 +68,8 @@ func (b *hostBiz) Create(ctx context.Context, host *dao.Host, user web.User) err
 	err := b.di.HostCreate(ctx, host)
 	if err == nil {
 		b.eb.CreateHost(EventActionCreate, host.ID, host.Name, user)
-		// Try initial connection
-		go b.syncHost(host.ID, host.Endpoint)
+		// Synchronous probe so the caller sees populated details on redirect.
+		b.syncHost(host.ID, host.Endpoint)
 	}
 	return err
 }
@@ -81,9 +81,9 @@ func (b *hostBiz) Update(ctx context.Context, host *dao.Host, user web.User) err
 	err := b.di.HostUpdate(ctx, host)
 	if err == nil {
 		b.eb.CreateHost(EventActionUpdate, host.ID, host.Name, user)
-		// Refresh client with new endpoint
+		// Refresh client with new endpoint + re-probe synchronously.
 		b.d.Hosts.RemoveClient(host.ID)
-		go b.syncHost(host.ID, host.Endpoint)
+		b.syncHost(host.ID, host.Endpoint)
 	}
 	return err
 }
@@ -127,11 +127,12 @@ func (b *hostBiz) syncHost(id, endpoint string) {
 
 	info, err := b.d.Hosts.TestConnection(ctx, endpoint)
 	if err != nil {
-		_ = b.di.HostUpdateStatus(context.Background(), id, "error", err.Error(), "")
+		_ = b.di.HostUpdateStatus(context.Background(), id, "error", err.Error(), "", "", "", 0, 0)
 		return
 	}
 
-	_ = b.di.HostUpdateStatus(context.Background(), id, "connected", "", info.ServerVersion)
+	_ = b.di.HostUpdateStatus(context.Background(), id, "connected", "",
+		info.ServerVersion, info.OSType, info.Architecture, info.NCPU, info.MemTotal)
 	// Ensure client is cached for future operations
 	_, _ = b.d.Hosts.GetClient(id, endpoint)
 }

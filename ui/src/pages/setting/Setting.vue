@@ -103,6 +103,150 @@
       </n-form>
     </x-panel>
     <x-panel
+      title="Keycloak"
+      :subtitle="t('tips.keycloak')"
+      divider="bottom"
+      :collapsed="panel !== 'keycloak'"
+    >
+      <template #action>
+        <n-button
+          secondary
+          strong
+          class="toggle"
+          size="small"
+          @click="togglePanel('keycloak')"
+        >{{ panel === 'keycloak' ? t('buttons.collapse') : t('buttons.expand') }}</n-button>
+      </template>
+      <n-alert type="info" style="margin: 4px 0 12px 0">
+        {{ t('tips.keycloak_setup') }}
+      </n-alert>
+      <n-form
+        :model="setting"
+        ref="formKeycloak"
+        label-placement="left"
+        style="padding: 4px 0 0 12px"
+        label-width="auto"
+      >
+        <n-form-item :label="t('fields.enabled')" path="keycloak.enabled" label-align="right">
+          <n-switch v-model:value="setting.keycloak.enabled" />
+        </n-form-item>
+
+        <n-form-item :label="t('fields.issuer_url')" path="keycloak.issuer_url" label-align="right">
+          <n-input :placeholder="t('tips.kc_issuer_url_placeholder')" v-model:value="setting.keycloak.issuer_url" />
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_issuer_url_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_issuer_url_kc') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.client_id')" path="keycloak.client_id" label-align="right">
+          <n-input placeholder="swirl" v-model:value="setting.keycloak.client_id" />
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_client_id_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_client_id_kc') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.client_secret')" path="keycloak.client_secret" label-align="right">
+          <n-input
+            type="password"
+            show-password-on="click"
+            :placeholder="t('tips.kc_client_secret_placeholder')"
+            v-model:value="setting.keycloak.client_secret"
+          />
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_client_secret_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_client_secret_kc') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.redirect_uri')" path="keycloak.redirect_uri" label-align="right">
+          <n-input-group>
+            <n-input readonly :value="computedRedirectURI" />
+            <n-button @click="copyRedirect">{{ t('buttons.copy') }}</n-button>
+          </n-input-group>
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_redirect_uri_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_redirect_uri_kc') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.scopes')" path="keycloak.scopes" label-align="right">
+          <n-input placeholder="openid profile email" v-model:value="setting.keycloak.scopes" />
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_scopes_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_scopes_kc') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.username_claim')" path="keycloak.username_claim" label-align="right">
+          <n-input placeholder="preferred_username" v-model:value="setting.keycloak.username_claim" />
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_username_claim_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_username_claim_kc') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.email_claim')" path="keycloak.email_claim" label-align="right">
+          <n-input placeholder="email" v-model:value="setting.keycloak.email_claim" />
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_email_claim_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_email_claim_kc') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.groups_claim')" path="keycloak.groups_claim" label-align="right">
+          <n-input placeholder="groups" v-model:value="setting.keycloak.groups_claim" />
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_groups_claim_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_groups_claim_kc') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.auto_create_user')" path="keycloak.auto_create_user" label-align="right">
+          <n-switch v-model:value="setting.keycloak.auto_create_user" />
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_auto_create_user_swirl') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.enable_logout')" path="keycloak.enable_logout" label-align="right">
+          <n-switch v-model:value="setting.keycloak.enable_logout" />
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_enable_logout_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_enable_logout_kc') }}</div>
+        </div>
+
+        <n-form-item :label="t('fields.group_role_map')" label-align="right" :show-feedback="false">
+          <n-dynamic-input
+            v-model:value="groupRolePairs"
+            :on-create="() => ({ group: '', role: '' })"
+            #="{ value }"
+          >
+            <n-input
+              :placeholder="t('fields.group')"
+              v-model:value="value.group"
+              style="flex: 1"
+            />
+            <n-select
+              :placeholder="t('fields.role')"
+              v-model:value="value.role"
+              :options="roleOptions"
+              style="flex: 1; margin-left: 8px"
+              clearable
+            />
+          </n-dynamic-input>
+        </n-form-item>
+        <div class="hint">
+          <div><strong>Swirl:</strong> {{ t('tips.kc_group_role_map_swirl') }}</div>
+          <div><strong>Keycloak:</strong> {{ t('tips.kc_group_role_map_kc') }}</div>
+        </div>
+
+        <n-button type="primary" @click="saveKeycloak">{{ t('buttons.save') }}</n-button>
+      </n-form>
+    </x-panel>
+    <x-panel
       :title="t('fields.monitor')"
       :subtitle="t('tips.monitor')"
       :collapsed="panel !== 'metric'"
@@ -136,7 +280,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   NGrid,
   NButton,
@@ -151,11 +295,14 @@ import {
   NRadio,
   NSwitch,
   NAlert,
+  NDynamicInput,
+  NSelect,
 } from "naive-ui";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import settingApi from "@/api/setting";
 import type { Setting } from "@/api/setting";
+import roleApi from "@/api/role";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -164,10 +311,52 @@ const setting = ref({
     security: 0,
     auth: 'simple',
   },
+  keycloak: {
+    enabled: false,
+    issuer_url: '',
+    client_id: '',
+    client_secret: '',
+    redirect_uri: '',
+    scopes: 'openid profile email',
+    username_claim: 'preferred_username',
+    email_claim: 'email',
+    groups_claim: 'groups',
+    auto_create_user: false,
+    group_role_map: {},
+    enable_logout: false,
+  },
   metric: {},
   deploy: {},
 } as Setting);
 const panel = ref('')
+const roleOptions = ref<{ label: string; value: string }[]>([])
+const groupRolePairs = ref<{ group: string; role: string }[]>([])
+
+const computedRedirectURI = computed(() => {
+  return window.location.origin + '/api/auth/keycloak/callback'
+})
+
+function copyRedirect() {
+  const uri = computedRedirectURI.value
+  try {
+    navigator.clipboard.writeText(uri)
+    window.message.success(t('texts.action_success'))
+  } catch {
+    window.message.error('copy failed')
+  }
+}
+
+async function saveKeycloak() {
+  // serialize pairs → map
+  const map: Record<string, string> = {}
+  for (const p of groupRolePairs.value) {
+    if (p.group && p.role) map[p.group] = p.role
+  }
+  setting.value.keycloak.group_role_map = map
+  // ensure the read-only redirect_uri is persisted too
+  setting.value.keycloak.redirect_uri = computedRedirectURI.value
+  await save('keycloak', setting.value.keycloak)
+}
 
 function togglePanel(name: string) {
   if (panel.value === name) {
@@ -185,6 +374,32 @@ async function save(id: string, options: any) {
 async function fetchData() {
   let r = (await settingApi.load()).data as Setting;
   setting.value = Object.assign(setting.value, r)
+
+  // hydrate keycloak defaults if missing in persisted blob
+  if (!setting.value.keycloak) {
+    setting.value.keycloak = {
+      enabled: false,
+      issuer_url: '',
+      client_id: '',
+      client_secret: '',
+      redirect_uri: '',
+      scopes: 'openid profile email',
+      username_claim: 'preferred_username',
+      email_claim: 'email',
+      groups_claim: 'groups',
+      auto_create_user: false,
+      group_role_map: {},
+      enable_logout: false,
+    }
+  }
+  const map = setting.value.keycloak.group_role_map || {}
+  groupRolePairs.value = Object.keys(map).map(g => ({ group: g, role: map[g] }))
+
+  // load roles for the dropdown
+  try {
+    const rr = await roleApi.search()
+    roleOptions.value = (rr.data || []).map(r => ({ label: r.name, value: r.id }))
+  } catch { /* swallow — page still usable */ }
 }
 
 onMounted(fetchData);
@@ -193,5 +408,19 @@ onMounted(fetchData);
 <style scoped>
 .toggle {
   width: 75px;
+}
+.hint {
+  margin: -10px 0 12px 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--n-text-color-3, #666);
+  background-color: rgba(128, 128, 128, 0.06);
+  border-left: 3px solid rgba(64, 128, 255, 0.45);
+  border-radius: 4px;
+  line-height: 1.55;
+}
+.hint strong {
+  color: var(--n-text-color-2, #444);
+  margin-right: 4px;
 }
 </style>

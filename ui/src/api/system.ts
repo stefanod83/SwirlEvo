@@ -48,6 +48,10 @@ export class SystemApi {
     mode() {
         return ajax.get<{ mode: string }>('/system/mode')
     }
+
+    authProviders() {
+        return ajax.get<{ ldap: boolean; keycloak: boolean }>('/system/auth-providers')
+    }
 }
 
 export default new SystemApi

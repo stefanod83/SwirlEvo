@@ -1,14 +1,20 @@
 <template>
   <x-page-header :subtitle="t('texts.records', { total: total }, total)">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'host_new' })">
-        <template #icon>
-          <n-icon>
-            <add-icon />
-          </n-icon>
-        </template>
-        {{ t('buttons.new') }}
-      </n-button>
+      <n-space :size="8">
+        <n-button secondary size="small" @click="fetchData">
+          <template #icon>
+            <n-icon><refresh-outline /></n-icon>
+          </template>
+          {{ t('buttons.refresh') || 'Refresh' }}
+        </n-button>
+        <n-button secondary size="small" @click="$router.push({ name: 'host_new' })">
+          <template #icon>
+            <n-icon><add-icon /></n-icon>
+          </template>
+          {{ t('buttons.new') }}
+        </n-button>
+      </n-space>
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
@@ -70,7 +76,7 @@ import {
   NTime,
   NTag,
 } from "naive-ui";
-import { AddOutline as AddIcon } from "@vicons/ionicons5";
+import { AddOutline as AddIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XAnchor from "@/components/Anchor.vue";
 import * as hostApi from "@/api/host";

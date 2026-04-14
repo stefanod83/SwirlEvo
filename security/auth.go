@@ -79,6 +79,22 @@ func (c *Identifier) Identify(ctx context.Context, loginName, password string) (
 	}, nil
 }
 
+// IdentifyExternal issues a session token for an already-authenticated user
+// (OIDC callback / external IdP). Skips password-realm validation.
+func (c *Identifier) IdentifyExternal(ctx context.Context, userID, userName string) (Identity, error) {
+	u := security.NewUser(userID, userName)
+	s, err := c.createSession(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	return &UserInfo{
+		id:    u.ID(),
+		name:  u.Name(),
+		token: s.ID,
+		perms: s.Perms,
+	}, nil
+}
+
 func (c *Identifier) signIn(ctx context.Context, loginName, password string) (user security.User, err error) {
 	privacy, err := c.ub.FindPrivacy(ctx, loginName)
 	if err != nil {

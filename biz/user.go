@@ -15,6 +15,8 @@ const (
 	UserTypeInternal = "internal"
 	// UserTypeLDAP is external user of LDAP
 	UserTypeLDAP = "ldap"
+	// UserTypeKeycloak is external user authenticated via Keycloak (OIDC)
+	UserTypeKeycloak = "keycloak"
 )
 
 const (

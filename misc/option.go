@@ -67,6 +67,20 @@ type Setting struct {
 		NameAttr       string `json:"name_attr"`
 		EmailAttr      string `json:"email_attr"`
 	} `json:"ldap"`
+	Keycloak struct {
+		Enabled        bool              `json:"enabled"`
+		IssuerURL      string            `json:"issuer_url"`   // e.g. https://kc.example.com/realms/swirl
+		ClientID       string            `json:"client_id"`
+		ClientSecret   string            `json:"client_secret"`
+		RedirectURI    string            `json:"redirect_uri"` // https://swirl.example.com/api/auth/keycloak/callback
+		Scopes         string            `json:"scopes"`       // "openid profile email"
+		UsernameClaim  string            `json:"username_claim"`
+		EmailClaim     string            `json:"email_claim"`
+		GroupsClaim    string            `json:"groups_claim"`
+		AutoCreateUser bool              `json:"auto_create_user"`
+		GroupRoleMap   map[string]string `json:"group_role_map"` // group name -> Swirl role id
+		EnableLogout   bool              `json:"enable_logout"`
+	} `json:"keycloak"`
 	Metric struct {
 		Prometheus string `json:"prometheus"`
 	} `json:"metric"`

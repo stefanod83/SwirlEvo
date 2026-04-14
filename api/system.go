@@ -10,6 +10,7 @@ import (
 	"github.com/cuigh/swirl/biz"
 	"github.com/cuigh/swirl/dao"
 	"github.com/cuigh/swirl/docker"
+	"github.com/cuigh/swirl/docker/compose"
 	"github.com/cuigh/swirl/misc"
 )
 
@@ -23,17 +24,31 @@ type SystemHandler struct {
 	// bootstrap — before the user logs in — to decide which menu (Swarm/Docker)
 	// to render. Gating it behind auth would cause a 401 that the ajax interceptor
 	// turns into a redirect to /login, breaking the login page rendering.
-	Mode web.HandlerFunc `path:"/mode" auth:"*" desc:"get operating mode"`
+	Mode          web.HandlerFunc `path:"/mode" auth:"*" desc:"get operating mode"`
+	AuthProviders web.HandlerFunc `path:"/auth-providers" auth:"*" desc:"list enabled external IdPs"`
 }
 
 // NewSystem creates an instance of SystemHandler
-func NewSystem(d *docker.Docker, b biz.SystemBiz, ub biz.UserBiz, hb biz.HostBiz) *SystemHandler {
+func NewSystem(d *docker.Docker, b biz.SystemBiz, ub biz.UserBiz, hb biz.HostBiz, setting *misc.Setting) *SystemHandler {
 	return &SystemHandler{
-		CheckState:  systemCheckState(b),
-		CreateAdmin: systemCreateAdmin(ub),
-		Version:     systemVersion,
-		Summarize:   systemSummarize(d, hb),
-		Mode:        systemMode,
+		CheckState:    systemCheckState(b),
+		CreateAdmin:   systemCreateAdmin(ub),
+		Version:       systemVersion,
+		Summarize:     systemSummarize(d, hb),
+		Mode:          systemMode,
+		AuthProviders: systemAuthProviders(setting),
+	}
+}
+
+func systemAuthProviders(s *misc.Setting) web.HandlerFunc {
+	return func(c web.Context) error {
+		ldap := false
+		keycloak := false
+		if s != nil {
+			ldap = s.LDAP.Enabled
+			keycloak = s.Keycloak.Enabled && s.Keycloak.IssuerURL != "" && s.Keycloak.ClientID != ""
+		}
+		return success(c, data.Map{"ldap": ldap, "keycloak": keycloak})
 	}
 }
 
@@ -90,6 +105,11 @@ func systemSummarize(d *docker.Docker, hb biz.HostBiz) web.HandlerFunc {
 					if n, e := d.ImageCount(ctx, host.ID); e == nil {
 						summary.ImageCount = n
 					}
+					if cli, e := d.Hosts.GetClient(host.ID, host.Endpoint); e == nil {
+						if stacks, sErr := compose.NewStandaloneEngine(cli).List(ctx); sErr == nil {
+							summary.StackCount = len(stacks)
+						}
+					}
 				}
 				return success(c, summary)
 			}
@@ -108,6 +128,11 @@ func systemSummarize(d *docker.Docker, hb biz.HostBiz) web.HandlerFunc {
 				}
 				if n, e := d.ImageCount(ctx, h.ID); e == nil {
 					summary.ImageCount += n
+				}
+				if cli, e := d.Hosts.GetClient(h.ID, h.Endpoint); e == nil {
+					if stacks, sErr := compose.NewStandaloneEngine(cli).List(ctx); sErr == nil {
+						summary.StackCount += len(stacks)
+					}
 				}
 			}
 			return success(c, summary)

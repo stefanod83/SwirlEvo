@@ -42,6 +42,12 @@
           :loading="submiting"
           @click.prevent="submit"
         >{{ t('buttons.sign_in') }}</n-button>
+        <template v-if="providers.keycloak">
+          <n-divider style="margin: 18px 0"><span class="divider-text">{{ t('texts.or') }}</span></n-divider>
+          <n-button round block secondary @click.prevent="loginWithKeycloak">
+            {{ t('buttons.login_keycloak') }}
+          </n-button>
+        </template>
       </n-form>
     </div>
   </div>
@@ -50,7 +56,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import { NForm, NFormItem, NInput, NButton, NIcon } from "naive-ui";
+import { NForm, NFormItem, NInput, NButton, NIcon, NDivider } from "naive-ui";
 import { PersonOutline, LockClosedOutline } from "@vicons/ionicons5";
 import userApi from "@/api/user";
 import type { AuthUser } from "@/api/user";
@@ -79,6 +85,8 @@ const { submit, submiting } = useForm<AuthUser>(form, () => userApi.login(model)
   router.push({ path: redirect });
 })
 
+const providers = ref({ ldap: false, keycloak: false })
+
 async function checkState() {
   const r = await systemApi.checkState();
   if (r.data?.fresh) {
@@ -86,7 +94,19 @@ async function checkState() {
   }
 }
 
-onMounted(checkState);
+async function loadProviders() {
+  try {
+    const r = await systemApi.authProviders()
+    providers.value = r.data as any
+  } catch { /* if endpoint unavailable, keep form-only */ }
+}
+
+function loginWithKeycloak() {
+  const redirect = <string>route.query.redirect || '/'
+  window.location.href = '/api/auth/keycloak/login?redirect=' + encodeURIComponent(redirect)
+}
+
+onMounted(() => { checkState(); loadProviders() });
 </script>
 
 <style lang="scss" scoped>

@@ -96,7 +96,7 @@ func (b *volumeBiz) Create(ctx context.Context, vol *Volume, user web.User) (err
 
 	err = b.d.VolumeCreate(ctx, vol.Node, options)
 	if err == nil {
-		b.eb.CreateVolume(EventActionDelete, vol.Node, vol.Name, user)
+		b.eb.CreateVolume(EventActionCreate, vol.Node, vol.Name, user)
 	}
 	return
 }

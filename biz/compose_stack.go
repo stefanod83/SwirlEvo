@@ -261,7 +261,7 @@ func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) e
 		return err
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "active")
-	b.eb.CreateStack(EventActionDeploy, stack.Name, user)
+	b.eb.CreateStack(EventActionStart, stack.Name, user)
 	return nil
 }
 
@@ -479,11 +479,17 @@ func (b *composeStackBiz) Import(ctx context.Context, stack *dao.ComposeStack, r
 
 	if redeploy {
 		id, err := b.Deploy(ctx, stack, pullImages, user)
+		if err == nil {
+			b.eb.CreateStack(EventActionImport, stack.Name, user)
+		}
 		return id, err
 	}
 	// no redeploy: just persist. Status reflects current live state.
 	stack.Status = "active"
 	id, err := b.Save(ctx, stack, user)
+	if err == nil {
+		b.eb.CreateStack(EventActionImport, stack.Name, user)
+	}
 	return id, err
 }
 
@@ -497,7 +503,7 @@ func (b *composeStackBiz) StartExternal(ctx context.Context, hostID, name string
 	if err := engine.Start(ctx, name); err != nil {
 		return err
 	}
-	b.eb.CreateStack(EventActionDeploy, name, user)
+	b.eb.CreateStack(EventActionStart, name, user)
 	return nil
 }
 

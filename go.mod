@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/boltdb/bolt v1.3.1
+	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/cuigh/auxo v0.0.0-20211213084008-60eb7f7752a7
 	github.com/docker/docker v28.0.0+incompatible
 	github.com/docker/go-connections v0.5.0
@@ -17,6 +18,7 @@ require (
 	github.com/prometheus/client_golang v1.20.4
 	github.com/prometheus/common v0.60.0
 	go.mongodb.org/mongo-driver v1.17.0
+	golang.org/x/oauth2 v0.36.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
@@ -28,6 +30,7 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-ldap/ldap/v3 v3.2.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

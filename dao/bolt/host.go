@@ -34,12 +34,26 @@ func (d *Dao) HostUpdate(ctx context.Context, host *dao.Host) (err error) {
 	})
 }
 
-func (d *Dao) HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer string) error {
+func (d *Dao) HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer, os, arch string, cpus int, memory int64) error {
 	old := &dao.Host{}
 	return d.update(Host, id, old, func() interface{} {
 		old.Status = status
 		old.Error = errMsg
-		old.EngineVer = engineVer
+		if engineVer != "" {
+			old.EngineVer = engineVer
+		}
+		if os != "" {
+			old.OS = os
+		}
+		if arch != "" {
+			old.Arch = arch
+		}
+		if cpus > 0 {
+			old.CPUs = cpus
+		}
+		if memory > 0 {
+			old.Memory = memory
+		}
 		return old
 	})
 }

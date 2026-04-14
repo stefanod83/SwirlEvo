@@ -35,14 +35,27 @@ func (d *Dao) HostUpdate(ctx context.Context, host *dao.Host) (err error) {
 	return d.update(ctx, Host, host.ID, update)
 }
 
-func (d *Dao) HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer string) error {
-	return d.update(ctx, Host, id, bson.M{
-		"$set": bson.M{
-			"status":     status,
-			"error":      errMsg,
-			"engine_ver": engineVer,
-		},
-	})
+func (d *Dao) HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer, os, arch string, cpus int, memory int64) error {
+	set := bson.M{
+		"status": status,
+		"error":  errMsg,
+	}
+	if engineVer != "" {
+		set["engine_ver"] = engineVer
+	}
+	if os != "" {
+		set["os"] = os
+	}
+	if arch != "" {
+		set["arch"] = arch
+	}
+	if cpus > 0 {
+		set["cpus"] = cpus
+	}
+	if memory > 0 {
+		set["memory"] = memory
+	}
+	return d.update(ctx, Host, id, bson.M{"$set": set})
 }
 
 func (d *Dao) HostGet(ctx context.Context, id string) (host *dao.Host, err error) {

@@ -29,7 +29,13 @@ export function useDataTable(loader: Function, filter: Object | Function, autoFe
             return t('texts.records', { total: itemCount } as any, itemCount)
         }
     })
+    // Monotonic request generation. Each fetchData captures its own token;
+    // responses that arrive out-of-order (e.g. because the user rapidly
+    // switched host/filter) are discarded if a newer request has started
+    // meanwhile.
+    let requestGen = 0
     const fetchData = async function (page: number = 1) {
+        const myGen = ++requestGen
         state.data = [];
         state.loading = true;
         try {
@@ -40,12 +46,13 @@ export function useDataTable(loader: Function, filter: Object | Function, autoFe
                 pageIndex: page,
                 pageSize: pagination.pageSize,
             });
+            if (myGen !== requestGen) return  // stale response, drop it
             state.data = r.data?.items || [];
             pagination.itemCount = r.data?.total || 0
             pagination.page = page
             pagination.pageCount = Math.ceil(pagination.itemCount / pagination.pageSize)
         } finally {
-            state.loading = false;
+            if (myGen === requestGen) state.loading = false;
         }
     }
     const changePageSize = function (size: number) {

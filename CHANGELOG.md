@@ -165,6 +165,60 @@ First release of the SwirlEvo fork (continues [cuigh/swirl](https://github.com/c
   container, BoltDB) and `compose.standalone.yml` (with MongoDB).
 * Multi-stage Dockerfile uses `node:22-alpine` and `golang:1.25-alpine`.
 
+### Quality-of-life batch (2026-04)
+
+* **Host detail auto-sync** — after `HostBiz.Create/Update`, Swirl calls
+  `docker.Client.Info()` synchronously and persists `ServerVersion / OSType
+  / Architecture / NCPU / MemTotal` alongside the status. The Hosts list
+  shows the enriched record on the first render after save.
+  `dao.HostUpdateStatus` signature extended; BoltDB + MongoDB both updated.
+* **Refresh button** added to the Hosts list (header action) for parity
+  with every other list page.
+* **Home summary — Stacks counter in standalone** — `api/system.go::
+  systemSummarize` now aggregates compose projects via
+  `compose.NewStandaloneEngine(cli).List(ctx)` per reachable host (both
+  single-host and all-hosts paths).
+* **Race-free host switch** — `ui/src/utils/data-table.ts::useDataTable`
+  tags each `fetchData()` with a monotonically increasing `requestGen`;
+  out-of-order responses are dropped so quick host toggles on Images /
+  Volumes no longer leave stale rows in the table.
+* **Events fixes**:
+  * `biz/volume.go::Create` was emitting `EventActionDelete` — corrected.
+  * `biz/network.go::Create` emitted only on error — corrected to emit on
+    success.
+  * Added Create events for `Role`, `Chart`, `Registry` biz methods.
+  * `biz/compose_stack.go::Start / StartExternal` now emit `Start` (was
+    `Deploy`).
+  * New action `EventActionImport` emitted by `ComposeStackBiz.Import` in
+    both the save-only and save-and-redeploy branches.
+* **Keycloak OIDC integration** —
+  * New `misc.Setting.Keycloak` group (`enabled, issuer_url, client_id,
+    client_secret, redirect_uri, scopes, username_claim, email_claim,
+    groups_claim, auto_create_user, group_role_map, enable_logout`).
+  * New user type `keycloak` (in addition to `internal` and `ldap`).
+  * New package `security/keycloak.go` (go-oidc/v3 + oauth2): lazy
+    provider discovery, 1-hour cache, auth-code URL builder, code
+    exchange + ID-token verification, group → role resolver with
+    first-match wins.
+  * New handlers `api/auth.go`:
+    `/auth/keycloak/login` (CSRF state + redirect-to-Keycloak),
+    `/auth/keycloak/callback` (exchange → upsert → issue session →
+    redirect to `/oauth-complete#…`),
+    `/auth/keycloak/logout-url` (RP-initiated logout URL for the
+    front-end).
+  * New endpoint `/system/auth-providers` returning
+    `{ldap: bool, keycloak: bool}` (auth `*`) for the Login page.
+  * Frontend: Keycloak panel in `Setting.vue` with Swirl-side / Keycloak-
+    side hints per field, `NDynamicInput`-based group-role matrix fed by
+    `roleApi.search()`; Login page shows **Login with Keycloak** button
+    when enabled; new bridge page `pages/OAuthComplete.vue` reads the
+    URL fragment, commits the user to Vuex, then navigates to the
+    originally-requested route; the `logout()` handler in
+    `layouts/Default.vue` also hits `/auth/keycloak/logout-url` when an
+    `id_token` is cached in `localStorage`, then redirects upstream.
+  * Dependencies: `github.com/coreos/go-oidc/v3 v3.18.0`,
+    `golang.org/x/oauth2 v0.36.0`.
+
 ---
 
 ## v1.0.0 (2021-12-15)
