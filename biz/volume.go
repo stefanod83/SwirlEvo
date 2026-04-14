@@ -7,6 +7,7 @@ import (
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/docker"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/volume"
 )
 
@@ -49,9 +50,25 @@ func (b *volumeBiz) Search(ctx context.Context, node, name string, pageIndex, pa
 		return nil, 0, err
 	}
 
+	// Docker's volume.UsageData.RefCount is -1 unless computed explicitly by the
+	// daemon. Recompute a reliable ref-count by scanning container mounts on the
+	// same host and counting references to each named volume.
+	usage := map[string]int64{}
+	if containers, cErr := b.d.ContainerListAll(ctx, node); cErr == nil {
+		for _, c := range containers {
+			for _, m := range c.Mounts {
+				if m.Type == mount.TypeVolume && m.Name != "" {
+					usage[m.Name]++
+				}
+			}
+		}
+	}
+
 	volumes = make([]*Volume, len(list))
 	for i, v := range list {
-		volumes[i] = newVolume(v)
+		vol := newVolume(v)
+		vol.RefCount = usage[vol.Name]
+		volumes[i] = vol
 	}
 	return volumes, total, nil
 }

@@ -50,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { h, onMounted, reactive, ref } from "vue";
 import {
   NSpace,
   NButton,
@@ -58,6 +58,7 @@ import {
   NInput,
   NIcon,
   NSelect,
+  NTag,
 } from "naive-ui";
 import { AddOutline as AddIcon, CloseOutline as CloseIcon } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
@@ -79,7 +80,13 @@ const columns = [
     title: t('fields.name'),
     key: "name",
     fixed: "left" as const,
-    render: (v: Volume) => renderLink({ name: 'volume_detail', params: { node: filter.node || '-', name: v.name } }, v.name),
+    render: (v: Volume) => {
+      const link = renderLink({ name: 'volume_detail', params: { node: filter.node || '-', name: v.name } }, v.name)
+      const unused = !v.refCount || v.refCount <= 0
+      if (!unused) return link
+      const badge = h(NTag, { size: 'small', type: 'warning', round: true, style: 'margin-left:6px' }, { default: () => t('fields.unused') || 'Unused' })
+      return h('span', null, [link, badge])
+    },
   },
   {
     title: t('fields.driver'),

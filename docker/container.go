@@ -28,6 +28,16 @@ func (d *Docker) ContainerCount(ctx context.Context, node string) (count int, er
 	return len(list), nil
 }
 
+// ContainerListAll returns all containers (any state) on the given host.
+// Used by higher layers to compute image reference counts, etc.
+func (d *Docker) ContainerListAll(ctx context.Context, node string) ([]container.Summary, error) {
+	c, err := d.agent(node)
+	if err != nil {
+		return nil, err
+	}
+	return c.ContainerList(ctx, container.ListOptions{All: true})
+}
+
 // ContainerList return containers on the host.
 func (d *Docker) ContainerList(ctx context.Context, node, name, status string, pageIndex, pageSize int) (containers []container.Summary, total int, err error) {
 	var c *client.Client

@@ -53,9 +53,21 @@ func (b *imageBiz) Search(ctx context.Context, node, name string, pageIndex, pag
 		return nil, 0, err
 	}
 
+	// Docker's image.Summary.Containers is often -1 (expensive to compute on the
+	// daemon). Recompute a reliable per-image reference count by enumerating all
+	// containers on the same host and grouping by ImageID.
+	usage := map[string]int64{}
+	if containers, cErr := b.d.ContainerListAll(ctx, node); cErr == nil {
+		for _, c := range containers {
+			usage[c.ImageID]++
+		}
+	}
+
 	images = make([]*Image, len(list))
 	for i, nr := range list {
-		images[i] = newImageSummary(&nr)
+		img := newImageSummary(&nr)
+		img.Containers = usage[img.ID]
+		images[i] = img
 	}
 	return images, total, nil
 }
