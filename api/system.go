@@ -19,16 +19,20 @@ type SystemHandler struct {
 	CreateAdmin web.HandlerFunc `path:"/create-admin" method:"post" auth:"*" desc:"initialize administrator account"`
 	Version     web.HandlerFunc `path:"/version" auth:"*" desc:"fetch app version"`
 	Summarize   web.HandlerFunc `path:"/summarize" auth:"?" desc:"fetch statistics data"`
-	Mode        web.HandlerFunc `path:"/mode" auth:"?" desc:"get operating mode"`
+	// Mode is intentionally public (auth:"*"). The UI calls /system/mode during
+	// bootstrap — before the user logs in — to decide which menu (Swarm/Docker)
+	// to render. Gating it behind auth would cause a 401 that the ajax interceptor
+	// turns into a redirect to /login, breaking the login page rendering.
+	Mode web.HandlerFunc `path:"/mode" auth:"*" desc:"get operating mode"`
 }
 
 // NewSystem creates an instance of SystemHandler
-func NewSystem(d *docker.Docker, b biz.SystemBiz, ub biz.UserBiz) *SystemHandler {
+func NewSystem(d *docker.Docker, b biz.SystemBiz, ub biz.UserBiz, hb biz.HostBiz) *SystemHandler {
 	return &SystemHandler{
 		CheckState:  systemCheckState(b),
 		CreateAdmin: systemCreateAdmin(ub),
 		Version:     systemVersion,
-		Summarize:   systemSummarize(d),
+		Summarize:   systemSummarize(d, hb),
 		Mode:        systemMode,
 	}
 }
@@ -53,21 +57,41 @@ func systemVersion(c web.Context) (err error) {
 	})
 }
 
-func systemSummarize(d *docker.Docker) web.HandlerFunc {
+func systemSummarize(d *docker.Docker, hb biz.HostBiz) web.HandlerFunc {
 	return func(c web.Context) (err error) {
 		summary := struct {
-			NodeCount    int `json:"nodeCount"`
-			NetworkCount int `json:"networkCount"`
-			ServiceCount int `json:"serviceCount"`
-			StackCount   int `json:"stackCount"`
+			NodeCount      int `json:"nodeCount"`
+			NetworkCount   int `json:"networkCount"`
+			ServiceCount   int `json:"serviceCount"`
+			StackCount     int `json:"stackCount"`
+			HostCount      int `json:"hostCount"`
+			ContainerCount int `json:"containerCount"`
+			ImageCount     int `json:"imageCount"`
 		}{}
-
-		if misc.IsStandalone() {
-			return success(c, summary)
-		}
 
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
+
+		if misc.IsStandalone() {
+			hosts, hErr := hb.GetAll(ctx)
+			if hErr != nil {
+				return hErr
+			}
+			summary.HostCount = len(hosts)
+			for _, h := range hosts {
+				if h.Status != "connected" {
+					continue
+				}
+				if n, e := d.ContainerCount(ctx, h.ID); e == nil {
+					summary.ContainerCount += n
+				}
+				if n, e := d.ImageCount(ctx, h.ID); e == nil {
+					summary.ImageCount += n
+				}
+			}
+			// StackCount will be filled in Phase E when compose stacks exist
+			return success(c, summary)
+		}
 
 		if summary.NodeCount, err = d.NodeCount(ctx); err != nil {
 			return

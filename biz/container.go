@@ -21,6 +21,14 @@ type ContainerBiz interface {
 	ExecAttach(ctx context.Context, node, id string) (resp types.HijackedResponse, err error)
 	ExecStart(ctx context.Context, node, id string) error
 	Prune(ctx context.Context, node string, user web.User) (count int, size uint64, err error)
+	Start(ctx context.Context, node, id, name string, user web.User) error
+	Stop(ctx context.Context, node, id, name string, timeoutSecs int, user web.User) error
+	Restart(ctx context.Context, node, id, name string, timeoutSecs int, user web.User) error
+	Kill(ctx context.Context, node, id, name, signal string, user web.User) error
+	Pause(ctx context.Context, node, id, name string, user web.User) error
+	Unpause(ctx context.Context, node, id, name string, user web.User) error
+	Rename(ctx context.Context, node, id, name, newName string, user web.User) error
+	Stats(ctx context.Context, node, id string) ([]byte, error)
 }
 
 func NewContainer(d *docker.Docker, eb EventBiz) ContainerBiz {
@@ -100,6 +108,66 @@ func (b *containerBiz) Prune(ctx context.Context, node string, user web.User) (c
 		b.eb.CreateContainer(EventActionPrune, node, "", "", user)
 	}
 	return
+}
+
+func (b *containerBiz) Start(ctx context.Context, node, id, name string, user web.User) error {
+	if err := b.d.ContainerStart(ctx, node, id); err != nil {
+		return err
+	}
+	b.eb.CreateContainer(EventActionStart, node, id, name, user)
+	return nil
+}
+
+func (b *containerBiz) Stop(ctx context.Context, node, id, name string, timeoutSecs int, user web.User) error {
+	if err := b.d.ContainerStop(ctx, node, id, timeoutSecs); err != nil {
+		return err
+	}
+	b.eb.CreateContainer(EventActionStop, node, id, name, user)
+	return nil
+}
+
+func (b *containerBiz) Restart(ctx context.Context, node, id, name string, timeoutSecs int, user web.User) error {
+	if err := b.d.ContainerRestart(ctx, node, id, timeoutSecs); err != nil {
+		return err
+	}
+	b.eb.CreateContainer(EventActionRestart, node, id, name, user)
+	return nil
+}
+
+func (b *containerBiz) Kill(ctx context.Context, node, id, name, signal string, user web.User) error {
+	if err := b.d.ContainerKill(ctx, node, id, signal); err != nil {
+		return err
+	}
+	b.eb.CreateContainer(EventActionKill, node, id, name, user)
+	return nil
+}
+
+func (b *containerBiz) Pause(ctx context.Context, node, id, name string, user web.User) error {
+	if err := b.d.ContainerPause(ctx, node, id); err != nil {
+		return err
+	}
+	b.eb.CreateContainer(EventActionPause, node, id, name, user)
+	return nil
+}
+
+func (b *containerBiz) Unpause(ctx context.Context, node, id, name string, user web.User) error {
+	if err := b.d.ContainerUnpause(ctx, node, id); err != nil {
+		return err
+	}
+	b.eb.CreateContainer(EventActionUnpause, node, id, name, user)
+	return nil
+}
+
+func (b *containerBiz) Rename(ctx context.Context, node, id, name, newName string, user web.User) error {
+	if err := b.d.ContainerRename(ctx, node, id, newName); err != nil {
+		return err
+	}
+	b.eb.CreateContainer(EventActionRename, node, id, name, user)
+	return nil
+}
+
+func (b *containerBiz) Stats(ctx context.Context, node, id string) ([]byte, error) {
+	return b.d.ContainerStats(ctx, node, id)
 }
 
 type Container struct {

@@ -19,9 +19,9 @@ type TaskHandler struct {
 // NewTask creates an instance of TaskHandler
 func NewTask(b biz.TaskBiz) *TaskHandler {
 	return &TaskHandler{
-		Search:    taskSearch(b),
-		Find:      taskFind(b),
-		FetchLogs: taskFetchLogs(b),
+		Search:    swarmOnly(taskSearch(b)),
+		Find:      swarmOnly(taskFind(b)),
+		FetchLogs: swarmOnly(taskFetchLogs(b)),
 	}
 }
 

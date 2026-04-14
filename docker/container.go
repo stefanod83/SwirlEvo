@@ -15,6 +15,19 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
+// ContainerCount returns the number of containers (all states) on the given host.
+func (d *Docker) ContainerCount(ctx context.Context, node string) (count int, err error) {
+	c, err := d.agent(node)
+	if err != nil {
+		return 0, err
+	}
+	list, err := c.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return 0, err
+	}
+	return len(list), nil
+}
+
 // ContainerList return containers on the host.
 func (d *Docker) ContainerList(ctx context.Context, node, name, status string, pageIndex, pageSize int) (containers []container.Summary, total int, err error) {
 	var c *client.Client
@@ -142,5 +155,97 @@ func (d *Docker) ContainerPrune(ctx context.Context, node string) (report contai
 	if c, err = d.agent(node); err == nil {
 		report, err = c.ContainersPrune(ctx, filters.NewArgs())
 	}
+	return
+}
+
+// ContainerStart starts a container.
+func (d *Docker) ContainerStart(ctx context.Context, node, id string) (err error) {
+	var c *client.Client
+	if c, err = d.agent(node); err == nil {
+		err = c.ContainerStart(ctx, id, container.StartOptions{})
+	}
+	return
+}
+
+// ContainerStop stops a running container.
+// If timeoutSecs is zero or negative, Docker's default (10s) is used.
+func (d *Docker) ContainerStop(ctx context.Context, node, id string, timeoutSecs int) (err error) {
+	var c *client.Client
+	if c, err = d.agent(node); err == nil {
+		opts := container.StopOptions{}
+		if timeoutSecs > 0 {
+			opts.Timeout = &timeoutSecs
+		}
+		err = c.ContainerStop(ctx, id, opts)
+	}
+	return
+}
+
+// ContainerRestart restarts a container.
+func (d *Docker) ContainerRestart(ctx context.Context, node, id string, timeoutSecs int) (err error) {
+	var c *client.Client
+	if c, err = d.agent(node); err == nil {
+		opts := container.StopOptions{}
+		if timeoutSecs > 0 {
+			opts.Timeout = &timeoutSecs
+		}
+		err = c.ContainerRestart(ctx, id, opts)
+	}
+	return
+}
+
+// ContainerKill kills a container with the given signal (e.g. "SIGKILL").
+// If signal is empty, Docker's default (SIGKILL) is used.
+func (d *Docker) ContainerKill(ctx context.Context, node, id, signal string) (err error) {
+	var c *client.Client
+	if c, err = d.agent(node); err == nil {
+		err = c.ContainerKill(ctx, id, signal)
+	}
+	return
+}
+
+// ContainerPause pauses a container.
+func (d *Docker) ContainerPause(ctx context.Context, node, id string) (err error) {
+	var c *client.Client
+	if c, err = d.agent(node); err == nil {
+		err = c.ContainerPause(ctx, id)
+	}
+	return
+}
+
+// ContainerUnpause unpauses a paused container.
+func (d *Docker) ContainerUnpause(ctx context.Context, node, id string) (err error) {
+	var c *client.Client
+	if c, err = d.agent(node); err == nil {
+		err = c.ContainerUnpause(ctx, id)
+	}
+	return
+}
+
+// ContainerRename renames a container.
+func (d *Docker) ContainerRename(ctx context.Context, node, id, newName string) (err error) {
+	var c *client.Client
+	if c, err = d.agent(node); err == nil {
+		err = c.ContainerRename(ctx, id, newName)
+	}
+	return
+}
+
+// ContainerStats returns a one-shot stats snapshot for a container.
+func (d *Docker) ContainerStats(ctx context.Context, node, id string) (raw []byte, err error) {
+	var c *client.Client
+	if c, err = d.agent(node); err != nil {
+		return
+	}
+	resp, err := c.ContainerStatsOneShot(ctx, id)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	buf := &bytes.Buffer{}
+	if _, err = io.Copy(buf, resp.Body); err != nil {
+		return
+	}
+	raw = buf.Bytes()
 	return
 }

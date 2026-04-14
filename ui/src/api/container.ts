@@ -70,7 +70,32 @@ export class ContainerApi {
     }
 
     delete(node: string, id: string, name: string) {
-        return ajax.post<Result<Object>>('/container/delete', { id, name })
+        return ajax.post<Result<Object>>('/container/delete', { node, id, name })
+    }
+
+    start(node: string, id: string, name: string) {
+        return ajax.post<Result<Object>>('/container/start', { node, id, name })
+    }
+    stop(node: string, id: string, name: string, timeout = 0) {
+        return ajax.post<Result<Object>>('/container/stop', { node, id, name, timeout })
+    }
+    restart(node: string, id: string, name: string, timeout = 0) {
+        return ajax.post<Result<Object>>('/container/restart', { node, id, name, timeout })
+    }
+    kill(node: string, id: string, name: string, signal = '') {
+        return ajax.post<Result<Object>>('/container/kill', { node, id, name, signal })
+    }
+    pause(node: string, id: string, name: string) {
+        return ajax.post<Result<Object>>('/container/pause', { node, id, name })
+    }
+    unpause(node: string, id: string, name: string) {
+        return ajax.post<Result<Object>>('/container/unpause', { node, id, name })
+    }
+    rename(node: string, id: string, name: string, newName: string) {
+        return ajax.post<Result<Object>>('/container/rename', { node, id, name, newName })
+    }
+    stats(node: string, id: string) {
+        return ajax.get<any>('/container/stats', { node, id })
     }
 
     fetchLogs(args: FetchLogsArgs) {

@@ -9,6 +9,19 @@ import (
 	"github.com/docker/docker/client"
 )
 
+// ImageCount returns the number of images on the given host.
+func (d *Docker) ImageCount(ctx context.Context, node string) (count int, err error) {
+	c, err := d.agent(node)
+	if err != nil {
+		return 0, err
+	}
+	list, err := c.ImageList(ctx, image.ListOptions{All: false})
+	if err != nil {
+		return 0, err
+	}
+	return len(list), nil
+}
+
 // ImageList return images on the host.
 func (d *Docker) ImageList(ctx context.Context, node, name string, pageIndex, pageSize int) (images []image.Summary, total int, err error) {
 	c, err := d.agent(node)
@@ -51,10 +64,10 @@ func (d *Docker) ImageHistory(ctx context.Context, node, id string) (histories [
 }
 
 // ImageRemove remove a image.
-func (d *Docker) ImageRemove(ctx context.Context, node, id string) error {
+func (d *Docker) ImageRemove(ctx context.Context, node, id string, force bool) error {
 	c, err := d.agent(node)
 	if err == nil {
-		_, err = c.ImageRemove(ctx, id, image.RemoveOptions{})
+		_, err = c.ImageRemove(ctx, id, image.RemoveOptions{Force: force, PruneChildren: true})
 	}
 	return err
 }

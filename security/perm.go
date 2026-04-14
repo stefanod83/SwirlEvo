@@ -57,7 +57,7 @@ var Perms = map[string][]string{
 	"config":    {"view", "edit", "delete"},
 	"secret":    {"view", "edit", "delete"},
 	"image":     {"view", "delete"},
-	"container": {"view", "delete", "logs", "execute"},
+	"container": {"view", "edit", "delete", "logs", "execute"},
 	"volume":    {"view", "edit", "delete"},
 	"user":      {"view", "edit", "delete"},
 	"role":      {"view", "edit", "delete"},

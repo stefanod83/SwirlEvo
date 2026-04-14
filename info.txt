@@ -2,3 +2,13 @@ rsync -a --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.gi
   cd /opt/DockerData/swirl && docker compose -f docker-compose.standalone-bolt.yml down 2>&1 | tail -2 && \
   docker build -t swirl:standalone . 2>&1 | tail -5 && \
   docker compose -f docker-compose.standalone-bolt.yml up -d 2>&1 | tail -2
+
+
+
+# Clean bundle
+rm -rf /opt/DockerData/swirl/ui/dist /mnt/c/GitRepos/swirl/ui/dist 2>&1; echo "---"; 
+rsync -a --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.git' --exclude='.planning' /mnt/c/GitRepos/swirl/ /opt/DockerData/swirl/ && \
+  cd /opt/DockerData/swirl && docker compose -f docker-compose.standalone-bolt.yml down 2>&1 | tail -1 && \
+  docker build --no-cache -t swirl:standalone . 2>&1 | tail -5 && \
+  docker compose -f docker-compose.standalone-bolt.yml up -d 2>&1 | tail -1
+

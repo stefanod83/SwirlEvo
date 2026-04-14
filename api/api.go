@@ -1,10 +1,12 @@
 package api
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/cuigh/auxo/app/container"
 	"github.com/cuigh/auxo/net/web"
+	"github.com/cuigh/swirl/misc"
 )
 
 const defaultTimeout = 30 * time.Second
@@ -18,6 +20,16 @@ func ajax(ctx web.Context, err error) error {
 
 func success(ctx web.Context, data interface{}) error {
 	return ctx.Result(0, "", data)
+}
+
+// swarmOnly wraps a handler so that it returns 404 when swirl runs in standalone mode.
+func swarmOnly(h web.HandlerFunc) web.HandlerFunc {
+	return func(c web.Context) error {
+		if misc.IsStandalone() {
+			return web.NewError(http.StatusNotFound)
+		}
+		return h(c)
+	}
 }
 
 func init() {
@@ -41,4 +53,5 @@ func init() {
 	container.Put(NewChart, container.Name("api.chart"))
 	container.Put(NewDashboard, container.Name("api.dashboard"))
 	container.Put(NewHost, container.Name("api.host"))
+	container.Put(NewComposeStack, container.Name("api.compose-stack"))
 }

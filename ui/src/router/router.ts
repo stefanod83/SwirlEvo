@@ -286,6 +286,54 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    name: 'std_container_list',
+    path: "/standalone/containers",
+    component: () => import('../pages/container/List.vue'),
+    meta: {
+      auth: 'container.view',
+    }
+  },
+  {
+    name: 'std_stack_list',
+    path: "/standalone/stacks",
+    component: () => import('../pages/compose_stack/List.vue'),
+    meta: {
+      auth: 'stack.view',
+    }
+  },
+  {
+    name: 'std_stack_new',
+    path: "/standalone/stacks/new",
+    component: () => import('../pages/compose_stack/Edit.vue'),
+    meta: {
+      auth: 'stack.edit',
+    }
+  },
+  {
+    name: 'std_stack_detail',
+    path: "/standalone/stacks/:id",
+    component: () => import('../pages/compose_stack/View.vue'),
+    meta: {
+      auth: 'stack.view',
+    }
+  },
+  {
+    name: 'std_stack_edit',
+    path: "/standalone/stacks/:id/edit",
+    component: () => import('../pages/compose_stack/Edit.vue'),
+    meta: {
+      auth: 'stack.edit',
+    }
+  },
+  {
+    name: 'std_network_list',
+    path: "/standalone/networks",
+    component: () => import('../pages/network/List.vue'),
+    meta: {
+      auth: 'network.view',
+    }
+  },
+  {
     name: 'host_detail',
     path: "/standalone/hosts/:id",
     component: () => import('../pages/host/View.vue'),
@@ -508,10 +556,19 @@ function createSiteRouter() {
     routes,
   })
 
+  // swarm-only route names (Service/Task/Config/Secret + swarm Node/Stack routes)
+  // std_* routes are the standalone counterparts and are always allowed.
+  const swarmOnlyRoutes = /^(service|task|config|secret|node|stack)_/
+
   router.beforeEach(function (to, from, next) {
     if (!from || to.path !== from.path) {
       loadingBar?.start()
       window.document.title = t(`titles.${to.name as string}`) + ' - Swirl'
+    }
+
+    if (store.state.mode === 'standalone' && typeof to.name === 'string' && swarmOnlyRoutes.test(to.name)) {
+      next({ name: '404' })
+      return
     }
 
     const auth = to.meta.auth || '*'

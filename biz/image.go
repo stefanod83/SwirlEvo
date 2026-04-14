@@ -13,7 +13,7 @@ import (
 type ImageBiz interface {
 	Search(ctx context.Context, node, name string, pageIndex, pageSize int) ([]*Image, int, error)
 	Find(ctx context.Context, node, name string) (image *Image, raw string, err error)
-	Delete(ctx context.Context, node, id string, user web.User) (err error)
+	Delete(ctx context.Context, node, id string, force bool, user web.User) (err error)
 	Prune(ctx context.Context, node string, user web.User) (count int, size uint64, err error)
 }
 
@@ -60,8 +60,8 @@ func (b *imageBiz) Search(ctx context.Context, node, name string, pageIndex, pag
 	return images, total, nil
 }
 
-func (b *imageBiz) Delete(ctx context.Context, node, id string, user web.User) (err error) {
-	err = b.d.ImageRemove(ctx, node, id)
+func (b *imageBiz) Delete(ctx context.Context, node, id string, force bool, user web.User) (err error) {
+	err = b.d.ImageRemove(ctx, node, id, force)
 	if err == nil {
 		b.eb.CreateImage(EventActionDelete, node, id, user)
 	}

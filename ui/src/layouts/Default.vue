@@ -146,7 +146,7 @@ import { MenuOutline, PersonOutline, LogOutOutline, LogoGithub } from "@vicons/i
 import { RouterView, useRouter, useRoute } from "vue-router";
 import { useStore } from "vuex";
 import { useIsMobile, useIsTablet } from "@/utils";
-import { findMenuValue, renderMenuLabel, menuOptions, findActiveOptions } from "@/router/menu";
+import { findMenuValue, renderMenuLabel, buildMenuOptions, findActiveOptions } from "@/router/menu";
 import systemApi from "@/api/system";
 import type { Version } from "@/api/system";
 import { Mutations } from "@/store/mutations";
@@ -168,7 +168,8 @@ const expandedKeys = ref([] as string[]);
 const isMobile = useIsMobile()
 const isTablet = useIsTablet()
 const darkTheme = computed(() => store.state.preference.theme === "dark")
-const menuValue = computed(() => findMenuValue(route))
+const menuOptions = computed(() => buildMenuOptions(store.state.mode))
+const menuValue = computed(() => findMenuValue(menuOptions.value, route))
 const version = ref({} as Version);
 
 function updateExpandedKeys(data: any) {
@@ -190,8 +191,8 @@ function logout() {
   router.push("/login");
 }
 
-watch(() => route.path, (path: string) => {
-  let keys = findActiveOptions(route).map((opt: any) => opt.key) as string[]
+watch(() => route.path, (_path: string) => {
+  let keys = findActiveOptions(menuOptions.value, route).map((opt: any) => opt.key) as string[]
   expandedKeys.value = keys;
 })
 

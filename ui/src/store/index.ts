@@ -16,6 +16,7 @@ export interface State {
         locale: string | null;
     }
     ajaxLoading: boolean;
+    mode: string;
 }
 
 function loadObject(key: string) {
@@ -34,6 +35,7 @@ function initState(): State {
         user: { perms: new Set(user.perms), name: user.name, token: user.token },
         preference: Object.assign({ theme: 'light', locale: locale }, loadObject('preference')),
         ajaxLoading: false,
+        mode: 'swarm',
     }
 }
 
@@ -63,6 +65,9 @@ export const store = createStore<State>({
         },
         [Mutations.SetAjaxLoading](state, loading) {
             state.ajaxLoading = loading;
+        },
+        [Mutations.SetMode](state, mode) {
+            state.mode = mode;
         },
     },
     plugins: debug ? [createLogger()] : [],

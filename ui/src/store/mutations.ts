@@ -3,4 +3,5 @@ export enum Mutations {
     SetUser = "SET_USER",
     SetPreference = "SET_PREFERENCE",
     SetAjaxLoading = "SET_AJAX_LOADING",
+    SetMode = "SET_MODE",
 }

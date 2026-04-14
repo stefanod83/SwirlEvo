@@ -63,7 +63,7 @@ import { AddOutline as AddIcon, CloseOutline as CloseIcon } from "@vicons/ionico
 import XPageHeader from "@/components/PageHeader.vue";
 import volumeApi from "@/api/volume";
 import type { Volume } from "@/api/volume";
-import nodeApi from "@/api/node";
+import { listHostsOrNodes } from "@/utils/host-node";
 import { useDataTable } from "@/utils/data-table";
 import { formatSize, renderButton, renderLink, renderTag } from "@/utils/render";
 import { useI18n } from 'vue-i18n'
@@ -136,10 +136,9 @@ async function prune() {
 }
 
 onMounted(async () => {
-  const r = await nodeApi.list(true)
-  nodes.value = r.data?.map(n => ({ label: n.name, value: n.id }))
-  if (r.data?.length) {
-    filter.node = r.data[0].id
+  nodes.value = await listHostsOrNodes()
+  if (nodes.value.length) {
+    filter.node = nodes.value[0].value
   }
   fetchData()
 })

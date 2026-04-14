@@ -23,6 +23,9 @@ export interface Summary {
     networkCount: number;
     serviceCount: number;
     stackCount: number;
+    hostCount: number;
+    containerCount: number;
+    imageCount: number;
 }
 
 export class SystemApi {

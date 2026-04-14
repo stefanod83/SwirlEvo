@@ -21,6 +21,7 @@ import {
   AlbumsOutline,
   ImageOutline,
   ImagesOutline,
+  LogoDocker,
 } from "@vicons/ionicons5";
 import XIcon from "@/components/Icon.vue";
 import { t } from "@/locales";
@@ -44,12 +45,12 @@ export const renderMenuLabel = (option: any) => {
   )
 }
 
-export function findMenuValue(route: RouteLocationNormalizedLoaded): string {
+export function findMenuValue(options: MenuOption[], route: RouteLocationNormalizedLoaded): string {
   var path = route.path;
   do {
-    const option = findOption(menuOptions, path)
+    const option = findOption(options, path)
     if (option) {
-      return option.key
+      return option.key as string
     } else {
       const index = path.lastIndexOf("/")
       if (index <= 0) {
@@ -72,9 +73,9 @@ function findOption(options: MenuOption[], path: string): any {
   return null
 }
 
-export function findActiveOptions(route: RouteLocationNormalizedLoaded): MenuOption[] {
+export function findActiveOptions(options: MenuOption[], route: RouteLocationNormalizedLoaded): MenuOption[] {
   const result: MenuOption[] = []
-  findOptions(result, menuOptions, route.path)
+  findOptions(result, options, route.path)
   return result
 }
 
@@ -97,148 +98,210 @@ function findOptions(result: MenuOption[], options: MenuOption[], path: string):
   return false
 }
 
-export const menuOptions: MenuOption[] = [
-  {
-    label: t('fields.home'),
-    key: "home",
-    path: "/",
-    icon: renderIcon(HomeOutline),
-  },
-  {
-    label: t('fields.swarm'),
-    key: "swarm",
-    icon: renderIcon(GridOutline),
-    children: [
-      {
-        label: t('objects.registry'),
-        key: "registries",
-        path: "/swarm/registries",
-        icon: renderIcon(BusinessOutline),
-      },
-      {
-        label: t('objects.node'),
-        key: "nodes",
-        path: "/swarm/nodes",
-        icon: renderIcon(ServerOutline),
-      },
-      {
-        label: t('objects.network'),
-        key: "networks",
-        path: "/swarm/networks",
-        icon: renderIcon(GlobeOutline),
-      },
-      {
-        label: t('objects.service'),
-        key: "services",
-        path: "/swarm/services",
-        icon: renderIcon(ImageOutline),
-      },
-      {
-        label: t('objects.task'),
-        key: "tasks",
-        path: "/swarm/tasks",
-        icon: renderIcon(ImagesOutline),
-      },
-      {
-        label: t('objects.stack'),
-        key: "stacks",
-        path: "/swarm/stacks",
-        icon: renderIcon(AlbumsOutline),
-      },
-      {
-        label: t('objects.config'),
-        key: "configs",
-        path: "/swarm/configs",
-        icon: renderIcon(DocumentOutline),
-      },
-      {
-        label: t('objects.secret'),
-        key: "secrets",
-        path: "/swarm/secrets",
-        icon: renderIcon(DocumentLockOutline),
-      },
-    ],
-  },
-  {
-    label: 'Hosts',
-    key: "hosts",
-    icon: renderIcon(ServerOutline),
-    children: [
-      {
-        label: 'Docker Hosts',
-        key: "host_list",
-        path: "/standalone/hosts",
-        icon: renderIcon(ServerOutline),
-      },
-    ],
-  },
-  {
-    label: t('fields.local'),
-    key: "local",
-    icon: renderIcon(CubeOutline),
-    children: [
-      {
-        label: t('objects.image'),
-        key: "images",
-        path: "/local/images",
-        icon: renderIcon(LayersOutline),
-      },
-      {
-        label: t('objects.container'),
-        key: "containers",
-        path: "/local/containers",
-        icon: () => h(XIcon, {
-          path: [
-            'M28 12h-8V4h8zm-6-2h4V6h-4z',
-            'M17 15V9H9v14h14v-8zm-6-4h4v4h-4zm4 10h-4v-4h4zm6 0h-4v-4h4z',
-            'M26 28H6a2.002 2.002 0 0 1-2-2V6a2.002 2.002 0 0 1 2-2h10v2H6v20h20V16h2v10a2.002 2.002 0 0 1-2 2z',
-          ],
-          viewBox: '0 0 32 32'
-        }),
-      },
-      {
-        label: t('objects.volume'),
-        key: "volumes",
-        path: "/local/volumes",
-        icon: renderIcon(FileTrayFullOutline),
-      },
-    ],
-  },
-  {
-    label: t('fields.system'),
-    key: "system",
-    icon: renderIcon(SettingsOutline),
-    children: [
-      {
-        label: t('objects.user'),
-        key: "users",
-        path: "/system/users",
-        icon: renderIcon(PersonOutline),
-      },
-      {
-        label: t('objects.role'),
-        key: "roles",
-        path: "/system/roles",
-        icon: renderIcon(PeopleOutline),
-      },
-      {
-        label: t('objects.chart'),
-        key: "charts",
-        path: "/system/charts",
-        icon: renderIcon(BarChartOutline),
-      },
-      {
-        label: t('objects.event'),
-        key: "events",
-        path: "/system/events",
-        icon: renderIcon(DocumentTextOutline),
-      },
-      {
-        label: t('objects.setting'),
-        key: "config",
-        path: "/system/settings",
-        icon: renderIcon(ConstructOutline),
-      },
-    ],
-  },
-]
+const containerIcon = () => h(XIcon, {
+  path: [
+    'M28 12h-8V4h8zm-6-2h4V6h-4z',
+    'M17 15V9H9v14h14v-8zm-6-4h4v4h-4zm4 10h-4v-4h4zm6 0h-4v-4h4z',
+    'M26 28H6a2.002 2.002 0 0 1-2-2V6a2.002 2.002 0 0 1 2-2h10v2H6v20h20V16h2v10a2.002 2.002 0 0 1-2 2z',
+  ],
+  viewBox: '0 0 32 32'
+})
+
+const homeItem = (): MenuOption => ({
+  label: t('fields.home'),
+  key: "home",
+  path: "/",
+  icon: renderIcon(HomeOutline),
+})
+
+const systemItem = (): MenuOption => ({
+  label: t('fields.system'),
+  key: "system",
+  icon: renderIcon(SettingsOutline),
+  children: [
+    {
+      label: t('objects.user'),
+      key: "users",
+      path: "/system/users",
+      icon: renderIcon(PersonOutline),
+    },
+    {
+      label: t('objects.role'),
+      key: "roles",
+      path: "/system/roles",
+      icon: renderIcon(PeopleOutline),
+    },
+    {
+      label: t('objects.chart'),
+      key: "charts",
+      path: "/system/charts",
+      icon: renderIcon(BarChartOutline),
+    },
+    {
+      label: t('objects.event'),
+      key: "events",
+      path: "/system/events",
+      icon: renderIcon(DocumentTextOutline),
+    },
+    {
+      label: t('objects.setting'),
+      key: "config",
+      path: "/system/settings",
+      icon: renderIcon(ConstructOutline),
+    },
+  ],
+})
+
+function buildSwarmMenu(): MenuOption[] {
+  return [
+    homeItem(),
+    {
+      label: t('fields.swarm'),
+      key: "swarm",
+      icon: renderIcon(GridOutline),
+      children: [
+        {
+          label: t('objects.registry'),
+          key: "registries",
+          path: "/swarm/registries",
+          icon: renderIcon(BusinessOutline),
+        },
+        {
+          label: t('objects.node'),
+          key: "nodes",
+          path: "/swarm/nodes",
+          icon: renderIcon(ServerOutline),
+        },
+        {
+          label: t('objects.network'),
+          key: "networks",
+          path: "/swarm/networks",
+          icon: renderIcon(GlobeOutline),
+        },
+        {
+          label: t('objects.service'),
+          key: "services",
+          path: "/swarm/services",
+          icon: renderIcon(ImageOutline),
+        },
+        {
+          label: t('objects.task'),
+          key: "tasks",
+          path: "/swarm/tasks",
+          icon: renderIcon(ImagesOutline),
+        },
+        {
+          label: t('objects.stack'),
+          key: "stacks",
+          path: "/swarm/stacks",
+          icon: renderIcon(AlbumsOutline),
+        },
+        {
+          label: t('objects.config'),
+          key: "configs",
+          path: "/swarm/configs",
+          icon: renderIcon(DocumentOutline),
+        },
+        {
+          label: t('objects.secret'),
+          key: "secrets",
+          path: "/swarm/secrets",
+          icon: renderIcon(DocumentLockOutline),
+        },
+      ],
+    },
+    {
+      label: t('fields.local'),
+      key: "local",
+      icon: renderIcon(CubeOutline),
+      children: [
+        {
+          label: t('objects.image'),
+          key: "images",
+          path: "/local/images",
+          icon: renderIcon(LayersOutline),
+        },
+        {
+          label: t('objects.container'),
+          key: "containers",
+          path: "/local/containers",
+          icon: containerIcon,
+        },
+        {
+          label: t('objects.volume'),
+          key: "volumes",
+          path: "/local/volumes",
+          icon: renderIcon(FileTrayFullOutline),
+        },
+      ],
+    },
+    systemItem(),
+  ]
+}
+
+function buildStandaloneMenu(): MenuOption[] {
+  return [
+    homeItem(),
+    {
+      label: t('fields.docker'),
+      key: "docker",
+      icon: renderIcon(LogoDocker),
+      children: [
+        {
+          label: t('objects.host'),
+          key: "host_list",
+          path: "/standalone/hosts",
+          icon: renderIcon(ServerOutline),
+        },
+        {
+          label: t('objects.registry'),
+          key: "registries",
+          path: "/swarm/registries",
+          icon: renderIcon(BusinessOutline),
+        },
+        {
+          label: t('objects.network'),
+          key: "std_networks",
+          path: "/standalone/networks",
+          icon: renderIcon(GlobeOutline),
+        },
+        {
+          label: t('objects.container'),
+          key: "std_container_list",
+          path: "/standalone/containers",
+          icon: containerIcon,
+        },
+        {
+          label: t('objects.stack'),
+          key: "std_stack_list",
+          path: "/standalone/stacks",
+          icon: renderIcon(AlbumsOutline),
+        },
+      ],
+    },
+    {
+      label: t('fields.local'),
+      key: "local",
+      icon: renderIcon(CubeOutline),
+      children: [
+        {
+          label: t('objects.image'),
+          key: "images",
+          path: "/local/images",
+          icon: renderIcon(LayersOutline),
+        },
+        {
+          label: t('objects.volume'),
+          key: "volumes",
+          path: "/local/volumes",
+          icon: renderIcon(FileTrayFullOutline),
+        },
+      ],
+    },
+    systemItem(),
+  ]
+}
+
+export function buildMenuOptions(mode: string): MenuOption[] {
+  return mode === 'standalone' ? buildStandaloneMenu() : buildSwarmMenu()
+}

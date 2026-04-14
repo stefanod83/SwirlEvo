@@ -18,10 +18,10 @@ type SecretHandler struct {
 // NewSecret creates an instance of SecretHandler
 func NewSecret(b biz.SecretBiz) *SecretHandler {
 	return &SecretHandler{
-		Search: secretSearch(b),
-		Find:   secretFind(b),
-		Delete: secretDelete(b),
-		Save:   secretSave(b),
+		Search: swarmOnly(secretSearch(b)),
+		Find:   swarmOnly(secretFind(b)),
+		Delete: swarmOnly(secretDelete(b)),
+		Save:   swarmOnly(secretSave(b)),
 	}
 }
 

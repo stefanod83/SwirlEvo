@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 
@@ -21,6 +22,14 @@ type ContainerHandler struct {
 	FetchLogs web.HandlerFunc `path:"/fetch-logs" auth:"container.logs" desc:"fetch logs of container"`
 	Connect   web.HandlerFunc `path:"/connect" auth:"container.execute" desc:"connect to a running container"`
 	Prune     web.HandlerFunc `path:"/prune" method:"post" auth:"container.delete" desc:"delete unused containers"`
+	Start     web.HandlerFunc `path:"/start" method:"post" auth:"container.edit" desc:"start container"`
+	Stop      web.HandlerFunc `path:"/stop" method:"post" auth:"container.edit" desc:"stop container"`
+	Restart   web.HandlerFunc `path:"/restart" method:"post" auth:"container.edit" desc:"restart container"`
+	Kill      web.HandlerFunc `path:"/kill" method:"post" auth:"container.edit" desc:"kill container"`
+	Pause     web.HandlerFunc `path:"/pause" method:"post" auth:"container.edit" desc:"pause container"`
+	Unpause   web.HandlerFunc `path:"/unpause" method:"post" auth:"container.edit" desc:"unpause container"`
+	Rename    web.HandlerFunc `path:"/rename" method:"post" auth:"container.edit" desc:"rename container"`
+	Stats     web.HandlerFunc `path:"/stats" auth:"container.view" desc:"container stats snapshot"`
 }
 
 // NewContainer creates an instance of ContainerHandler
@@ -32,6 +41,14 @@ func NewContainer(b biz.ContainerBiz) *ContainerHandler {
 		FetchLogs: containerFetchLogs(b),
 		Connect:   containerConnect(b),
 		Prune:     containerPrune(b),
+		Start:     containerStart(b),
+		Stop:      containerStop(b),
+		Restart:   containerRestart(b),
+		Kill:      containerKill(b),
+		Pause:     containerPause(b),
+		Unpause:   containerUnpause(b),
+		Rename:    containerRename(b),
+		Stats:     containerStats(b),
 	}
 }
 
@@ -261,5 +278,117 @@ func containerPrune(b biz.ContainerBiz) web.HandlerFunc {
 			"count": count,
 			"size":  size,
 		})
+	}
+}
+
+type containerActionArgs struct {
+	Node    string `json:"node"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Timeout int    `json:"timeout"`
+	Signal  string `json:"signal"`
+	NewName string `json:"newName"`
+}
+
+func containerStart(b biz.ContainerBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		args := &containerActionArgs{}
+		if err := c.Bind(args); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.Start(ctx, args.Node, args.ID, args.Name, c.User()))
+	}
+}
+
+func containerStop(b biz.ContainerBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		args := &containerActionArgs{}
+		if err := c.Bind(args); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.Stop(ctx, args.Node, args.ID, args.Name, args.Timeout, c.User()))
+	}
+}
+
+func containerRestart(b biz.ContainerBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		args := &containerActionArgs{}
+		if err := c.Bind(args); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.Restart(ctx, args.Node, args.ID, args.Name, args.Timeout, c.User()))
+	}
+}
+
+func containerKill(b biz.ContainerBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		args := &containerActionArgs{}
+		if err := c.Bind(args); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.Kill(ctx, args.Node, args.ID, args.Name, args.Signal, c.User()))
+	}
+}
+
+func containerPause(b biz.ContainerBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		args := &containerActionArgs{}
+		if err := c.Bind(args); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.Pause(ctx, args.Node, args.ID, args.Name, c.User()))
+	}
+}
+
+func containerUnpause(b biz.ContainerBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		args := &containerActionArgs{}
+		if err := c.Bind(args); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.Unpause(ctx, args.Node, args.ID, args.Name, c.User()))
+	}
+}
+
+func containerRename(b biz.ContainerBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		args := &containerActionArgs{}
+		if err := c.Bind(args); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.Rename(ctx, args.Node, args.ID, args.Name, args.NewName, c.User()))
+	}
+}
+
+func containerStats(b biz.ContainerBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+
+		node := c.Query("node")
+		id := c.Query("id")
+		raw, err := b.Stats(ctx, node, id)
+		if err != nil {
+			return err
+		}
+		var stats data.Map
+		if err := json.Unmarshal(raw, &stats); err != nil {
+			return err
+		}
+		return success(c, stats)
 	}
 }

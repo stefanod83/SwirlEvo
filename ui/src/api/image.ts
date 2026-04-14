@@ -71,8 +71,8 @@ export class ImageApi {
         return ajax.get<SearchResult>('/image/search', args)
     }
 
-    delete(node: string, id: string, name: string) {
-        return ajax.post<Result<Object>>('/image/delete', { node, id, name })
+    delete(node: string, id: string, name: string, force = false) {
+        return ajax.post<Result<Object>>('/image/delete', { node, id, name, force })
     }
 
     prune(node: string) {

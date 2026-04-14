@@ -42,36 +42,92 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { h, onMounted, reactive, ref } from "vue";
 import {
   NSpace,
   NButton,
+  NButtonGroup,
   NDataTable,
   NInput,
   NSelect,
   NIcon,
+  NTag,
+  NTooltip,
+  useDialog,
+  useMessage,
 } from "naive-ui";
-import { CloseOutline as CloseIcon } from "@vicons/ionicons5";
+import {
+  CloseOutline as CloseIcon,
+  TrashOutline,
+  FlashOffOutline,
+} from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import imageApi from "@/api/image";
 import type { Image } from "@/api/image";
-import nodeApi from "@/api/node";
+import { listHostsOrNodes } from "@/utils/host-node";
 import { useDataTable } from "@/utils/data-table";
-import { formatSize, renderButton, renderLink, renderTags } from "@/utils/render";
+import { formatSize, renderLink, renderTags } from "@/utils/render";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+const dialog = useDialog()
+const message = useMessage()
 const filter = reactive({
   node: '',
   name: '',
 });
 const nodes: any = ref([])
+
+function actionButton(type: 'default' | 'error' | 'warning' | 'success' | 'info', iconCmp: any, tooltip: string, onClick: () => void) {
+  return h(NTooltip, { trigger: 'hover' }, {
+    trigger: () => h(NButton, { size: 'tiny', quaternary: true, type, onClick }, { icon: () => h(NIcon, null, { default: () => h(iconCmp) }) }),
+    default: () => tooltip,
+  })
+}
+
+async function doDelete(i: Image, index: number, force: boolean) {
+  try {
+    await imageApi.delete(filter.node, i.id, "", force)
+    state.data.splice(index, 1)
+    message.success(t('buttons.delete'))
+  } catch (e: any) {
+    message.error(e?.message || String(e))
+  }
+}
+
+function confirmDelete(i: Image, index: number) {
+  dialog.warning({
+    title: t('buttons.delete'),
+    content: t('prompts.delete'),
+    positiveText: t('buttons.confirm'),
+    negativeText: t('buttons.cancel'),
+    onPositiveClick: () => doDelete(i, index, false),
+  })
+}
+
+function confirmForceDelete(i: Image, index: number) {
+  const tagList = (i.tags || []).filter(x => x && x !== '<none>:<none>').join(', ') || i.id.substring(7, 19)
+  dialog.error({
+    title: t('buttons.force_delete') || 'Force delete',
+    content: (t('prompts.force_delete') || 'This will remove the image from all repositories (untag every tag and delete image layers), even if referenced by containers. Proceed?') + '\n\n' + tagList,
+    positiveText: t('buttons.confirm'),
+    negativeText: t('buttons.cancel'),
+    onPositiveClick: () => doDelete(i, index, true),
+  })
+}
 const columns = [
   {
     title: t('fields.id'),
     key: "id",
     fixed: "left" as const,
-    render: (i: Image) => renderLink({ name: 'image_detail', params: { node: filter.node || '-', id: i.id } }, i.id.substring(7, 19)),
+    render: (i: Image) => {
+      const idShort = i.id.substring(7, 19)
+      const link = renderLink({ name: 'image_detail', params: { node: filter.node || '-', id: i.id } }, idShort)
+      const unused = !i.containers || i.containers <= 0
+      if (!unused) return link
+      const badge = h(NTag, { size: 'small', type: 'warning', round: true, style: 'margin-left:6px' }, { default: () => t('fields.unused') || 'Unused' })
+      return h('span', null, [link, badge])
+    },
   },
   {
     title: t('fields.tags'),
@@ -98,17 +154,18 @@ const columns = [
   {
     title: t('fields.actions'),
     key: "actions",
+    width: 120,
     render(i: Image, index: number) {
-      return renderButton('error', t('buttons.delete'), () => remove(i.id, index), t('prompts.delete'))
+      return h(NButtonGroup, null, {
+        default: () => [
+          actionButton('error', TrashOutline, t('buttons.delete'), () => confirmDelete(i, index)),
+          actionButton('error', FlashOffOutline, t('buttons.force_delete') || 'Force delete', () => confirmForceDelete(i, index)),
+        ],
+      })
     },
   },
 ];
 const { state, pagination, fetchData, changePageSize } = useDataTable(imageApi.search, filter, false)
-
-async function remove(id: string, index: number) {
-  await imageApi.delete(filter.node, id, "");
-  state.data.splice(index, 1)
-}
 
 async function prune() {
   window.dialog.warning({
@@ -128,10 +185,9 @@ async function prune() {
 }
 
 onMounted(async () => {
-  const r = await nodeApi.list(true)
-  nodes.value = r.data?.map(n => ({ label: n.name, value: n.id }))
-  if (r.data?.length) {
-    filter.node = r.data[0].id
+  nodes.value = await listHostsOrNodes()
+  if (nodes.value.length) {
+    filter.node = nodes.value[0].value
   }
   fetchData()
 })

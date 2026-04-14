@@ -271,6 +271,27 @@ type HostSearchArgs struct {
 	PageSize  int    `bind:"pageSize"`
 }
 
+// ComposeStack represents a docker-compose style stack deployed on a standalone host.
+// Swirl persists the compose YAML so the stack can be redeployed / reconciled.
+type ComposeStack struct {
+	ID        string   `json:"id" bson:"_id"`
+	HostID    string   `json:"hostId" bson:"host_id"`
+	Name      string   `json:"name" bson:"name" valid:"required"`
+	Content   string   `json:"content,omitempty" bson:"content"`
+	Status    string   `json:"status" bson:"status"` // active, inactive, partial, error
+	CreatedAt Time     `json:"createdAt" bson:"created_at"`
+	UpdatedAt Time     `json:"updatedAt" bson:"updated_at"`
+	CreatedBy Operator `json:"createdBy" bson:"created_by"`
+	UpdatedBy Operator `json:"updatedBy" bson:"updated_by"`
+}
+
+type ComposeStackSearchArgs struct {
+	HostID    string `bind:"hostId"`
+	Name      string `bind:"name"`
+	PageIndex int    `bind:"pageIndex"`
+	PageSize  int    `bind:"pageSize"`
+}
+
 type Session struct {
 	ID        string    `json:"id" bson:"_id"` // token
 	UserID    string    `json:"userId" bson:"user_id"`

@@ -84,6 +84,14 @@ type Interface interface {
 	HostUpdate(ctx context.Context, host *Host) error
 	HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer string) error
 	HostDelete(ctx context.Context, id string) error
+
+	ComposeStackGet(ctx context.Context, id string) (*ComposeStack, error)
+	ComposeStackGetByName(ctx context.Context, hostID, name string) (*ComposeStack, error)
+	ComposeStackSearch(ctx context.Context, args *ComposeStackSearchArgs) (stacks []*ComposeStack, count int, err error)
+	ComposeStackCreate(ctx context.Context, stack *ComposeStack) error
+	ComposeStackUpdate(ctx context.Context, stack *ComposeStack) error
+	ComposeStackUpdateStatus(ctx context.Context, id, status string) error
+	ComposeStackDelete(ctx context.Context, id string) error
 }
 
 func newInterface() (i Interface) {

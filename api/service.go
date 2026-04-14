@@ -25,15 +25,15 @@ type ServiceHandler struct {
 // NewService creates an instance of ServiceHandler
 func NewService(b biz.ServiceBiz) *ServiceHandler {
 	return &ServiceHandler{
-		Search:    serviceSearch(b),
-		Find:      serviceFind(b),
-		Delete:    serviceDelete(b),
-		Restart:   serviceRestart(b),
-		Rollback:  serviceRollback(b),
-		Scale:     serviceScale(b),
-		Save:      serviceSave(b),
-		Deploy:    serviceDeploy(b),
-		FetchLogs: serviceFetchLogs(b),
+		Search:    swarmOnly(serviceSearch(b)),
+		Find:      swarmOnly(serviceFind(b)),
+		Delete:    swarmOnly(serviceDelete(b)),
+		Restart:   swarmOnly(serviceRestart(b)),
+		Rollback:  swarmOnly(serviceRollback(b)),
+		Scale:     swarmOnly(serviceScale(b)),
+		Save:      swarmOnly(serviceSave(b)),
+		Deploy:    swarmOnly(serviceDeploy(b)),
+		FetchLogs: swarmOnly(serviceFetchLogs(b)),
 	}
 }
 

@@ -18,10 +18,10 @@ type ConfigHandler struct {
 // NewConfig creates an instance of ConfigHandler
 func NewConfig(b biz.ConfigBiz) *ConfigHandler {
 	return &ConfigHandler{
-		Search: configSearch(b),
-		Find:   configFind(b),
-		Delete: configDelete(b),
-		Save:   configSave(b),
+		Search: swarmOnly(configSearch(b)),
+		Find:   swarmOnly(configFind(b)),
+		Delete: swarmOnly(configDelete(b)),
+		Save:   swarmOnly(configSave(b)),
 	}
 }
 

@@ -46,6 +46,12 @@ const (
 	EventActionDeploy     EventAction = "Deploy"
 	EventActionShutdown   EventAction = "Shutdown"
 	EventActionPrune      EventAction = "Prune"
+	EventActionStart      EventAction = "Start"
+	EventActionStop       EventAction = "Stop"
+	EventActionKill       EventAction = "Kill"
+	EventActionPause      EventAction = "Pause"
+	EventActionUnpause    EventAction = "Unpause"
+	EventActionRename     EventAction = "Rename"
 )
 
 type EventBiz interface {

@@ -75,8 +75,9 @@ func imageFind(b biz.ImageBiz) web.HandlerFunc {
 
 func imageDelete(b biz.ImageBiz) web.HandlerFunc {
 	type Args struct {
-		Node string `json:"node"`
-		ID   string `json:"id"`
+		Node  string `json:"node"`
+		ID    string `json:"id"`
+		Force bool   `json:"force"`
 	}
 
 	return func(c web.Context) (err error) {
@@ -85,7 +86,7 @@ func imageDelete(b biz.ImageBiz) web.HandlerFunc {
 			ctx, cancel := misc.Context(defaultTimeout)
 			defer cancel()
 
-			err = b.Delete(ctx, args.Node, args.ID, c.User())
+			err = b.Delete(ctx, args.Node, args.ID, args.Force, c.User())
 		}
 		return ajax(c, err)
 	}

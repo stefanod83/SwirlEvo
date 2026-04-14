@@ -31,11 +31,11 @@ export interface HostInfo {
 }
 
 export function search(name?: string, status?: string, pageIndex?: number, pageSize?: number) {
-  return ajax.get('/host/search', { params: { name, status, pageIndex, pageSize } })
+  return ajax.get('/host/search', { name, status, pageIndex, pageSize })
 }
 
 export function find(id: string) {
-  return ajax.get('/host/find', { params: { id } })
+  return ajax.get('/host/find', { id })
 }
 
 export function save(host: Partial<Host>) {
