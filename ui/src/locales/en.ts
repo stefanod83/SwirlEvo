@@ -237,6 +237,11 @@ export default {
         "enable_logout": "Enable upstream logout",
         "group_role_map": "Group → Role mapping",
         "group": "Group",
+        "list": "List",
+        "topology": "Topology",
+        "exposed": "Exposed",
+        "isolated": "Isolated",
+        "local_only": "Local only",
     },
     "dialogs": {
         "restart_service": {
@@ -460,6 +465,9 @@ export default {
         "kc_enable_logout_kc": "Keycloak: Clients → <your client> → Advanced → enable 'Front Channel Logout' if you use the browser-redirect logout flow.",
         "kc_group_role_map_swirl": "Pairs a Keycloak group name with a Swirl role. At login, Swirl applies the first matching group. No match and auto-create ON → user has no permissions (admin must promote manually).",
         "kc_group_role_map_kc": "Keycloak: define the groups (e.g. 'admins', 'developers') and assign users to them. Make sure the 'groups' client scope is active on the client.",
+        "topology": "Interactive graph of networks, containers and their connectivity on the selected host. Red highlights mean a port is published to a public address; blue border means the network is isolated (internal).",
+        "exposed_public": "Port published to 0.0.0.0 / ::",
+        "local_only_ports": "Ports bound to 127.0.0.1 / ::1 only",
     },
     "texts": {
         "action_success": "Operation successfully completed",

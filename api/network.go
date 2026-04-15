@@ -14,6 +14,7 @@ type NetworkHandler struct {
 	Delete     web.HandlerFunc `path:"/delete" method:"post" auth:"network.delete" desc:"delete network"`
 	Save       web.HandlerFunc `path:"/save" method:"post" auth:"network.edit" desc:"create or update network"`
 	Disconnect web.HandlerFunc `path:"/disconnect" method:"post" auth:"network.disconnect" desc:"disconnect container from network"`
+	Topology   web.HandlerFunc `path:"/topology" auth:"network.view" desc:"network topology graph"`
 }
 
 // NewNetwork creates an instance of NetworkHandler
@@ -24,6 +25,7 @@ func NewNetwork(nb biz.NetworkBiz) *NetworkHandler {
 		Delete:     networkDelete(nb),
 		Save:       networkSave(nb),
 		Disconnect: networkDisconnect(nb),
+		Topology:   networkTopology(nb),
 	}
 }
 
@@ -90,6 +92,25 @@ func networkSave(nb biz.NetworkBiz) web.HandlerFunc {
 			err = nb.Create(ctx, a.Node, &a.Network, c.User())
 		}
 		return ajax(c, err)
+	}
+}
+
+func networkTopology(nb biz.NetworkBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+
+		hostID := c.Query("hostId")
+		if hostID == "" {
+			// Fallback to the legacy `node` param used elsewhere, to keep the
+			// handler drop-in friendly.
+			hostID = c.Query("node")
+		}
+		topo, err := nb.Topology(ctx, hostID)
+		if err != nil {
+			return err
+		}
+		return success(c, topo)
 	}
 }
 

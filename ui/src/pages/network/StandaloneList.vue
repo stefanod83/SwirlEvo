@@ -1,7 +1,7 @@
 <template>
-  <x-page-header :subtitle="t('texts.records', { total: model.length }, model.length)">
+  <x-page-header :subtitle="activeTab === 'list' ? t('texts.records', { total: model.length }, model.length) : undefined">
     <template #action>
-      <n-space :size="8">
+      <n-space :size="8" v-if="activeTab === 'list'">
         <n-button secondary size="small" @click="fetchData">
           <template #icon>
             <n-icon><refresh-outline /></n-icon>
@@ -25,17 +25,23 @@
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
     <x-empty-host-prompt v-if="showEmpty" :resource="t('objects.network', 2)" />
-    <n-data-table
-      v-else
-      :row-key="(row: any) => row.id"
-      size="small"
-      :columns="columns"
-      :data="model"
-      :loading="loading"
-      :checked-row-keys="checkedIds"
-      @update:checked-row-keys="(k: any) => checkedIds = k"
-      scroll-x="max-content"
-    />
+    <n-tabs v-else v-model:value="activeTab" type="line" animated>
+      <n-tab-pane name="list" :tab="t('fields.list')">
+        <n-data-table
+          :row-key="(row: any) => row.id"
+          size="small"
+          :columns="columns"
+          :data="model"
+          :loading="loading"
+          :checked-row-keys="checkedIds"
+          @update:checked-row-keys="(k: any) => checkedIds = k"
+          scroll-x="max-content"
+        />
+      </n-tab-pane>
+      <n-tab-pane name="topology" :tab="t('fields.topology')" display-directive="if">
+        <NetworkTopology :host-id="selectedHostId" />
+      </n-tab-pane>
+    </n-tabs>
   </n-space>
 </template>
 
@@ -43,11 +49,13 @@
 import { computed, onMounted, ref, watch } from "vue";
 import {
   NSpace, NButton, NDataTable, NIcon,
+  NTabs, NTabPane,
   useDialog, useMessage,
 } from "naive-ui";
 import { AddOutline as AddIcon, TrashOutline, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
+import NetworkTopology from "./Topology.vue";
 import networkApi from "@/api/network";
 import type { Network } from "@/api/network";
 import { renderButton, renderTag } from "@/utils/render";
@@ -63,6 +71,7 @@ const showEmpty = computed(() => !selectedHostId.value)
 const model = ref([] as Network[])
 const loading = ref(false)
 const checkedIds = ref([] as string[])
+const activeTab = ref<'list' | 'topology'>('list')
 
 async function removeOne(id: string, name: string) {
   await networkApi.delete(id, name, selectedHostId.value || '')

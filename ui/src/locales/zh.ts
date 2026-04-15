@@ -237,6 +237,11 @@ export default {
         "enable_logout": "启用上游登出",
         "group_role_map": "用户组 → 角色映射",
         "group": "用户组",
+        "list": "列表",
+        "topology": "拓扑",
+        "exposed": "已暴露",
+        "isolated": "隔离",
+        "local_only": "仅本地",
     },
     "dialogs": {
         "restart_service": {
@@ -459,6 +464,9 @@ export default {
         "kc_enable_logout_kc": "Keycloak：Clients → <你的 client> → Advanced → 若使用浏览器重定向登出，开启 'Front Channel Logout'。",
         "kc_group_role_map_swirl": "将 Keycloak 组名与 Swirl 角色配对。登录时 Swirl 取第一个匹配的组。未匹配且开启自动创建时，新用户无任何权限（需管理员手动提升）。",
         "kc_group_role_map_kc": "Keycloak：定义用户组（如 'admins'、'developers'）并分配给用户。确保 'groups' client scope 已激活。",
+        "topology": "所选主机上网络、容器及其连通性的交互图。红色高亮表示端口发布到公共地址；蓝色边框表示网络隔离（internal）。",
+        "exposed_public": "端口发布到 0.0.0.0 / ::",
+        "local_only_ports": "端口仅绑定到 127.0.0.1 / ::1",
     },
     "texts": {
         "action_success": "操作成功",
