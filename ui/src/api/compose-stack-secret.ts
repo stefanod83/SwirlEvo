@@ -28,6 +28,16 @@ export interface ComposeStackSecretSaveResult {
     id?: string;
 }
 
+// Mirror of biz.DriftStatus — see biz/compose_stack_secret.go.
+// State is one of: ok | drifted | missing | error | unknown.
+export interface ComposeStackSecretDrift {
+    bindingId: string;
+    state: 'ok' | 'drifted' | 'missing' | 'error' | 'unknown';
+    currentHash?: string;
+    deployedHash?: string;
+    message?: string;
+}
+
 export class ComposeStackSecretApi {
     list(stackId: string) {
         return ajax.get<ComposeStackSecretBinding[]>('/compose-stack-secret/list', { stackId })
@@ -43,6 +53,10 @@ export class ComposeStackSecretApi {
 
     delete(id: string) {
         return ajax.post<Result<Object>>('/compose-stack-secret/delete', { id })
+    }
+
+    drift(stackId: string) {
+        return ajax.get<ComposeStackSecretDrift[]>('/compose-stack-secret/drift', { stackId })
     }
 }
 

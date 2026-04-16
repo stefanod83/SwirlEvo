@@ -18,6 +18,7 @@ type ComposeStackSecretHandler struct {
 	Find   web.HandlerFunc `path:"/find" auth:"stack.view" desc:"find binding by id"`
 	Save   web.HandlerFunc `path:"/save" method:"post" auth:"stack.edit" desc:"create or update a compose stack secret binding"`
 	Delete web.HandlerFunc `path:"/delete" method:"post" auth:"stack.edit" desc:"delete a compose stack secret binding"`
+	Drift  web.HandlerFunc `path:"/drift" auth:"stack.view" desc:"compare bindings against current Vault values (read-only)"`
 }
 
 // NewComposeStackSecret is registered in api.init.
@@ -27,6 +28,7 @@ func NewComposeStackSecret(b biz.ComposeStackSecretBiz) *ComposeStackSecretHandl
 		Find:   composeStackSecretFind(b),
 		Save:   composeStackSecretSave(b),
 		Delete: composeStackSecretDelete(b),
+		Drift:  composeStackSecretDrift(b),
 	}
 }
 
@@ -84,5 +86,18 @@ func composeStackSecretDelete(b biz.ComposeStackSecretBiz) web.HandlerFunc {
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
 		return ajax(c, b.Delete(ctx, args.ID, c.User()))
+	}
+}
+
+func composeStackSecretDrift(b biz.ComposeStackSecretBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		stackID := c.Query("stackId")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		statuses, err := b.CheckDrift(ctx, stackID)
+		if err != nil {
+			return err
+		}
+		return success(c, statuses)
 	}
 }

@@ -41,6 +41,10 @@ export class VaultSecretApi {
         return ajax.get<VaultSecretSearchResult>('/vault-secret/search', args)
     }
 
+    list() {
+        return ajax.get<VaultSecret[]>('/vault-secret/list')
+    }
+
     find(id: string) {
         return ajax.get<VaultSecret>('/vault-secret/find', { id })
     }

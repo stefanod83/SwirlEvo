@@ -52,6 +52,26 @@ const (
 	LabelSecretStack   = "com.swirl.compose.secret-stack"
 )
 
+// DriftStatus reports whether a binding's last-deployed value still matches
+// what's currently in Vault. Returned per binding from CheckDrift.
+type DriftStatus struct {
+	BindingID    string `json:"bindingId"`
+	State        string `json:"state"` // "ok" | "drifted" | "missing" | "error" | "unknown"
+	CurrentHash  string `json:"currentHash,omitempty"`
+	DeployedHash string `json:"deployedHash,omitempty"`
+	Message      string `json:"message,omitempty"`
+}
+
+// Drift state constants — kept symmetric with the JSON values so the UI
+// can switch on them without translating.
+const (
+	DriftStateOK       = "ok"
+	DriftStateDrifted  = "drifted"
+	DriftStateMissing  = "missing"
+	DriftStateError    = "error"
+	DriftStateUnknown  = "unknown" // never deployed yet — no baseline to compare
+)
+
 // ComposeStackSecretBiz manages the bindings between a compose stack and
 // the VaultSecret catalog, and is responsible for materializing the
 // resolved secret value inside the target container.
@@ -69,6 +89,10 @@ type ComposeStackSecretBiz interface {
 	// no Vault lookup is required. Used by the Remove flow so that a broken
 	// Vault connection never blocks tearing down a stack.
 	NewCleanupHook() compose.DeployHook
+	// CheckDrift compares each binding's DeployedHash with the current value
+	// in Vault. Best-effort: a Vault failure on one binding is reported as
+	// "error" for that binding but does not abort the rest.
+	CheckDrift(ctx context.Context, stackID string) ([]DriftStatus, error)
 }
 
 type composeStackSecretBiz struct {
@@ -111,6 +135,93 @@ func (b *composeStackSecretBiz) Upsert(ctx context.Context, binding *dao.Compose
 
 func (b *composeStackSecretBiz) Delete(ctx context.Context, id string, user web.User) error {
 	return b.di.ComposeStackSecretBindingDelete(ctx, id)
+}
+
+// CheckDrift fetches the current value of every binding from Vault and
+// compares its hash with the persisted DeployedHash. It is read-only — it
+// never mutates the bindings (so a deploy is the only thing that updates
+// the baseline). One Vault failure does not abort the others.
+func (b *composeStackSecretBiz) CheckDrift(ctx context.Context, stackID string) ([]DriftStatus, error) {
+	bindings, err := b.di.ComposeStackSecretBindingGetByStack(ctx, stackID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DriftStatus, 0, len(bindings))
+	if len(bindings) == 0 {
+		return out, nil
+	}
+	vc, err := lookupVaultClient()
+	if err != nil {
+		// No Vault client → mark everything unknown so the UI can surface
+		// the configuration problem without breaking the page load.
+		for _, bind := range bindings {
+			out = append(out, DriftStatus{
+				BindingID:    bind.ID,
+				State:        DriftStateError,
+				DeployedHash: bind.DeployedHash,
+				Message:      err.Error(),
+			})
+		}
+		return out, nil
+	}
+	if !vc.IsEnabled() {
+		for _, bind := range bindings {
+			out = append(out, DriftStatus{
+				BindingID:    bind.ID,
+				State:        DriftStateError,
+				DeployedHash: bind.DeployedHash,
+				Message:      errVaultDisabled.Error(),
+			})
+		}
+		return out, nil
+	}
+	s := b.loader()
+	for _, bind := range bindings {
+		ds := DriftStatus{BindingID: bind.ID, DeployedHash: bind.DeployedHash}
+		if bind.DeployedHash == "" {
+			ds.State = DriftStateUnknown
+			out = append(out, ds)
+			continue
+		}
+		rec, err := b.di.VaultSecretGet(ctx, bind.VaultSecretID)
+		if err != nil || rec == nil {
+			ds.State = DriftStateMissing
+			if err != nil {
+				ds.Message = err.Error()
+			} else {
+				ds.Message = "vault secret entry not found"
+			}
+			out = append(out, ds)
+			continue
+		}
+		logicalPath := rec.Path
+		if logicalPath == "" {
+			logicalPath = rec.Name
+		}
+		full := resolvePrefixed(s, logicalPath)
+		data, err := vc.ReadKVv2(ctx, full)
+		if err != nil {
+			ds.State = DriftStateError
+			ds.Message = err.Error()
+			out = append(out, ds)
+			continue
+		}
+		value, err := extractSecretValue(data, rec.Field)
+		if err != nil {
+			ds.State = DriftStateError
+			ds.Message = err.Error()
+			out = append(out, ds)
+			continue
+		}
+		ds.CurrentHash = sha256Hex(value)
+		if ds.CurrentHash == bind.DeployedHash {
+			ds.State = DriftStateOK
+		} else {
+			ds.State = DriftStateDrifted
+		}
+		out = append(out, ds)
+	}
+	return out, nil
 }
 
 // NewCleanupHook returns a DeployHook that only reacts to AfterRemove — no
