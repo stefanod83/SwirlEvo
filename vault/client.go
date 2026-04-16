@@ -95,12 +95,17 @@ func (c *Client) Health(ctx context.Context) (sealed bool, initialized bool, ver
 	}
 	resp, err := cli.Do(req)
 	if err != nil {
+		// Log transport-level failures in full: DNS issues, connection
+		// timeouts, TLS errors, proxy misbehaviour — we've been burned
+		// by all of them at least once.
+		c.logger.Warnf("vault health %s failed: %v", u, err)
 		return
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 500 {
-		err = fmt.Errorf("vault health http %d: %s", resp.StatusCode, truncate(string(body), 200))
+		err = fmt.Errorf("vault health %s %d: %s", resp.Proto, resp.StatusCode, truncate(string(body), 200))
+		c.logger.Warnf("vault health: %v", err)
 		return
 	}
 	var h struct {
@@ -142,12 +147,15 @@ func (c *Client) TestAuth(ctx context.Context) error {
 	}
 	resp, err := cli.Do(req)
 	if err != nil {
+		c.logger.Warnf("vault token lookup transport error: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("token lookup failed: http %d: %s", resp.StatusCode, truncate(string(body), 200))
+		wrapped := fmt.Errorf("token lookup failed: %s %d: %s", resp.Proto, resp.StatusCode, truncate(string(body), 200))
+		c.logger.Warnf("vault %v", wrapped)
+		return wrapped
 	}
 	return nil
 }
@@ -184,6 +192,110 @@ func (c *Client) ReadKVv2(ctx context.Context, path string) (map[string]any, err
 		return map[string]any{}, nil
 	}
 	return env.Data.Data, nil
+}
+
+// WriteKVv2 writes a new version of a KVv2 secret. "path" is the logical
+// path inside the mount (no "data/" prefix). The caller's token needs
+// `create` + `update` capabilities on `<mount>/data/<path>`.
+func (c *Client) WriteKVv2(ctx context.Context, path string, data map[string]any) error {
+	s := c.settingLoader()
+	if s == nil || !s.Vault.Enabled {
+		return ErrDisabled
+	}
+	mount := strings.Trim(s.Vault.KVMount, "/ ")
+	if mount == "" {
+		mount = defaultKVMount
+	}
+	clean := strings.TrimLeft(path, "/")
+	apiPath := fmt.Sprintf("v1/%s/data/%s", mount, clean)
+	payload := map[string]any{"data": data}
+	_, err := c.doAuthed(ctx, http.MethodPost, apiPath, "", payload)
+	return err
+}
+
+// DeleteKVv2 permanently removes a KVv2 secret AND all its version history
+// (DELETE on the `metadata/` sub-path, not `data/`). The caller's token
+// needs `delete` on `<mount>/metadata/<path>`.
+func (c *Client) DeleteKVv2(ctx context.Context, path string) error {
+	s := c.settingLoader()
+	if s == nil || !s.Vault.Enabled {
+		return ErrDisabled
+	}
+	mount := strings.Trim(s.Vault.KVMount, "/ ")
+	if mount == "" {
+		mount = defaultKVMount
+	}
+	clean := strings.TrimLeft(path, "/")
+	apiPath := fmt.Sprintf("v1/%s/metadata/%s", mount, clean)
+	_, err := c.doAuthed(ctx, http.MethodDelete, apiPath, "", nil)
+	return err
+}
+
+// KVv2Metadata describes the version history of a KVv2 secret, returned
+// by ReadMetadataKVv2. Enough for version-count badges + a stale check.
+type KVv2Metadata struct {
+	CurrentVersion int       `json:"current_version"`
+	OldestVersion  int       `json:"oldest_version"`
+	CreatedTime    time.Time `json:"created_time"`
+	UpdatedTime    time.Time `json:"updated_time"`
+	Versions       map[string]struct {
+		CreatedTime time.Time `json:"created_time"`
+		Destroyed   bool      `json:"destroyed"`
+	} `json:"versions"`
+}
+
+// ReadMetadataKVv2 fetches version metadata for a KVv2 secret. Returns a
+// nil metadata + no error if the secret does not exist (404) so the
+// caller can distinguish "missing" from "transport error".
+func (c *Client) ReadMetadataKVv2(ctx context.Context, path string) (*KVv2Metadata, error) {
+	s := c.settingLoader()
+	if s == nil || !s.Vault.Enabled {
+		return nil, ErrDisabled
+	}
+	mount := strings.Trim(s.Vault.KVMount, "/ ")
+	if mount == "" {
+		mount = defaultKVMount
+	}
+	clean := strings.TrimLeft(path, "/")
+	apiPath := fmt.Sprintf("v1/%s/metadata/%s", mount, clean)
+	body, err := c.doAuthed(ctx, http.MethodGet, apiPath, "", nil)
+	if err != nil {
+		// doAuthed formats the HTTP status inside the error message. A
+		// 404 is not a real error here — it just means the entry has
+		// not been written yet. Match on " 404 " (with surrounding
+		// spaces) to avoid false positives on IPs/ports.
+		if strings.Contains(err.Error(), " 404 ") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var env struct {
+		Data KVv2Metadata `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("decode kv metadata response: %w", err)
+	}
+	return &env.Data, nil
+}
+
+// ReadMetadataSummary is a typed projection of ReadMetadataKVv2 that
+// returns only the primitives needed by the biz layer — kept here to
+// avoid the cross-package tangle of exporting KVv2Metadata through the
+// biz `vaultReader` interface (biz can't import `vault`).
+//
+// `exists` is false when the entry does not exist (404); both other
+// return values are meaningless in that case. `currentVersion` is the
+// latest version number (1-based), `totalVersions` is the number of
+// versions still on record (destroyed ones included).
+func (c *Client) ReadMetadataSummary(ctx context.Context, path string) (currentVersion, totalVersions int, exists bool, err error) {
+	meta, err := c.ReadMetadataKVv2(ctx, path)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if meta == nil {
+		return 0, 0, false, nil
+	}
+	return meta.CurrentVersion, len(meta.Versions), true, nil
 }
 
 // ResolvePrefixed joins the configured prefix with a secret name and returns
@@ -249,7 +361,20 @@ func (c *Client) doAuthed(ctx context.Context, method, apiPath, query string, pa
 		c.mu.Unlock()
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("vault %s %s: http %d: %s", method, apiPath, resp.StatusCode, truncate(string(data), 300))
+		// Include resp.Proto + Server/Via so we can tell at a glance
+		// what proxy is in front of Vault (Traefik, Caddy, nginx, ...)
+		// and what HTTP version was actually used. Helps when chasing
+		// "Misdirected Request" or other reverse-proxy edge cases.
+		wrapped := fmt.Errorf("vault %s %s: %s %d (server=%q via=%q): %s",
+			method, apiPath, resp.Proto, resp.StatusCode,
+			resp.Header.Get("Server"), resp.Header.Get("Via"),
+			truncate(string(data), 600))
+		// 4xx/5xx are interesting for ops — log at Warn so they show
+		// up without flipping levels. 404s are intentionally logged
+		// too: they may be "entry not yet written" (benign) or
+		// "policy mismatch" (symptomatic).
+		c.logger.Warnf("%v", wrapped)
+		return nil, wrapped
 	}
 	return data, nil
 }
@@ -328,14 +453,18 @@ func loginAppRole(ctx context.Context, cli *http.Client, s *misc.Setting) (strin
 	if s.Vault.Namespace != "" {
 		req.Header.Set("X-Vault-Namespace", s.Vault.Namespace)
 	}
+	lg := log.Get("vault")
 	resp, err := cli.Do(req)
 	if err != nil {
+		lg.Warnf("vault approle login transport error: %v", err)
 		return "", 0, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return "", 0, fmt.Errorf("approle login: http %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		wrapped := fmt.Errorf("approle login: %s %d: %s", resp.Proto, resp.StatusCode, truncate(string(raw), 300))
+		lg.Warnf("vault %v", wrapped)
+		return "", 0, wrapped
 	}
 	var env struct {
 		Auth struct {
@@ -377,6 +506,15 @@ func (c *Client) httpClient(s *misc.Setting) (*http.Client, error) {
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: timeoutOrDefault(s) + 2*time.Second,
+		// DisableKeepAlives: fresh TCP connection per request. Observed
+		// in the wild: Vault sends `Connection: close` on every reply
+		// (both HTTP and HTTPS backends), which under Go's default
+		// keep-alive behaviour can leave an internal pool entry in a
+		// half-closed state; the next request then hangs until the
+		// client-level timeout. A new TCP connection per call adds no
+		// noticeable latency for our tiny call volume and sidesteps
+		// the whole class of issue.
+		DisableKeepAlives: true,
 	}
 	c.http = &http.Client{Transport: tr, Timeout: timeoutOrDefault(s)}
 	return c.http, nil

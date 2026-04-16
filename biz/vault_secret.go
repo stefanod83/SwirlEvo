@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/cuigh/auxo/app/container"
 	"github.com/cuigh/auxo/net/web"
@@ -22,18 +23,34 @@ const defaultSecretField = "value"
 // but the UI has no use case beyond this length.
 const maxSecretNameLen = 128
 
-// vaultReader is the subset of vault.Client that Preview uses. We accept
-// an interface instead of the concrete type so the biz layer doesn't have
-// to import the vault package — which would create an import cycle
-// (vault already depends on biz for BackupKeyProvider).
+// vaultReader is the subset of vault.Client that the biz layer uses.
+// Declared as an interface (rather than importing vault.Client directly)
+// to avoid the import cycle biz → vault → biz (BackupKeyProvider).
 type vaultReader interface {
 	IsEnabled() bool
 	ReadKVv2(ctx context.Context, path string) (map[string]any, error)
+	WriteKVv2(ctx context.Context, path string, data map[string]any) error
+	DeleteKVv2(ctx context.Context, path string) error
+	// ReadMetadataSummary returns (currentVersion, totalVersions, exists, err).
+	// `exists=false` + `err=nil` means the KV entry is absent (404).
+	ReadMetadataSummary(ctx context.Context, path string) (int, int, bool, error)
 }
 
 // errVaultDisabled is returned by Preview when Vault is not configured.
 // Kept local to avoid importing the vault package.
 var errVaultDisabled = errors.New("vault integration is not enabled")
+
+// VaultSecretStatus reports per-entry health returned by GetStatuses.
+// Exists=false means the KV entry is absent in Vault (the catalog entry
+// still exists in Swirl). When Error is non-empty the other fields are
+// not meaningful.
+type VaultSecretStatus struct {
+	ID             string `json:"id"`
+	Exists         bool   `json:"exists"`
+	CurrentVersion int    `json:"currentVersion,omitempty"`
+	TotalVersions  int    `json:"totalVersions,omitempty"`
+	Error          string `json:"error,omitempty"`
+}
 
 // VaultSecretBiz manages the catalog of Vault secret references. Only the
 // pointer (mount/prefix/path/field) is stored in the Swirl database — the
@@ -50,6 +67,16 @@ type VaultSecretBiz interface {
 	// present in the entry. The returned slice NEVER contains values — this
 	// is the only contract Swirl exposes about the live secret content.
 	Preview(ctx context.Context, id string) (exists bool, fields []string, err error)
+	// WriteValue writes a new version of the secret in Vault. When
+	// `replace` is false the backend merges the new fields into the
+	// current version; when true the new version contains ONLY the
+	// supplied fields. Values never touch disk on the Swirl side.
+	WriteValue(ctx context.Context, id string, data map[string]any, replace bool, user web.User) error
+	// GetStatuses fetches per-catalog-entry metadata from Vault in
+	// parallel and returns a map keyed by catalog entry id. Best-effort:
+	// per-entry errors are surfaced as Error in the status, not as a
+	// top-level failure.
+	GetStatuses(ctx context.Context) (map[string]*VaultSecretStatus, error)
 }
 
 // NewVaultSecret wires the biz. The Vault client is resolved lazily via the
@@ -188,11 +215,10 @@ func (b *vaultSecretBiz) Preview(ctx context.Context, id string) (bool, []string
 	full := resolvePrefixed(s, logicalPath)
 	data, err := vc.ReadKVv2(ctx, full)
 	if err != nil {
-		// Distinguish "missing entry" from auth/config errors so the UI can
-		// differentiate. The Vault client wraps the HTTP status into the
-		// error string; 404 contains "http 404".
-		msg := err.Error()
-		if strings.Contains(msg, "http 404") {
+		// Distinguish "missing entry" from auth/config errors so the UI
+		// can differentiate. The Vault client formats the HTTP status
+		// as `" <code> "` in the message (e.g. `HTTP/1.1 404`).
+		if strings.Contains(err.Error(), " 404 ") {
 			return false, nil, nil
 		}
 		return false, nil, err
@@ -271,6 +297,137 @@ func (b *vaultSecretBiz) normalize(secret *dao.VaultSecret) error {
 		secret.Field = defaultSecretField
 	}
 	return nil
+}
+
+func (b *vaultSecretBiz) WriteValue(ctx context.Context, id string, data map[string]any, replace bool, user web.User) error {
+	if len(data) == 0 {
+		return errors.New("no fields to write")
+	}
+	vc, err := lookupVaultClient()
+	if err != nil {
+		return err
+	}
+	if !vc.IsEnabled() {
+		return errVaultDisabled
+	}
+	rec, err := b.di.VaultSecretGet(ctx, id)
+	if err != nil {
+		return err
+	}
+	if rec == nil {
+		return errors.New("vault secret not found")
+	}
+	s := b.loader()
+	if s == nil {
+		return errors.New("settings are not loaded")
+	}
+	logicalPath := rec.Path
+	if logicalPath == "" {
+		logicalPath = rec.Name
+	}
+	full := resolvePrefixed(s, logicalPath)
+	// Merge mode: read the current version, overlay the new fields, then
+	// write the result as a new version. The current values never leave
+	// the backend — only the field NAMES of the new entry travel back to
+	// the caller via the audit event.
+	payload := data
+	if !replace {
+		current, rerr := vc.ReadKVv2(ctx, full)
+		if rerr != nil && !strings.Contains(rerr.Error(), " 404 ") {
+			return rerr
+		}
+		merged := make(map[string]any, len(current)+len(data))
+		for k, v := range current {
+			merged[k] = v
+		}
+		for k, v := range data {
+			merged[k] = v
+		}
+		payload = merged
+	}
+	if err := vc.WriteKVv2(ctx, full, payload); err != nil {
+		return err
+	}
+	// Audit: only field NAMES, never values.
+	fieldNames := make([]string, 0, len(data))
+	for k := range data {
+		fieldNames = append(fieldNames, k)
+	}
+	sort.Strings(fieldNames)
+	mode := "append"
+	if replace {
+		mode = "replace"
+	}
+	detail := fmt.Sprintf("%s:%s fields=%s", mode, rec.Name, strings.Join(fieldNames, ","))
+	b.eb.CreateVaultSecret(EventActionUpdate, rec.ID, detail, user)
+	return nil
+}
+
+func (b *vaultSecretBiz) GetStatuses(ctx context.Context) (map[string]*VaultSecretStatus, error) {
+	records, err := b.di.VaultSecretGetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*VaultSecretStatus, len(records))
+	if len(records) == 0 {
+		return out, nil
+	}
+	vc, err := lookupVaultClient()
+	if err != nil {
+		// No client registered — return a status-per-row with the error so
+		// the UI shows a concrete reason instead of a missing badge.
+		for _, r := range records {
+			out[r.ID] = &VaultSecretStatus{ID: r.ID, Error: err.Error()}
+		}
+		return out, nil
+	}
+	if !vc.IsEnabled() {
+		for _, r := range records {
+			out[r.ID] = &VaultSecretStatus{ID: r.ID, Error: errVaultDisabled.Error()}
+		}
+		return out, nil
+	}
+	s := b.loader()
+	if s == nil {
+		for _, r := range records {
+			out[r.ID] = &VaultSecretStatus{ID: r.ID, Error: "settings are not loaded"}
+		}
+		return out, nil
+	}
+
+	// Cap concurrency to 8 to avoid flooding a small Vault cluster when
+	// there are many catalog entries.
+	sem := make(chan struct{}, 8)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, rec := range records {
+		rec := rec
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			logicalPath := rec.Path
+			if logicalPath == "" {
+				logicalPath = rec.Name
+			}
+			full := resolvePrefixed(s, logicalPath)
+			current, total, exists, serr := vc.ReadMetadataSummary(ctx, full)
+			st := &VaultSecretStatus{ID: rec.ID}
+			if serr != nil {
+				st.Error = serr.Error()
+			} else {
+				st.Exists = exists
+				st.CurrentVersion = current
+				st.TotalVersions = total
+			}
+			mu.Lock()
+			out[rec.ID] = st
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return out, nil
 }
 
 func init() {

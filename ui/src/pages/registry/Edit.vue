@@ -26,6 +26,11 @@
         <n-form-item-gi :label="t('fields.password')" path="password">
           <n-input type="password" :placeholder="t('fields.password')" v-model:value="model.password" />
         </n-form-item-gi>
+        <n-form-item-gi :label="t('registry.skip_tls_verify')" path="skipTlsVerify">
+          <n-checkbox v-model:checked="model.skipTlsVerify">
+            {{ t('registry.skip_tls_verify_hint') }}
+          </n-checkbox>
+        </n-form-item-gi>
         <n-gi :span="2">
           <n-button
             @click.prevent="submit"
@@ -57,6 +62,7 @@ import {
   NGrid,
   NGi,
   NFormItemGi,
+  NCheckbox,
 } from "naive-ui";
 import {
   ArrowBackCircleOutline as BackIcon,

@@ -99,15 +99,21 @@ type UserSearchArgs struct {
 }
 
 type Registry struct {
-	ID        string   `json:"id" bson:"_id"`
-	Name      string   `json:"name" bson:"name"`
-	URL       string   `json:"url" bson:"url"`
-	Username  string   `json:"username" bson:"username"`
-	Password  string   `json:"password,omitempty" bson:"password,omitempty"`
-	CreatedAt Time     `json:"createdAt" bson:"created_at"`
-	UpdatedAt Time     `json:"updatedAt" bson:"updated_at"`
-	CreatedBy Operator `json:"createdBy" bson:"created_by"`
-	UpdatedBy Operator `json:"updatedBy" bson:"updated_by"`
+	ID       string `json:"id" bson:"_id"`
+	Name     string `json:"name" bson:"name"`
+	URL      string `json:"url" bson:"url"`
+	Username string `json:"username" bson:"username"`
+	Password string `json:"password,omitempty" bson:"password,omitempty"`
+	// SkipTLSVerify disables TLS verification for the HTTP v2 registry
+	// calls Swirl issues from its own process (catalog browse, tag
+	// listing). It does NOT affect the Docker daemon: for `docker push`
+	// against a self-signed registry the host's daemon must still have
+	// the registry in `insecure-registries`.
+	SkipTLSVerify bool     `json:"skipTlsVerify,omitempty" bson:"skip_tls_verify,omitempty"`
+	CreatedAt     Time     `json:"createdAt" bson:"created_at"`
+	UpdatedAt     Time     `json:"updatedAt" bson:"updated_at"`
+	CreatedBy     Operator `json:"createdBy" bson:"created_by"`
+	UpdatedBy     Operator `json:"updatedBy" bson:"updated_by"`
 }
 
 func (r *Registry) Match(image string) bool {

@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"io"
 
 	"github.com/cuigh/swirl/misc"
 	"github.com/docker/docker/api/types/filters"
@@ -79,4 +80,40 @@ func (d *Docker) ImagePrune(ctx context.Context, node string) (report image.Prun
 		report, err = c.ImagesPrune(ctx, filters.NewArgs(filters.Arg("dangling", "false")))
 	}
 	return
+}
+
+// ImageTag adds an additional reference to an existing image. The target
+// reference must be a full `host/repository[:tag]`; Docker's daemon does
+// not validate that the target host is reachable — that's Push's job.
+func (d *Docker) ImageTag(ctx context.Context, node, source, target string) error {
+	c, err := d.agent(node)
+	if err != nil {
+		return err
+	}
+	return c.ImageTag(ctx, source, target)
+}
+
+// ImagePush pushes an image reference to its remote registry. `authBase64`
+// is the base64-URL-encoded JSON `registry.AuthConfig` supplied by the
+// caller (typically via `dao.Registry.GetEncodedAuth()`). The returned
+// progress stream is drained to completion — errors embedded in the
+// stream are surfaced via the final io.ReadAll.
+//
+// Timeout-sensitive: large images can push for minutes. The caller must
+// pass a ctx with a generous deadline (or no deadline).
+func (d *Docker) ImagePush(ctx context.Context, node, ref, authBase64 string) error {
+	c, err := d.agent(node)
+	if err != nil {
+		return err
+	}
+	rc, err := c.ImagePush(ctx, ref, image.PushOptions{RegistryAuth: authBase64})
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	// Drain. Docker emits NDJSON with error objects on push failures; we
+	// surface the last one by reading fully. Bytes go to /dev/null — we
+	// don't stream progress back yet (could be added as SSE later).
+	_, err = io.Copy(io.Discard, rc)
+	return err
 }

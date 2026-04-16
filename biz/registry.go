@@ -7,8 +7,17 @@ import (
 
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/dao"
+	swirldocker "github.com/cuigh/swirl/docker"
 	"github.com/docker/docker/api/types/registry"
 )
+
+// RegistryBrowseResult is a paginated slice of repository names returned
+// by Browse. `Next` is the opaque cursor for the follow-up call (empty
+// when the catalog is exhausted).
+type RegistryBrowseResult struct {
+	Repos []string `json:"repos"`
+	Next  string   `json:"next,omitempty"`
+}
 
 type RegistryBiz interface {
 	Search(ctx context.Context) ([]*dao.Registry, error)
@@ -17,15 +26,20 @@ type RegistryBiz interface {
 	Delete(ctx context.Context, id, name string, user web.User) (err error)
 	Create(ctx context.Context, registry *dao.Registry, user web.User) (err error)
 	Update(ctx context.Context, registry *dao.Registry, user web.User) (err error)
+	// Browse lists repositories on the remote registry via its v2 API.
+	Browse(ctx context.Context, id string, pageSize int, last string) (*RegistryBrowseResult, error)
+	// Tags lists the tag names for a single repository on the registry.
+	Tags(ctx context.Context, id, repo string) ([]string, error)
 }
 
 func NewRegistry(d dao.Interface, eb EventBiz) RegistryBiz {
-	return &registryBiz{d: d, eb: eb}
+	return &registryBiz{d: d, eb: eb, rc: swirldocker.NewRegistryClient()}
 }
 
 type registryBiz struct {
 	d  dao.Interface
 	eb EventBiz
+	rc *swirldocker.RegistryClient
 }
 
 func (b *registryBiz) Create(ctx context.Context, r *dao.Registry, user web.User) (err error) {
@@ -94,4 +108,32 @@ func (b *registryBiz) Delete(ctx context.Context, id, name string, user web.User
 		b.eb.CreateRegistry(EventActionDelete, id, name, user)
 	}
 	return
+}
+
+func (b *registryBiz) Browse(ctx context.Context, id string, pageSize int, last string) (*RegistryBrowseResult, error) {
+	// Browse uses the full registry row (password included) — the
+	// sanitisation applied by Search/Find would strip the credentials.
+	r, err := b.d.RegistryGet(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if r == nil {
+		return nil, nil
+	}
+	repos, next, err := b.rc.CatalogList(ctx, r, pageSize, last)
+	if err != nil {
+		return nil, err
+	}
+	return &RegistryBrowseResult{Repos: repos, Next: next}, nil
+}
+
+func (b *registryBiz) Tags(ctx context.Context, id, repo string) ([]string, error) {
+	r, err := b.d.RegistryGet(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if r == nil {
+		return nil, nil
+	}
+	return b.rc.TagsList(ctx, r, repo)
 }

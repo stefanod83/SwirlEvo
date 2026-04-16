@@ -36,6 +36,16 @@ export interface VaultSecretSaveResult {
     id?: string;
 }
 
+// VaultSecretStatus mirrors biz.VaultSecretStatus — health per catalog
+// entry retrieved in batch from /vault-secret/statuses.
+export interface VaultSecretStatus {
+    id: string;
+    exists: boolean;
+    currentVersion?: number;
+    totalVersions?: number;
+    error?: string;
+}
+
 export class VaultSecretApi {
     search(args: VaultSecretSearchArgs) {
         return ajax.get<VaultSecretSearchResult>('/vault-secret/search', args)
@@ -59,6 +69,14 @@ export class VaultSecretApi {
 
     preview(id: string) {
         return ajax.get<VaultSecretPreview>('/vault-secret/preview', { id })
+    }
+
+    write(id: string, data: Record<string, any>, replace = false) {
+        return ajax.post<Result<Object>>('/vault-secret/write', { id, data, replace })
+    }
+
+    statuses() {
+        return ajax.get<Record<string, VaultSecretStatus>>('/vault-secret/statuses')
     }
 }
 

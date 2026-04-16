@@ -82,9 +82,18 @@ func backupFind(b biz.BackupBiz) web.HandlerFunc {
 
 func backupStatus(b biz.BackupBiz) web.HandlerFunc {
 	return func(c web.Context) error {
-		return success(c, map[string]interface{}{
-			"keyConfigured": b.KeyConfigured(),
-		})
+		// Surface the source ("env" / "cache" / "vault" / "") and the
+		// real lookup error so operators can diagnose mismatched
+		// path/field config without having to read server logs.
+		ok, source, err := b.KeyStatusDiag()
+		out := map[string]interface{}{
+			"keyConfigured": ok,
+			"keySource":     source,
+		}
+		if err != nil {
+			out["keyError"] = err.Error()
+		}
+		return success(c, out)
 	}
 }
 

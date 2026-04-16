@@ -81,23 +81,37 @@ func SetBackupKeyProvider(p BackupKeyProvider) {
 // historically — but now it also returns true when a Vault provider can
 // supply the key, without requiring an operator env var.
 func backupKeyConfigured() bool {
+	ok, _, _ := backupKeyStatus()
+	return ok
+}
+
+// backupKeyStatus is the diagnostic-rich version of backupKeyConfigured:
+// it returns the source ("env" / "cache" / "vault" / "") and the actual
+// error if a provider lookup failed, so the API can surface the real
+// reason instead of an opaque false. Order of resolution mirrors
+// masterKey() so the two stay consistent.
+func backupKeyStatus() (configured bool, source string, err error) {
 	if len(os.Getenv(backupKeyEnv)) >= backupKeyMinLen {
-		return true
+		return true, "env", nil
 	}
 	// Check cache first — cheap, avoids hammering Vault on every scheduler tick.
 	backupKeyCacheMu.RLock()
 	if backupKeyCache != "" && (backupKeyCacheExpires.IsZero() || time.Now().Before(backupKeyCacheExpires)) {
+		ok := len(backupKeyCache) >= backupKeyMinLen
 		backupKeyCacheMu.RUnlock()
-		return len(backupKeyCache) >= backupKeyMinLen
+		return ok, "cache", nil
 	}
 	backupKeyCacheMu.RUnlock()
 	// Attempt a provider fetch (best-effort). If this succeeds we also
 	// populate the cache for the actual encrypt/decrypt calls.
-	pw, err := fetchFromProvider()
-	if err != nil {
-		return false
+	pw, perr := fetchFromProvider()
+	if perr != nil {
+		return false, "", perr
 	}
-	return len(pw) >= backupKeyMinLen
+	if len(pw) >= backupKeyMinLen {
+		return true, "vault", nil
+	}
+	return false, "vault", fmt.Errorf("provider returned a passphrase shorter than %d bytes", backupKeyMinLen)
 }
 
 // deriveKey runs scrypt over a passphrase with the given salt.

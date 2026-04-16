@@ -55,6 +55,12 @@ export interface BackupManifest {
 
 export interface BackupStatus {
     keyConfigured: boolean;
+    // 'env' | 'cache' | 'vault' | '' (empty when no key was found)
+    keySource?: string;
+    // Populated when a Vault provider lookup fails — surfaced verbatim in
+    // the UI so the operator sees the real reason (wrong path / wrong
+    // field / Vault unreachable) instead of a silent "not configured".
+    keyError?: string;
 }
 
 export class BackupApi {

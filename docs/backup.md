@@ -8,6 +8,12 @@ This doc covers storage, encryption, schedules, restore, download, and the **key
 
 ## Storage
 
+Two backends, selectable from **Settings → Backup storage**. The
+AES-256-GCM at-rest format is the same in both — only the
+destination of the encrypted bytes changes.
+
+### Filesystem (default)
+
 | Aspect | Default | Override |
 |---|---|---|
 | Backup directory | `/data/swirl/backups` | env `SWIRL_BACKUP_DIR` |
@@ -16,7 +22,55 @@ This doc covers storage, encryption, schedules, restore, download, and the **key
 | Directory mode | `0750` (created on first write) | — |
 | Atomicity | temp file + `rename(2)` | — |
 
-Each backup is a single self-contained file; metadata lives in the `backup` table (DAO). The on-disk filename is `<8-char id>.swb`, the human-readable name (`manual-2026-04-16T15-30-45Z`) is metadata only.
+Each backup is a single self-contained file; metadata lives in the
+`backup` table (DAO). The on-disk filename is `<8-char id>.swb`,
+the human-readable name (`manual-2026-04-16T15-30-45Z`) is metadata
+only.
+
+### HashiCorp Vault (KVv2, opt-in)
+
+Enable via `Settings → Backup storage` → `storage_mode = vault`.
+Also configure the `vault_prefix` (default `backups`) — it's
+appended to the Vault settings' `kv_prefix`.
+
+Archives land at:
+
+```
+<kv_mount>/data/<kv_prefix><vault_prefix>/<id>
+```
+
+Each KVv2 entry stores two fields:
+- `archive` — base64-encoded ciphertext (same AES-256-GCM format
+  as the filesystem `.swb`).
+- `created_at` — RFC-3339 timestamp.
+
+The storage is *transparent*: `dao.Backup.Path` carries a schema
+prefix (`vault:<logical-path>` vs `file://<fs-path>`) and the biz
+layer dispatches read/write/delete on that prefix. Rows predating
+the schema are treated as filesystem for backward compatibility.
+
+**Required Vault policy** (add to the Swirl role when using this mode):
+
+```hcl
+path "<mount>/data/<prefix>/backups/*"     { capabilities = ["create","update","read","delete"] }
+path "<mount>/metadata/<prefix>/backups/*" { capabilities = ["read","list","delete"] }
+```
+
+**Trade-offs versus filesystem**:
+
+| Aspect | Filesystem | Vault |
+|---|---|---|
+| Atomic write | Yes (`rename(2)`) | No (single HTTP POST) |
+| Size limit | None | **1 MiB default per entry** (Vault-configurable) |
+| Retention | File-level (orphaned rows possible on manual `rm`) | Vault version history + explicit delete |
+| Off-host durability | Requires separate backup-of-backups | Inherits Vault's HA / replication |
+| Network dependency | None | Every backup read/write hits Vault |
+
+**No automatic migration** between modes. Switching the toggle only
+affects *new* backups. Old ones stay on whichever backend they were
+created in (the schema prefix in `Path` makes this transparent). To
+consolidate, create fresh backups under the new mode and delete the
+old ones.
 
 ---
 

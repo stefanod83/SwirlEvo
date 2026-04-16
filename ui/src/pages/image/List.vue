@@ -62,6 +62,60 @@
       />
     </template>
   </n-space>
+
+  <!-- Tag dialog -->
+  <n-modal
+    v-model:show="tagDialog.show"
+    preset="dialog"
+    :title="t('image.tag_title')"
+    :positive-text="t('buttons.save')"
+    :negative-text="t('buttons.cancel')"
+    :loading="tagDialog.loading"
+    @positive-click="doTag"
+  >
+    <n-space vertical :size="8">
+      <div>{{ t('image.tag_source') }}: <code class="mono">{{ tagDialog.source }}</code></div>
+      <n-input
+        v-model:value="tagDialog.target"
+        :placeholder="t('image.tag_target_placeholder')"
+      />
+    </n-space>
+  </n-modal>
+
+  <!-- Push dialog -->
+  <n-modal
+    v-model:show="pushDialog.show"
+    preset="dialog"
+    style="width: 520px"
+    :title="t('image.push_title')"
+    :positive-text="t('image.push_submit')"
+    :negative-text="t('buttons.cancel')"
+    :loading="pushDialog.loading"
+    @positive-click="doPush"
+  >
+    <n-space vertical :size="8">
+      <n-form-item :label="t('image.push_ref')" :show-feedback="false">
+        <n-select
+          v-model:value="pushDialog.ref"
+          :options="pushDialog.refOptions"
+          :placeholder="t('image.push_ref_placeholder')"
+          filterable
+          tag
+        />
+      </n-form-item>
+      <n-form-item :label="t('image.select_registry')" :show-feedback="false">
+        <n-select
+          v-model:value="pushDialog.registryId"
+          :options="registryOptions"
+          :placeholder="t('image.select_registry_placeholder')"
+          clearable
+        />
+      </n-form-item>
+      <n-alert type="warning" :show-icon="false">
+        {{ t('image.push_warning') }}
+      </n-alert>
+    </n-space>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -76,6 +130,9 @@ import {
   NIcon,
   NTag,
   NTooltip,
+  NModal,
+  NFormItem,
+  NAlert,
   useDialog,
   useMessage,
 } from "naive-ui";
@@ -84,11 +141,14 @@ import {
   TrashOutline,
   FlashOffOutline,
   RefreshOutline,
+  PricetagOutline,
+  CloudUploadOutline,
 } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import imageApi from "@/api/image";
 import type { Image } from "@/api/image";
 import nodeApi from "@/api/node";
+import registryApi from "@/api/registry";
 import { useStore } from "vuex";
 import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
 import { computed, watch } from "vue";
@@ -187,10 +247,12 @@ const columns = [
   {
     title: t('fields.actions'),
     key: "actions",
-    width: 120,
+    width: 180,
     render(i: Image, index: number) {
       return h(NButtonGroup, null, {
         default: () => [
+          actionButton('info', PricetagOutline, t('image.tag_action'), () => openTagDialog(i)),
+          actionButton('success', CloudUploadOutline, t('image.push_action'), () => openPushDialog(i)),
           actionButton('error', TrashOutline, t('buttons.delete'), () => confirmDelete(i, index)),
           actionButton('error', FlashOffOutline, t('buttons.force_delete') || 'Force delete', () => confirmForceDelete(i, index)),
         ],
@@ -250,6 +312,92 @@ watch(selectedHostId, (v) => {
   }
 })
 
+// ------- Tag dialog -------
+const tagDialog = reactive({
+  show: false,
+  loading: false,
+  source: '',
+  target: '',
+})
+function openTagDialog(i: Image) {
+  tagDialog.source = (i.tags && i.tags[0]) || i.id
+  tagDialog.target = ''
+  tagDialog.loading = false
+  tagDialog.show = true
+}
+async function doTag() {
+  if (!tagDialog.target.trim()) {
+    message.error(t('image.tag_target_required'))
+    return false
+  }
+  tagDialog.loading = true
+  try {
+    await imageApi.tag(filter.node, tagDialog.source, tagDialog.target.trim())
+    message.success(t('texts.action_success'))
+    tagDialog.show = false
+    fetchData()
+    return true
+  } catch (e: any) {
+    message.error(e?.message || String(e))
+    return false
+  } finally {
+    tagDialog.loading = false
+  }
+}
+
+// ------- Push dialog -------
+const registryOptions = ref<{ label: string; value: string; url: string }[]>([])
+const pushDialog = reactive<{
+  show: boolean
+  loading: boolean
+  ref: string
+  refOptions: { label: string; value: string }[]
+  registryId: string
+}>({
+  show: false,
+  loading: false,
+  ref: '',
+  refOptions: [],
+  registryId: '',
+})
+async function ensureRegistries() {
+  if (registryOptions.value.length) return
+  try {
+    const r = await registryApi.search()
+    registryOptions.value = (r.data || []).map((x: any) => ({
+      label: `${x.name} (${x.url})`,
+      value: x.id,
+      url: x.url,
+    }))
+  } catch { /* leave empty; user can still push anonymously */ }
+}
+async function openPushDialog(i: Image) {
+  await ensureRegistries()
+  pushDialog.refOptions = (i.tags || []).map(t => ({ label: t, value: t }))
+  pushDialog.ref = pushDialog.refOptions[0]?.value || ''
+  pushDialog.registryId = ''
+  pushDialog.loading = false
+  pushDialog.show = true
+}
+async function doPush() {
+  if (!pushDialog.ref.trim()) {
+    message.error(t('image.push_ref_required'))
+    return false
+  }
+  pushDialog.loading = true
+  try {
+    await imageApi.push(filter.node, pushDialog.ref.trim(), pushDialog.registryId)
+    message.success(t('image.push_done'))
+    pushDialog.show = false
+    return true
+  } catch (e: any) {
+    message.error(e?.message || String(e))
+    return false
+  } finally {
+    pushDialog.loading = false
+  }
+}
+
 onMounted(async () => {
   if (isStandalone.value) {
     if (selectedHostId.value) {
@@ -264,3 +412,7 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>

@@ -81,6 +81,19 @@ export class ImageApi {
             size: number;
         }>('/image/prune', { node })
     }
+
+    tag(node: string, source: string, target: string) {
+        return ajax.post<Result<Object>>('/image/tag', { node, source, target })
+    }
+
+    push(node: string, ref: string, registryId = '') {
+        return ajax.request<Result<Object>>({
+            url: '/image/push',
+            method: 'post',
+            data: { node, ref, registryId },
+            timeout: 10 * 60 * 1000,
+        })
+    }
 }
 
 export default new ImageApi

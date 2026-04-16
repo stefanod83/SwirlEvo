@@ -131,6 +131,59 @@ Fields:
 
 The **Preview** action runs a `read` against Vault and returns *only the field names* (never values). Use it to confirm the entry exists and you have the right keys.
 
+### Browsing the catalog — list page
+
+The catalog list shows one row per reference with a **Version badge**
+that reports the live state of each entry in Vault:
+
+- `v3` (info): the entry exists, Vault has 3 versions stored.
+- `missing` (error): the catalog reference points at a path that no
+  longer exists in Vault — fix by recreating the entry or updating
+  the `path` field.
+- `error` (warning, tooltip with detail): the lookup itself failed
+  (auth, network, Vault sealed). Check server logs.
+- no badge: the master key is not configured (read is skipped).
+
+The status is batch-fetched via `GET /api/vault-secret/statuses`,
+which parallelises Vault metadata calls with concurrency capped at 8
+so a catalog of hundreds of secrets doesn't flood a single Vault
+cluster.
+
+### Writing secret values from the UI
+
+The editor page has three panels:
+
+1. **Catalog entry** — the reference metadata (name / path / field /
+   labels). Collapsed by default when viewing an existing entry.
+2. **Vault status** — the resolved full path, current version, and
+   field names present in the live secret. Not editable.
+3. **Set value** — write a new KVv2 version directly from Swirl:
+   - **Append / update fields** (default): backend reads the current
+     version, merges the new fields, writes the merged map. Existing
+     fields you didn't touch survive.
+   - **Replace all fields**: new version contains *only* the fields
+     you supplied; everything else is dropped.
+
+The value is password-typed in the form and never returned by any
+API. The only thing the audit log records is the list of field
+**names** that were written and the mode (append/replace).
+
+**Permission required**: `vault_secret.edit`. **Vault policy
+required** on the path:
+
+```hcl
+path "<mount>/data/<prefix>/<path>" {
+  capabilities = ["create", "update", "read"]
+}
+path "<mount>/metadata/<prefix>/<path>" {
+  capabilities = ["read", "list"]
+}
+```
+
+Note: enabling write-from-UI bypasses any GitOps workflow that
+centralises secret provisioning elsewhere. If your org uses such a
+workflow, grant `vault_secret.edit` selectively.
+
 ---
 
 ## Per-stack bindings (standalone compose stacks)
@@ -264,11 +317,54 @@ Either (a) something else is mutating the Vault entry (CI, another operator), or
 
 ---
 
+## Storing backups in Vault (optional)
+
+From **Settings → Backup storage** you can switch the backup archive
+destination from the filesystem (`SWIRL_BACKUP_DIR`) to Vault KVv2.
+The format is unchanged — archives are still AES-256-GCM encrypted
+with the master key — only the destination of the bytes differs.
+
+Full path layout:
+
+```
+<kv_mount>/data/<kv_prefix><vault_prefix>/<backup-id>
+```
+
+Default `vault_prefix` is `backups`. Each KVv2 entry carries two
+fields: `archive` (base64-encoded ciphertext) and `created_at`.
+
+Policy extension required on top of the standard Swirl policy:
+
+```hcl
+path "<mount>/data/<prefix>/backups/*"     { capabilities = ["create", "update", "read", "delete"] }
+path "<mount>/metadata/<prefix>/backups/*" { capabilities = ["read", "list", "delete"] }
+```
+
+Caveats:
+
+- **Size limit**: KVv2 has a 1 MiB default limit per entry. Most
+  Swirl deployments produce 100–500 KB backups (the document is
+  gzipped before encryption), but large installations may need to
+  raise the limit on the Vault side (`max_secret_size`) or keep
+  `storage_mode=fs`.
+- **No atomic rename**: the filesystem's `temp + rename` atomicity is
+  not replicated on Vault. The write is a single HTTP POST; on
+  failure nothing is persisted (Swirl deliberately creates the DAO
+  row *after* the Vault write succeeds).
+- **No migration**: switching the toggle does NOT move existing
+  archives between backends. New backups go to the new destination;
+  old ones remain where they were (the `Path` field carries a
+  schema prefix `file://` / `vault:` so the runtime dispatches
+  correctly). To migrate: create a fresh backup under the new mode
+  and delete the old ones.
+
 ## References
 
-- [`docs/backup.md`](backup.md) — backup encryption + key rotation/recovery flow
-- `vault/client.go` — HTTP client, KVv2 read, auth (token + AppRole)
+- [`docs/backup.md`](backup.md) — backup encryption + key rotation/recovery flow + storage toggle details
+- `vault/client.go` — HTTP client, KVv2 read/write/delete/metadata, auth (token + AppRole)
 - `vault/backup_provider.go` — `SWIRL_BACKUP_KEY` fallback
-- `biz/vault_secret.go` — catalog CRUD + Preview
+- `biz/vault_secret.go` — catalog CRUD + Preview + WriteValue + GetStatuses
 - `biz/compose_stack_secret.go` — per-stack bindings + materializer hook + drift check
+- `biz/backup.go` — storage abstraction (`writeArchive`, `readArchive`, `rewriteArchive`, `deleteArchiveByPath`, `archiveMissing`)
 - `docker/compose/standalone.go` — DeployHook integration in the standalone engine
+- `ui/src/components/VersionBadge.vue` — shared badge used on the VaultSecret list/editor

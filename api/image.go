@@ -1,6 +1,8 @@
 package api
 
 import (
+	"time"
+
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/biz"
@@ -13,6 +15,8 @@ type ImageHandler struct {
 	Find   web.HandlerFunc `path:"/find" auth:"image.view" desc:"find image by id"`
 	Delete web.HandlerFunc `path:"/delete" method:"post" auth:"image.delete" desc:"delete image"`
 	Prune  web.HandlerFunc `path:"/prune" method:"post" auth:"image.delete" desc:"delete unused images"`
+	Tag    web.HandlerFunc `path:"/tag" method:"post" auth:"image.edit" desc:"add a new tag to an existing image"`
+	Push   web.HandlerFunc `path:"/push" method:"post" auth:"image.push" desc:"push an image ref to a registry"`
 }
 
 // NewImage creates an instance of ImageHandler
@@ -22,6 +26,8 @@ func NewImage(b biz.ImageBiz) *ImageHandler {
 		Find:   imageFind(b),
 		Delete: imageDelete(b),
 		Prune:  imagePrune(b),
+		Tag:    imageTag(b),
+		Push:   imagePush(b),
 	}
 }
 
@@ -115,5 +121,42 @@ func imagePrune(b biz.ImageBiz) web.HandlerFunc {
 			"count": count,
 			"size":  size,
 		})
+	}
+}
+
+func imageTag(b biz.ImageBiz) web.HandlerFunc {
+	type Args struct {
+		Node   string `json:"node"`
+		Source string `json:"source"`
+		Target string `json:"target"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args); err != nil {
+			return ajax(c, err)
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.Tag(ctx, args.Node, args.Source, args.Target, c.User()))
+	}
+}
+
+func imagePush(b biz.ImageBiz) web.HandlerFunc {
+	type Args struct {
+		Node       string `json:"node"`
+		Ref        string `json:"ref"`
+		RegistryID string `json:"registryId"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args); err != nil {
+			return ajax(c, err)
+		}
+		// Push can take minutes for large images; override the default
+		// request timeout with a generous one so the reverse proxy
+		// doesn't cut us off.
+		ctx, cancel := misc.Context(10 * time.Minute)
+		defer cancel()
+		return ajax(c, b.Push(ctx, args.Node, args.Ref, args.RegistryID, c.User()))
 	}
 }

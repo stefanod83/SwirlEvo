@@ -21,8 +21,11 @@ Repository: <https://github.com/stefanod83/SwirlEvo>
 * Service monitoring based on Prometheus and cAdvisor (Swarm mode).
 * Service auto scaling (Swarm mode only).
 * **Network topology view**: interactive graph of networks, containers and connectivity per host; red highlights for ports published to public addresses, blue border for internal/isolated networks. See `Network → Topology`.
-* **HashiCorp Vault integration**: `SWIRL_BACKUP_KEY` fallback via Vault, `VaultSecret` reference catalog (values never persisted in Swirl), per-stack secret bindings on standalone compose stacks (modes: `tmpfs` / `volume` / `init` / `env`), drift check. See [docs/vault.md](docs/vault.md).
-* **Internal backup**: AES-256-GCM at-rest encryption, daily/weekly/monthly schedules with retention, raw + portable export, component-selective restore, and **key recovery** for archives encrypted under a previous `SWIRL_BACKUP_KEY`. See [docs/backup.md](docs/backup.md).
+* **HashiCorp Vault integration**: `SWIRL_BACKUP_KEY` fallback via Vault, `VaultSecret` reference catalog with version-badge and **write-values-from-UI** (CRUD), per-stack secret bindings on standalone compose stacks (modes: `tmpfs` / `volume` / `init` / `env`), drift check. See [docs/vault.md](docs/vault.md).
+* **Internal backup**: AES-256-GCM at-rest encryption, **storage toggle (local filesystem or Vault KVv2)**, daily/weekly/monthly schedules with retention, raw + portable export, component-selective restore, and **key recovery** for archives encrypted under a previous `SWIRL_BACKUP_KEY`. See [docs/backup.md](docs/backup.md).
+* **Registry management**: configured remote registries with browse + tag-list via Docker Registry v2 API (self-signed TLS opt-in), plus local image **tag + push** to a selected registry from the image list.
+* **Settings secret masking**: Vault token, AppRole secret_id, and Keycloak client_secret are never round-tripped in cleartext through the UI — the backend sanitizes on GET and preserves on Save unless a new value is typed.
+* **User types**: Internal / LDAP / Keycloak, all editable from the user form with type-aware password handling.
 * LDAP and Keycloak (OIDC) authentication.
 * Full permission control based on RBAC.
 * i18n: English, Italian, Chinese.

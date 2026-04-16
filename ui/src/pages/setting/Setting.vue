@@ -376,6 +376,54 @@
       </n-form>
     </x-panel>
     <x-panel
+      :title="t('backup.storage_panel_title')"
+      :subtitle="t('backup.storage_panel_subtitle')"
+      divider="bottom"
+      :collapsed="panel !== 'backup_storage'"
+    >
+      <template #action>
+        <n-button
+          secondary
+          strong
+          class="toggle"
+          size="small"
+          @click="togglePanel('backup_storage')"
+        >{{ panel === 'backup_storage' ? t('buttons.collapse') : t('buttons.expand') }}</n-button>
+      </template>
+      <n-form
+        :model="setting"
+        label-placement="left"
+        style="padding: 4px 0 0 12px"
+      >
+        <n-form-item :label="t('backup.storage_mode')" path="backup.storage_mode" label-align="right">
+          <n-radio-group v-model:value="setting.backup.storage_mode">
+            <n-radio value="fs">{{ t('backup.storage_fs') }}</n-radio>
+            <n-radio value="vault">{{ t('backup.storage_vault') }}</n-radio>
+          </n-radio-group>
+        </n-form-item>
+        <n-form-item
+          v-if="setting.backup.storage_mode === 'vault'"
+          :label="t('backup.vault_prefix')"
+          path="backup.vault_prefix"
+          label-align="right"
+        >
+          <n-input
+            placeholder="backups"
+            v-model:value="setting.backup.vault_prefix"
+          />
+        </n-form-item>
+        <n-alert
+          v-if="setting.backup.storage_mode === 'vault'"
+          type="info"
+          :show-icon="false"
+          style="margin-bottom: 12px;"
+        >
+          {{ t('backup.storage_vault_hint') }}
+        </n-alert>
+        <n-button type="primary" @click="() => save('backup', setting.backup)">{{ t('buttons.save') }}</n-button>
+      </n-form>
+    </x-panel>
+    <x-panel
       :title="t('fields.monitor')"
       :subtitle="t('tips.monitor')"
       :collapsed="panel !== 'metric'"
@@ -475,6 +523,10 @@ const setting = ref({
     tls_skip_verify: false,
     ca_cert: '',
     request_timeout: 10,
+  },
+  backup: {
+    storage_mode: 'fs',
+    vault_prefix: 'backups',
   },
 } as Setting);
 const panel = ref('')
@@ -592,6 +644,9 @@ async function fetchData() {
       ca_cert: '',
       request_timeout: 10,
     }
+  }
+  if (!setting.value.backup) {
+    setting.value.backup = { storage_mode: 'fs', vault_prefix: 'backups' }
   }
 
   // load roles for the dropdown

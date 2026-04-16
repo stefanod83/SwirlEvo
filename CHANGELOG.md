@@ -340,6 +340,150 @@ First release of the SwirlEvo fork (continues [cuigh/swirl](https://github.com/c
   locales (the backup restore/upload wizard buttons used to render the
   raw key path).
 
+### Sensitive field masking in Settings UI
+
+* Vault token, Vault secret id, and Keycloak client secret are never
+  round-tripped through the UI in cleartext any more. On GET the
+  backend returns a visible placeholder `••••••••`; on Save, the
+  placeholder (or an empty string) means "preserve the existing
+  value", while a different value overwrites it.
+* Implementation: `biz.SettingSecretMask` constant, `sanitizeForResponse`
+  and `preserveSecretsFromExisting` helpers in `biz/setting.go` —
+  `Find`/`Load` sanitize on egress, `Save` preserves on ingress.
+  `refreshInMemory` uses a dedicated `loadRaw` path so the live
+  `*misc.Setting` snapshot keeps real values.
+* `SETTING_SECRET_MASK` export in `ui/src/api/setting.ts` for future
+  UI affordances.
+
+### Vault client: WriteKVv2, DeleteKVv2, ReadMetadataKVv2
+
+* New methods on `vault.Client` implementing the missing KVv2 surface:
+  POST to `<mount>/data/<path>` (write), DELETE on
+  `<mount>/metadata/<path>` (full delete incl. version history), GET on
+  `<mount>/metadata/<path>` (version metadata).
+* `ReadMetadataSummary(ctx, path) → (current, total, exists, err)` —
+  primitive-typed projection consumed by the biz layer (avoids
+  exporting `KVv2Metadata` through the `biz.vaultReader` interface).
+* HTTP/2 default restored: TLS 1.3, ALPN negotiation, keep-alives,
+  Go default headers. The JA3/WAF/TLS mitigations introduced during
+  the Traefik debug session are gone — the root cause was a Traefik
+  `internal-ips` ACL, not the client. Kept: `strings.TrimSpace` on
+  the token, and `resp.Proto`/`Server`/`Via` in 4xx/5xx error
+  messages (useful for future reverse-proxy debugging).
+
+### Vault secret value writes (from UI)
+
+* `VaultSecretBiz.WriteValue(id, data, replace, user)` writes a new
+  KVv2 version directly from Swirl. `replace=false` merges fields
+  with the current version; `replace=true` produces a version with
+  only the supplied fields. Values never touch disk — the audit
+  event records only field NAMES.
+* New endpoint `POST /api/vault-secret/write` gated by
+  `vault_secret.edit`. Requires the Vault token to have
+  `create`+`update` on the KVv2 data path.
+* UI: new "Set value" panel in the VaultSecret editor with
+  append/replace radio, password-typed dynamic inputs, confirmation
+  modal.
+
+### VaultSecret version badge + UX refresh (Vault Secrets pages)
+
+* `VaultSecretBiz.GetStatuses(ctx)` fetches per-catalog-entry metadata
+  from Vault in parallel (concurrency capped at 8). New endpoint
+  `GET /api/vault-secret/statuses` returns `{id → {exists, current,
+  total, error}}`.
+* New reusable component `ui/src/components/VersionBadge.vue` used
+  by both the list and editor pages.
+* List page redesign: filter bar with free-text + multi-label
+  filters, bulk-delete toolbar, empty state CTA, version badge
+  column, row highlighting for missing entries. Tooltips on the
+  badge explain OK / missing / error states.
+* Editor redesign: collapsible "Catalog entry" panel, read-only
+  "Vault status" panel with full resolved path + current version
+  + field list, and a dedicated "Set value" panel driving the new
+  write endpoint.
+* New i18n keys under `vault_secret.*` in en/it/zh.
+
+### Backup storage toggle (filesystem | Vault KVv2)
+
+* New settings group `misc.Setting.Backup` with `storage_mode`
+  (`fs` default | `vault`) and `vault_prefix` (default `backups`).
+  Frontend panel in Settings → Backup storage.
+* Storage abstraction in `biz/backup.go`:
+  - schema-prefixed `rec.Path` (`file://…` | `vault:…`); legacy rows
+    with no prefix are treated as filesystem for backward compat
+  - helpers `writeArchive`, `readArchive`, `rewriteArchive`,
+    `deleteArchiveByPath`, `archiveMissing` dispatch on the schema
+  - `Create` / `Delete` / `Open` / `Restore` / `Verify` / `VerifyAll`
+    / `Recover` all route through the helpers
+* Vault mode base64-encodes the already-AES-encrypted archive and
+  stores it as `{archive, created_at}` under
+  `<kv_mount>/data/<kv_prefix><vault_prefix>/<id>`. KVv2 default 1 MiB
+  entry limit applies; ceiling raised by operator via Vault settings.
+* Policy to add when `storage_mode=vault`:
+  ```hcl
+  path "<mount>/data/<prefix>/backups/*"     { capabilities = ["create","update","read","delete"] }
+  path "<mount>/metadata/<prefix>/backups/*" { capabilities = ["read","list","delete"] }
+  ```
+
+### User.Type Keycloak editable
+
+* Edit user form now shows the Type radio always (not only when
+  editing) with three options: Internal / LDAP / Keycloak. Password
+  fields render only when `type === 'internal' && !id`.
+* `biz.userBiz.Update` clears `Password` + `Salt` when the type is
+  switched away from internal (via `UserUpdatePassword`). No more
+  dead hashes left in the DB after an Internal→Keycloak migration.
+
+### Registry v2 browse + self-signed TLS opt-in
+
+* New `SkipTLSVerify bool` on `dao.Registry` (with `omitempty` JSON +
+  BSON tags, default `false`). Persisted by both Mongo (via
+  `$set.skip_tls_verify`) and Bolt (via struct marshal). UI checkbox
+  in Registry Edit.
+* New file `docker/registry.go` — minimal HTTP client for Docker
+  Registry v2. Per-registry `http.Client` cache keyed by
+  `registry.ID` with a config hash; rebuilds when URL or
+  `SkipTLSVerify` flip. Basic auth from `dao.Registry`.
+  `CatalogList(pageSize, last)` with RFC-5988 Link header parsing
+  for pagination; `TagsList(repo)` straightforward.
+* New biz methods `Browse(id, pageSize, last)` and `Tags(id, repo)`
+  on `RegistryBiz`. New endpoints `GET /api/registry/browse` and
+  `GET /api/registry/tags`, both gated by `registry.view`.
+* UI: Registry detail page rebuilt as tabs — "Detail" (original
+  read-only fields) + "Repositories" with filter, paginated load,
+  per-row "Show tags" drawer.
+
+### Image tag + push
+
+* `docker.Docker.ImageTag(node, source, target)` and
+  `docker.Docker.ImagePush(node, ref, authBase64)` wrappers on the
+  Docker SDK. Push drains the progress stream; large-image pushes
+  hit a 10-minute API timeout.
+* `biz.ImageBiz.Tag(node, source, target, user)` and `Push(node,
+  ref, registryID, user)`. Push resolves auth via
+  `RegistryBiz.GetAuth(url)` so the encoded AuthConfig never leaks
+  beyond the biz layer.
+* New permission `image.push` (bit `1 << 14`). `Perms["image"]`
+  extended to `{"view", "edit", "delete", "push"}`.
+* New endpoints `POST /api/image/tag` (auth `image.edit`) and
+  `POST /api/image/push` (auth `image.push`).
+* UI: two new row actions in `image/List.vue` — "Add tag" modal +
+  "Push" modal with a registry picker populated from
+  `/registry/search` and the current image's existing tags.
+
+### Documentation refresh
+
+* `docs/vault.md`, `docs/backup.md`: new sections for KVv2 write
+  (UI CRUD), KVv2 backup storage, TLS options per registry, and
+  the revised policy snippets. Post-mortem pass to reflect the
+  final state of every subsystem.
+* `README.md` Features list extended with the new capabilities;
+  `docs/` links in the Documentation section.
+* `.claude/agents/swirl-expert.md`: new sections for WriteKVv2,
+  backup Vault storage abstraction, secret field masking pattern,
+  Registry v2 client, and Image push flow. New file-reference
+  entries.
+
 ---
 
 ## v1.0.0 (2021-12-15)

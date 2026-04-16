@@ -1,6 +1,8 @@
 package api
 
 import (
+	"fmt"
+
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/biz"
 	"github.com/cuigh/swirl/dao"
@@ -13,6 +15,8 @@ type RegistryHandler struct {
 	Find   web.HandlerFunc `path:"/find" auth:"registry.view" desc:"find registry by id"`
 	Delete web.HandlerFunc `path:"/delete" method:"post" auth:"registry.delete" desc:"delete registry"`
 	Save   web.HandlerFunc `path:"/save" method:"post" auth:"registry.edit" desc:"create or update registry"`
+	Browse web.HandlerFunc `path:"/browse" auth:"registry.view" desc:"list repositories on a remote registry (v2 API)"`
+	Tags   web.HandlerFunc `path:"/tags" auth:"registry.view" desc:"list tags for a repository on a remote registry"`
 }
 
 // NewRegistry creates an instance of RegistryHandler
@@ -22,6 +26,8 @@ func NewRegistry(b biz.RegistryBiz) *RegistryHandler {
 		Find:   registryFind(b),
 		Delete: registryDelete(b),
 		Save:   registrySave(b),
+		Browse: registryBrowse(b),
+		Tags:   registryTags(b),
 	}
 }
 
@@ -84,5 +90,38 @@ func registrySave(b biz.RegistryBiz) web.HandlerFunc {
 			}
 		}
 		return ajax(c, err)
+	}
+}
+
+func registryBrowse(b biz.RegistryBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		id := c.Query("id")
+		last := c.Query("last")
+		pageSize := 100
+		if n := c.Query("pageSize"); n != "" {
+			// Ignore parse errors — default of 100 is fine.
+			fmt.Sscanf(n, "%d", &pageSize)
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		res, err := b.Browse(ctx, id, pageSize, last)
+		if err != nil {
+			return err
+		}
+		return success(c, res)
+	}
+}
+
+func registryTags(b biz.RegistryBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		id := c.Query("id")
+		repo := c.Query("repo")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		tags, err := b.Tags(ctx, id, repo)
+		if err != nil {
+			return err
+		}
+		return success(c, tags)
 	}
 }

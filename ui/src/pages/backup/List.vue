@@ -33,7 +33,10 @@
 
   <n-space class="page-body" vertical :size="12">
     <n-alert v-if="!status.keyConfigured" type="warning" :title="t('backup.key_missing_title')">
-      {{ t('backup.key_missing_body') }}
+      <div>{{ t('backup.key_missing_body') }}</div>
+      <div v-if="status.keyError" style="margin-top: 6px;">
+        <strong>{{ t('backup.key_lookup_error') }}:</strong> <code>{{ status.keyError }}</code>
+      </div>
     </n-alert>
 
     <x-panel

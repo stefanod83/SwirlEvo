@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -172,6 +173,11 @@ type BackupKeyStatusSummary struct {
 
 type BackupBiz interface {
 	KeyConfigured() bool
+	// KeyStatus returns the same answer as KeyConfigured plus the source
+	// ("env" / "cache" / "vault" / "") and any provider error encountered
+	// during the lookup. Surfaced by /backup/status so operators can see
+	// why a Vault fallback isn't supplying a key.
+	KeyStatusDiag() (configured bool, source string, err error)
 	List(ctx context.Context) ([]*dao.Backup, error)
 	Find(ctx context.Context, id string) (*dao.Backup, error)
 	Manifest(ctx context.Context, id string) (*BackupManifest, error)
@@ -312,6 +318,10 @@ func (b *backupBiz) KeyConfigured() bool {
 	return backupKeyConfigured()
 }
 
+func (b *backupBiz) KeyStatusDiag() (bool, string, error) {
+	return backupKeyStatus()
+}
+
 func (b *backupBiz) List(ctx context.Context) ([]*dao.Backup, error) {
 	records, err := b.d.BackupGetAll(ctx)
 	if err != nil {
@@ -373,14 +383,12 @@ func (b *backupBiz) Create(ctx context.Context, source string, user web.User) (*
 		return nil, err
 	}
 
-	dir := backupDir()
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return nil, fmt.Errorf("cannot create backup dir: %w", err)
-	}
-
 	id := createId()
-	path := filepath.Join(dir, id+backupFileSuffix)
-	if err := writeFileAtomic(path, archive); err != nil {
+	// writeArchive picks filesystem or Vault based on Settings.Backup.
+	// It returns a schema-prefixed path ("file:///…" or "vault:<logical>")
+	// so readArchive/deleteArchive can route transparently.
+	storedPath, err := b.writeArchive(ctx, id, archive)
+	if err != nil {
 		return nil, err
 	}
 
@@ -396,7 +404,7 @@ func (b *backupBiz) Create(ctx context.Context, source string, user web.User) (*
 		Source:         source,
 		Size:           int64(len(archive)),
 		Checksum:       hex.EncodeToString(sum[:]),
-		Path:           path,
+		Path:           storedPath,
 		Includes:       AllBackupComponents,
 		Stats:          statsFromDocument(doc),
 		KeyFingerprint: fp,
@@ -408,7 +416,9 @@ func (b *backupBiz) Create(ctx context.Context, source string, user web.User) (*
 	}
 
 	if err := b.d.BackupCreate(ctx, record); err != nil {
-		_ = os.Remove(path)
+		// Best-effort cleanup of the stored archive so we don't leave
+		// orphaned bytes after a DAO failure.
+		_ = b.deleteArchiveByPath(ctx, storedPath)
 		return nil, err
 	}
 	// Pre-warm the cache so the next List call doesn't have to wait for the
@@ -442,8 +452,8 @@ func (b *backupBiz) Delete(ctx context.Context, id string, user web.User) error 
 		return err
 	}
 	if rec.Path != "" {
-		if rmErr := os.Remove(rec.Path); rmErr != nil && !os.IsNotExist(rmErr) {
-			b.logger.Warnf("failed to remove backup file %s: %v", rec.Path, rmErr)
+		if rmErr := b.deleteArchiveByPath(ctx, rec.Path); rmErr != nil {
+			b.logger.Warnf("failed to remove backup archive %s: %v", rec.Path, rmErr)
 		}
 	}
 	// Drop the cache entry so a stale "compatible" badge doesn't outlive
@@ -465,7 +475,7 @@ func (b *backupBiz) Open(ctx context.Context, id, mode, password string, user we
 	if rec == nil {
 		return "", nil, errors.New("backup not found")
 	}
-	raw, err := os.ReadFile(rec.Path)
+	raw, err := b.readArchive(ctx, rec)
 	if err != nil {
 		return "", nil, fmt.Errorf("cannot read backup archive: %w", err)
 	}
@@ -502,7 +512,7 @@ func (b *backupBiz) Restore(ctx context.Context, id string, components []string,
 	if rec == nil {
 		return nil, errors.New("backup not found")
 	}
-	raw, err := os.ReadFile(rec.Path)
+	raw, err := b.readArchive(ctx, rec)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read backup archive: %w", err)
 	}
@@ -581,7 +591,7 @@ func (b *backupBiz) Verify(ctx context.Context, id string) (*dao.Backup, error) 
 		b.cacheStatus(rec.ID, BackupKeyUnknown)
 		return rec, nil
 	}
-	if _, statErr := os.Stat(rec.Path); os.IsNotExist(statErr) {
+	if missing, _ := b.archiveMissing(ctx, rec); missing {
 		rec.KeyStatus = BackupKeyMissingFile
 		b.cacheStatus(rec.ID, BackupKeyMissingFile)
 		return rec, nil
@@ -602,7 +612,7 @@ func (b *backupBiz) Verify(ctx context.Context, id string) (*dao.Backup, error) 
 	// Legacy record: trial-decrypt with the current key. We deliberately do
 	// not log or surface the secret payload — only the success/failure
 	// signal matters here.
-	raw, readErr := os.ReadFile(rec.Path)
+	raw, readErr := b.readArchive(ctx, rec)
 	if readErr != nil {
 		rec.KeyStatus = BackupKeyMissingFile
 		b.cacheStatus(rec.ID, BackupKeyMissingFile)
@@ -650,7 +660,7 @@ func (b *backupBiz) VerifyAll(ctx context.Context) BackupKeyStatusSummary {
 		var status string
 		if currentFP == "" {
 			status = BackupKeyUnknown
-		} else if _, statErr := os.Stat(r.Path); os.IsNotExist(statErr) {
+		} else if missing, _ := b.archiveMissing(ctx, r); missing {
 			status = BackupKeyMissingFile
 			sum.Missing++
 		} else if r.KeyFingerprint == "" {
@@ -696,7 +706,7 @@ func (b *backupBiz) Recover(ctx context.Context, id, oldPassphrase string, user 
 		}
 		return nil, err
 	}
-	raw, err := os.ReadFile(rec.Path)
+	raw, err := b.readArchive(ctx, rec)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read backup archive: %w", err)
 	}
@@ -722,7 +732,7 @@ func (b *backupBiz) Recover(ctx context.Context, id, oldPassphrase string, user 
 	if rec.Checksum != "" && rec.Checksum != newChecksum {
 		b.logger.Warnf("recover: checksum drift on %s (was %s, now %s)", rec.ID, rec.Checksum, newChecksum)
 	}
-	if err := writeFileAtomic(rec.Path, archive); err != nil {
+	if err := b.rewriteArchive(ctx, rec, archive); err != nil {
 		return nil, err
 	}
 	now := time.Now()
@@ -1189,6 +1199,190 @@ func backupDir() string {
 		return d
 	}
 	return backupDirDefault
+}
+
+// --- storage abstraction (fs | vault) ------------------------------------
+
+// Schema prefixes embedded in `rec.Path` so readArchive/deleteArchive can
+// dispatch without inspecting Settings. Legacy records (pre-feature) have
+// no prefix and are treated as `file://` for backward compatibility.
+const (
+	backupSchemaFile  = "file://"
+	backupSchemaVault = "vault:"
+)
+
+// backupStorageMode reads the live Settings and returns "fs" (default) or
+// "vault". Returns "fs" when liveSettings is not installed yet (safety).
+func backupStorageMode() (mode, vaultPrefix string) {
+	liveSettingsMu.RLock()
+	s := liveSettings
+	liveSettingsMu.RUnlock()
+	if s == nil {
+		return "fs", "backups"
+	}
+	m := strings.ToLower(strings.TrimSpace(s.Backup.StorageMode))
+	if m == "" {
+		m = "fs"
+	}
+	p := strings.TrimSpace(s.Backup.VaultPrefix)
+	if p == "" {
+		p = "backups"
+	}
+	return m, p
+}
+
+// writeArchive persists an encrypted backup blob in the configured
+// storage backend and returns its schema-prefixed path for storage in
+// `dao.Backup.Path`.
+func (b *backupBiz) writeArchive(ctx context.Context, id string, archive []byte) (string, error) {
+	mode, vaultPrefix := backupStorageMode()
+	if mode == "vault" {
+		vc, err := lookupVaultClient()
+		if err != nil {
+			return "", fmt.Errorf("vault client not available: %w", err)
+		}
+		if !vc.IsEnabled() {
+			return "", errVaultDisabled
+		}
+		liveSettingsMu.RLock()
+		s := liveSettings
+		liveSettingsMu.RUnlock()
+		if s == nil {
+			return "", errors.New("settings are not loaded")
+		}
+		logical := resolvePrefixed(s, vaultPrefix+"/"+id)
+		// KVv2 values must be JSON-serialisable — base64-encode the bytes.
+		payload := map[string]any{
+			"archive":    base64.StdEncoding.EncodeToString(archive),
+			"created_at": time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := vc.WriteKVv2(ctx, logical, payload); err != nil {
+			return "", fmt.Errorf("vault write %s: %w", logical, err)
+		}
+		return backupSchemaVault + logical, nil
+	}
+
+	// Filesystem mode (default).
+	dir := backupDir()
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("cannot create backup dir: %w", err)
+	}
+	path := filepath.Join(dir, id+backupFileSuffix)
+	if err := writeFileAtomic(path, archive); err != nil {
+		return "", err
+	}
+	return backupSchemaFile + path, nil
+}
+
+// readArchive loads the encrypted bytes of a backup record regardless of
+// where they live. Routes on the schema prefix in `rec.Path`.
+func (b *backupBiz) readArchive(ctx context.Context, rec *dao.Backup) ([]byte, error) {
+	schema, loc := splitStoragePath(rec.Path)
+	switch schema {
+	case backupSchemaVault:
+		return b.readArchiveFromVault(ctx, loc)
+	default:
+		return os.ReadFile(loc)
+	}
+}
+
+// rewriteArchive overwrites the archive at the existing storage location.
+// Used by Recover: the operation stays on whichever backend the archive
+// currently lives on (it does NOT migrate between fs/vault).
+func (b *backupBiz) rewriteArchive(ctx context.Context, rec *dao.Backup, archive []byte) error {
+	schema, loc := splitStoragePath(rec.Path)
+	switch schema {
+	case backupSchemaVault:
+		vc, err := lookupVaultClient()
+		if err != nil {
+			return err
+		}
+		payload := map[string]any{
+			"archive":    base64.StdEncoding.EncodeToString(archive),
+			"created_at": time.Now().UTC().Format(time.RFC3339),
+		}
+		return vc.WriteKVv2(ctx, loc, payload)
+	default:
+		return writeFileAtomic(loc, archive)
+	}
+}
+
+// deleteArchiveByPath removes the backup blob at the given schema-prefixed
+// path. Errors unrelated to "missing" propagate; "missing" is tolerated.
+func (b *backupBiz) deleteArchiveByPath(ctx context.Context, path string) error {
+	schema, loc := splitStoragePath(path)
+	switch schema {
+	case backupSchemaVault:
+		vc, err := lookupVaultClient()
+		if err != nil {
+			return err
+		}
+		return vc.DeleteKVv2(ctx, loc)
+	default:
+		if err := os.Remove(loc); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+}
+
+// archiveMissing reports whether the archive bytes still exist in storage.
+// Used by Verify/VerifyAll to flag orphan DAO rows.
+func (b *backupBiz) archiveMissing(ctx context.Context, rec *dao.Backup) (bool, error) {
+	schema, loc := splitStoragePath(rec.Path)
+	switch schema {
+	case backupSchemaVault:
+		vc, err := lookupVaultClient()
+		if err != nil {
+			return false, err
+		}
+		// Use metadata endpoint: cheaper than reading the archive, and
+		// returns (nil,nil) when the entry is absent.
+		_, _, exists, err := vc.ReadMetadataSummary(ctx, loc)
+		if err != nil {
+			return false, err
+		}
+		return !exists, nil
+	default:
+		_, err := os.Stat(loc)
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
+	}
+}
+
+func (b *backupBiz) readArchiveFromVault(ctx context.Context, logical string) ([]byte, error) {
+	vc, err := lookupVaultClient()
+	if err != nil {
+		return nil, err
+	}
+	data, err := vc.ReadKVv2(ctx, logical)
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := data["archive"].(string)
+	if !ok || raw == "" {
+		return nil, fmt.Errorf("vault entry %s is missing the 'archive' field", logical)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode vault archive payload: %w", err)
+	}
+	return decoded, nil
+}
+
+// splitStoragePath parses `rec.Path` into (schema, location). Legacy rows
+// with no schema prefix are treated as filesystem paths.
+func splitStoragePath(path string) (schema, loc string) {
+	switch {
+	case strings.HasPrefix(path, backupSchemaVault):
+		return backupSchemaVault, strings.TrimPrefix(path, backupSchemaVault)
+	case strings.HasPrefix(path, backupSchemaFile):
+		return backupSchemaFile, strings.TrimPrefix(path, backupSchemaFile)
+	default:
+		return backupSchemaFile, path
+	}
 }
 
 func writeFileAtomic(path string, data []byte) error {

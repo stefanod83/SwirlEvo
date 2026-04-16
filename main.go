@@ -133,7 +133,12 @@ func loadSetting(sb biz.SettingBiz) *misc.Setting {
 	ctx, cancel := misc.Context(30 * time.Second)
 	defer cancel()
 
-	if opts, err = sb.Load(ctx); err == nil {
+	// LoadRaw (not Load) — the bootstrap snapshot must carry real
+	// values. Load sanitizes sensitive fields (vault.token, secret_id,
+	// keycloak.client_secret) with the UI mask placeholder, and using
+	// it here would leave liveSettings with "••••••••" as the actual
+	// secret_id at boot, breaking any auth that depends on it.
+	if opts, err = sb.LoadRaw(ctx); err == nil {
 		if b, err = json.Marshal(opts); err == nil {
 			err = json.Unmarshal(b, s)
 		}

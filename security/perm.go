@@ -59,6 +59,8 @@ var Actions = map[string]uint64{
 	// using a previously-valid passphrase. Distinct from `restore`
 	// (data-destructive) and `edit` (creates new backups).
 	"recover": 1 << 13,
+	// push: add new tags + push images to a registry.
+	"push": 1 << 14,
 }
 
 var Perms = map[string][]string{
@@ -70,7 +72,7 @@ var Perms = map[string][]string{
 	"stack":     {"view", "edit", "delete", "deploy", "shutdown"},
 	"config":    {"view", "edit", "delete"},
 	"secret":    {"view", "edit", "delete"},
-	"image":     {"view", "delete"},
+	"image":     {"view", "edit", "delete", "push"},
 	"container": {"view", "edit", "delete", "logs", "execute"},
 	"volume":    {"view", "edit", "delete"},
 	"user":      {"view", "edit", "delete"},

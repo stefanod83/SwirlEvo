@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/cuigh/auxo/data"
@@ -15,15 +16,22 @@ type ImageBiz interface {
 	Find(ctx context.Context, node, name string) (image *Image, raw string, err error)
 	Delete(ctx context.Context, node, id string, force bool, user web.User) (err error)
 	Prune(ctx context.Context, node string, user web.User) (count int, size uint64, err error)
+	Tag(ctx context.Context, node, source, target string, user web.User) error
+	// Push pushes an image ref to the registry identified by registryID
+	// (authentication is resolved from the catalog entry). If registryID
+	// is empty, the image is pushed anonymously (relying on whatever
+	// the host daemon has in `~/.docker/config.json`).
+	Push(ctx context.Context, node, ref, registryID string, user web.User) error
 }
 
-func NewImage(d *docker.Docker, eb EventBiz) ImageBiz {
-	return &imageBiz{d: d, eb: eb}
+func NewImage(d *docker.Docker, eb EventBiz, rb RegistryBiz) ImageBiz {
+	return &imageBiz{d: d, eb: eb, rb: rb}
 }
 
 type imageBiz struct {
 	d  *docker.Docker
 	eb EventBiz
+	rb RegistryBiz
 }
 
 func (b *imageBiz) Find(ctx context.Context, node, id string) (img *Image, raw string, err error) {
@@ -87,6 +95,40 @@ func (b *imageBiz) Prune(ctx context.Context, node string, user web.User) (count
 		b.eb.CreateImage(EventActionPrune, node, "", user)
 	}
 	return
+}
+
+func (b *imageBiz) Tag(ctx context.Context, node, source, target string, user web.User) error {
+	if err := b.d.ImageTag(ctx, node, source, target); err != nil {
+		return err
+	}
+	b.eb.CreateImage(EventActionUpdate, node, source+" -> "+target, user)
+	return nil
+}
+
+func (b *imageBiz) Push(ctx context.Context, node, ref, registryID string, user web.User) error {
+	auth := ""
+	if registryID != "" {
+		r, err := b.rb.Find(ctx, registryID)
+		if err != nil {
+			return err
+		}
+		if r == nil {
+			return errors.New("registry not found")
+		}
+		// Find() strips the password; re-fetch the raw auth via biz.
+		// Use GetAuth keyed by URL (existing method) for the encoded
+		// AuthConfig, or fall back to anonymous when absent.
+		a, aerr := b.rb.GetAuth(ctx, r.URL)
+		if aerr != nil {
+			return aerr
+		}
+		auth = a
+	}
+	if err := b.d.ImagePush(ctx, node, ref, auth); err != nil {
+		return err
+	}
+	b.eb.CreateImage(EventActionUpdate, node, "push:"+ref, user)
+	return nil
 }
 
 type Image struct {

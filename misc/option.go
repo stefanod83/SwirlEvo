@@ -102,6 +102,16 @@ type Setting struct {
 		CACert             string `json:"ca_cert"`              // PEM-encoded, optional
 		RequestTimeout     int    `json:"request_timeout"`      // seconds, default 10
 	} `json:"vault"`
+	// Backup storage policy. The archive format (AES-256-GCM with
+	// SWIRL_BACKUP_KEY) does not depend on the storage location; only the
+	// destination of the encrypted bytes does.
+	Backup struct {
+		StorageMode string `json:"storage_mode"` // "fs" (default) | "vault"
+		// VaultPrefix is appended to the configured Vault.KVPrefix when
+		// storage_mode=vault. Defaults to "backups" so the full KVv2
+		// path becomes `<mount>/data/<kv_prefix><vault_prefix>/<id>`.
+		VaultPrefix string `json:"vault_prefix"`
+	} `json:"backup"`
 }
 
 // IsStandalone returns true when Swirl is running in standalone mode.

@@ -13,23 +13,27 @@ import (
 // still use them to manage external references, standalone users need them
 // to back their docker-compose stacks.
 type VaultSecretHandler struct {
-	Search  web.HandlerFunc `path:"/search" auth:"vault_secret.view" desc:"search vault secret catalog"`
-	Find    web.HandlerFunc `path:"/find" auth:"vault_secret.view" desc:"find vault secret by id"`
-	List    web.HandlerFunc `path:"/list" auth:"vault_secret.view" desc:"list all vault secrets"`
-	Delete  web.HandlerFunc `path:"/delete" method:"post" auth:"vault_secret.delete" desc:"delete vault secret"`
-	Save    web.HandlerFunc `path:"/save" method:"post" auth:"vault_secret.edit" desc:"create or update vault secret"`
-	Preview web.HandlerFunc `path:"/preview" auth:"vault_secret.view" desc:"preview vault secret field names (never values)"`
+	Search   web.HandlerFunc `path:"/search" auth:"vault_secret.view" desc:"search vault secret catalog"`
+	Find     web.HandlerFunc `path:"/find" auth:"vault_secret.view" desc:"find vault secret by id"`
+	List     web.HandlerFunc `path:"/list" auth:"vault_secret.view" desc:"list all vault secrets"`
+	Delete   web.HandlerFunc `path:"/delete" method:"post" auth:"vault_secret.delete" desc:"delete vault secret"`
+	Save     web.HandlerFunc `path:"/save" method:"post" auth:"vault_secret.edit" desc:"create or update vault secret"`
+	Preview  web.HandlerFunc `path:"/preview" auth:"vault_secret.view" desc:"preview vault secret field names (never values)"`
+	Write    web.HandlerFunc `path:"/write" method:"post" auth:"vault_secret.edit" desc:"write a new version of the secret value into Vault"`
+	Statuses web.HandlerFunc `path:"/statuses" auth:"vault_secret.view" desc:"batch fetch per-entry metadata from Vault (versions, existence)"`
 }
 
 // NewVaultSecret creates an instance of VaultSecretHandler.
 func NewVaultSecret(b biz.VaultSecretBiz) *VaultSecretHandler {
 	return &VaultSecretHandler{
-		Search:  vaultSecretSearch(b),
-		Find:    vaultSecretFind(b),
-		List:    vaultSecretList(b),
-		Delete:  vaultSecretDelete(b),
-		Save:    vaultSecretSave(b),
-		Preview: vaultSecretPreview(b),
+		Search:   vaultSecretSearch(b),
+		Find:     vaultSecretFind(b),
+		List:     vaultSecretList(b),
+		Delete:   vaultSecretDelete(b),
+		Save:     vaultSecretSave(b),
+		Preview:  vaultSecretPreview(b),
+		Write:    vaultSecretWrite(b),
+		Statuses: vaultSecretStatuses(b),
 	}
 }
 
@@ -137,5 +141,34 @@ func vaultSecretPreview(b biz.VaultSecretBiz) web.HandlerFunc {
 			"exists": exists,
 			"fields": fields,
 		})
+	}
+}
+
+func vaultSecretWrite(b biz.VaultSecretBiz) web.HandlerFunc {
+	type Args struct {
+		ID      string         `json:"id"`
+		Data    map[string]any `json:"data"`
+		Replace bool           `json:"replace"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args); err != nil {
+			return ajax(c, err)
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.WriteValue(ctx, args.ID, args.Data, args.Replace, c.User()))
+	}
+}
+
+func vaultSecretStatuses(b biz.VaultSecretBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		statuses, err := b.GetStatuses(ctx)
+		if err != nil {
+			return err
+		}
+		return success(c, statuses)
 	}
 }

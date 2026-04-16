@@ -16,11 +16,12 @@ func (d *Dao) RegistryCreate(ctx context.Context, registry *dao.Registry) (err e
 
 func (d *Dao) RegistryUpdate(ctx context.Context, registry *dao.Registry) (err error) {
 	update := bson.M{
-		"name":       registry.Name,
-		"url":        registry.URL,
-		"username":   registry.Username,
-		"updated_at": registry.UpdatedAt,
-		"updated_by": registry.UpdatedBy,
+		"name":            registry.Name,
+		"url":             registry.URL,
+		"username":        registry.Username,
+		"skip_tls_verify": registry.SkipTLSVerify,
+		"updated_at":      registry.UpdatedAt,
+		"updated_by":      registry.UpdatedBy,
 	}
 	if registry.Password != "" {
 		update["password"] = registry.Password

@@ -125,13 +125,26 @@ func (b *userBiz) Create(ctx context.Context, user *dao.User, ctxUser web.User) 
 func (b *userBiz) Update(ctx context.Context, user *dao.User, ctxUser web.User) (err error) {
 	user.UpdatedAt = now()
 	user.UpdatedBy = newOperator(ctxUser)
-	if err = b.d.UserUpdate(ctx, user); err == nil {
-		go func() {
-			_ = b.d.SessionUpdateDirty(ctx, user.ID, "")
-			b.eb.CreateUser(EventActionUpdate, user.LoginName, user.Name, ctxUser)
-		}()
+	if err = b.d.UserUpdate(ctx, user); err != nil {
+		return err
 	}
-	return
+	// When switching away from internal the local password+salt are no
+	// longer meaningful. UserUpdate doesn't touch those columns — call
+	// UserUpdatePassword explicitly to zero them out.
+	if user.Type != UserTypeInternal {
+		user.Password = ""
+		user.Salt = ""
+		if perr := b.d.UserUpdatePassword(ctx, user); perr != nil {
+			// Don't surface as Update error — profile fields already
+			// landed; an ops log entry is enough.
+			_ = perr
+		}
+	}
+	go func() {
+		_ = b.d.SessionUpdateDirty(ctx, user.ID, "")
+		b.eb.CreateUser(EventActionUpdate, user.LoginName, user.Name, ctxUser)
+	}()
+	return nil
 }
 
 func (b *userBiz) SetStatus(ctx context.Context, id string, status int32, user web.User) (err error) {

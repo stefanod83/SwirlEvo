@@ -20,7 +20,7 @@
         <n-form-item-gi :label="t('fields.login_name')" path="loginName">
           <n-input :placeholder="t('fields.login_name')" v-model:value="user.loginName" />
         </n-form-item-gi>
-        <n-form-item-gi :label="t('fields.password')" path="password" v-if="!user.id">
+        <n-form-item-gi :label="t('fields.password')" path="password" v-if="!user.id && user.type === 'internal'">
           <n-input
             type="password"
             :placeholder="t('fields.password')"
@@ -30,7 +30,7 @@
         <n-form-item-gi
           :label="t('fields.password_confirm')"
           path="passwordConfirm"
-          v-if="!user.id"
+          v-if="!user.id && user.type === 'internal'"
         >
           <n-input
             type="password"
@@ -52,11 +52,11 @@
           path="type"
           label-placement="left"
           label-width="41"
-          v-if="user.id"
         >
           <n-radio-group v-model:value="user.type">
             <n-radio key="internal" value="internal">Internal</n-radio>
             <n-radio key="ldap" value="ldap">LDAP</n-radio>
+            <n-radio key="keycloak" value="keycloak">Keycloak</n-radio>
           </n-radio-group>
         </n-form-item-gi>
         <n-form-item-gi
@@ -164,12 +164,18 @@ const { t } = useI18n()
 const route = useRoute();
 const user = ref({ type: 'internal', admin: false } as User)
 const roles = ref([] as Role[]);
+// Password is required only for new internal users. LDAP / Keycloak
+// users authenticate against the upstream provider — no local password.
+const passwordRequiredRule = customRule(
+  (_r: any, v: string) => !(!user.value.id && user.value.type === 'internal' && !v),
+  t('tips.required_rule'),
+)
 const rules: any = {
   name: requiredRule(),
   loginName: requiredRule(),
   email: [requiredRule(), emailRule()],
-  password: requiredRule(),
-  passwordConfirm: requiredRule(),
+  password: passwordRequiredRule,
+  passwordConfirm: passwordRequiredRule,
   tokens: customRule((rule: any, value: any[]) => {
     return value?.every(v => v.name && v.value)
   }, t('tips.required_rule')),

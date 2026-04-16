@@ -1,11 +1,27 @@
 import ajax, { Result } from './ajax'
 
+// Placeholder the backend returns when a sensitive field
+// (vault.token, vault.secret_id, keycloak.client_secret) has a value
+// stored. Saving the form with this value (or an empty string)
+// instructs the backend to preserve the existing secret. Must match
+// biz/setting.go::SettingSecretMask byte-for-byte.
+export const SETTING_SECRET_MASK = '••••••••'
+
 export interface Setting {
     ldap: LdapSetting;
     keycloak: KeycloakSetting;
     metric: MetricSetting;
     deploy: DeployOptions;
     vault: VaultSetting;
+    backup: BackupStorageSetting;
+}
+
+export interface BackupStorageSetting {
+    // 'fs' (default) writes encrypted archives to SWIRL_BACKUP_DIR;
+    // 'vault' writes them as KVv2 entries under
+    // <kv_mount>/data/<kv_prefix><vault_prefix>/<id>.
+    storage_mode: 'fs' | 'vault';
+    vault_prefix: string;
 }
 
 export interface VaultSetting {
