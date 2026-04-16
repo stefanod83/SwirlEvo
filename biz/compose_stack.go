@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -81,15 +82,16 @@ type ComposeStackSummary struct {
 }
 
 type composeStackBiz struct {
-	d  *docker.Docker
-	hb HostBiz
-	eb EventBiz
-	di dao.Interface
+	d   *docker.Docker
+	hb  HostBiz
+	eb  EventBiz
+	di  dao.Interface
+	sec ComposeStackSecretBiz
 }
 
 // NewComposeStack is registered in biz.init.
-func NewComposeStack(d *docker.Docker, hb HostBiz, eb EventBiz, di dao.Interface) ComposeStackBiz {
-	return &composeStackBiz{d: d, hb: hb, eb: eb, di: di}
+func NewComposeStack(d *docker.Docker, hb HostBiz, eb EventBiz, di dao.Interface, sec ComposeStackSecretBiz) ComposeStackBiz {
+	return &composeStackBiz{d: d, hb: hb, eb: eb, di: di, sec: sec}
 }
 
 func (b *composeStackBiz) Search(ctx context.Context, args *dao.ComposeStackSearchArgs) ([]*ComposeStackSummary, int, error) {
@@ -235,7 +237,17 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 		return "", err
 	}
 	engine := compose.NewStandaloneEngine(cli)
-	if err := engine.Deploy(ctx, stack.Name, stack.Content, compose.DeployOptions{PullImages: pullImages}); err != nil {
+	// Build a deploy hook that materializes VaultSecret bindings (if any).
+	// A nil hook is perfectly valid — the engine skips over it.
+	hook, err := b.sec.NewHook(ctx, id)
+	if err != nil {
+		_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
+		return id, fmt.Errorf("prepare secrets: %w", err)
+	}
+	if err := engine.Deploy(ctx, stack.Name, stack.Content, compose.DeployOptions{
+		PullImages: pullImages,
+		Hook:       hook,
+	}); err != nil {
 		_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
 		return id, err
 	}
@@ -297,8 +309,13 @@ func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes b
 	cli, err := b.clientForStack(ctx, stack)
 	if err == nil {
 		engine := compose.NewStandaloneEngine(cli)
-		_ = engine.Remove(ctx, stack.Name, removeVolumes)
+		// Cleanup hook drops helper containers + secret volumes by label —
+		// no Vault lookup needed, so stack removal still works when Vault
+		// is unreachable.
+		_ = engine.Remove(ctx, stack.Name, removeVolumes, b.sec.NewCleanupHook())
 	}
+	// Drop persisted bindings — the values live in Vault and are unaffected.
+	_ = b.di.ComposeStackSecretBindingDeleteByStack(ctx, id)
 	if err := b.di.ComposeStackDelete(ctx, id); err != nil {
 		return err
 	}
@@ -528,7 +545,7 @@ func (b *composeStackBiz) RemoveExternal(ctx context.Context, hostID, name strin
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
-	if err := engine.Remove(ctx, name, removeVolumes); err != nil {
+	if err := engine.Remove(ctx, name, removeVolumes, b.sec.NewCleanupHook()); err != nil {
 		return err
 	}
 	b.eb.CreateStack(EventActionDelete, hostID, name, user)

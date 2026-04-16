@@ -41,6 +41,37 @@ type StackInfo struct {
 // DeployOptions controls deploy behaviour.
 type DeployOptions struct {
 	PullImages bool // pull each service image before creating containers
+
+	// Hook, if non-nil, lets an external component (e.g. VaultSecret
+	// materializer) influence the deploy without the engine having to know
+	// about Vault. The engine calls the hook methods at well-defined points
+	// in the Deploy lifecycle.
+	Hook DeployHook
+}
+
+// DeployHook lets a caller inject side effects into the Deploy lifecycle
+// without the engine taking a dependency on higher-level packages (biz,
+// vault). The standard use is to materialize VaultSecret bindings as
+// environment variables or files inside service containers.
+//
+// All methods must be safe to invoke when the hook has no work to do for
+// the given stack/service — they should return nil without side effects.
+type DeployHook interface {
+	// BeforeDeploy runs after networks/volumes are ensured but before any
+	// service container is created. Typical use: populate secret volumes
+	// via short-lived helper containers.
+	BeforeDeploy(ctx context.Context, cli *client.Client, project string) error
+	// ApplyToService may add env vars or mounts to the given service.
+	// Modifications happen in-place on the returned slices (the engine
+	// passes them back into ContainerCreate).
+	ApplyToService(ctx context.Context, project, service string, env []string, mounts []mount.Mount) (newEnv []string, newMounts []mount.Mount, err error)
+	// AfterCreate runs after ContainerCreate but before ContainerStart for
+	// the given service. Typical use: CopyToContainer to populate a
+	// tmpfs-backed secret file.
+	AfterCreate(ctx context.Context, cli *client.Client, project, service, containerID string) error
+	// AfterRemove runs after all project containers have been removed.
+	// Typical use: cleanup of secret volumes scoped to the project.
+	AfterRemove(ctx context.Context, cli *client.Client, project string) error
 }
 
 // StandaloneEngine deploys a docker-compose file on a single Docker daemon using the SDK only.
@@ -73,13 +104,19 @@ func (e *StandaloneEngine) Deploy(ctx context.Context, projectName, content stri
 		return err
 	}
 
+	if opts.Hook != nil {
+		if err := opts.Hook.BeforeDeploy(ctx, e.cli, projectName); err != nil {
+			return fmt.Errorf("deploy hook (before): %w", err)
+		}
+	}
+
 	for i, svc := range cfg.Services {
 		if opts.PullImages && svc.Image != "" {
 			if err := e.pullImage(ctx, svc.Image); err != nil {
 				return fmt.Errorf("pull %s: %w", svc.Image, err)
 			}
 		}
-		if err := e.createAndStart(ctx, projectName, cfg, &cfg.Services[i]); err != nil {
+		if err := e.createAndStart(ctx, projectName, cfg, &cfg.Services[i], opts.Hook); err != nil {
 			return fmt.Errorf("service %s: %w", svc.Name, err)
 		}
 	}
@@ -122,7 +159,9 @@ func (e *StandaloneEngine) Stop(ctx context.Context, projectName string) error {
 
 // Remove stops and deletes all resources of a project.
 // When removeVolumes is true, project-labeled volumes are removed too.
-func (e *StandaloneEngine) Remove(ctx context.Context, projectName string, removeVolumes bool) error {
+// The optional hook lets callers run cleanup tasks (e.g. drop secret volumes)
+// after the project containers are gone.
+func (e *StandaloneEngine) Remove(ctx context.Context, projectName string, removeVolumes bool, hook ...DeployHook) error {
 	if err := e.removeProjectContainers(ctx, projectName, true); err != nil {
 		return err
 	}
@@ -143,6 +182,11 @@ func (e *StandaloneEngine) Remove(ctx context.Context, projectName string, remov
 			for _, v := range vols.Volumes {
 				_ = e.cli.VolumeRemove(ctx, v.Name, false)
 			}
+		}
+	}
+	for _, h := range hook {
+		if h != nil {
+			_ = h.AfterRemove(ctx, e.cli, projectName)
 		}
 	}
 	return nil
@@ -292,7 +336,7 @@ func (e *StandaloneEngine) pullImage(ctx context.Context, ref string) error {
 	return err
 }
 
-func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, cfg *composetypes.Config, svc *composetypes.ServiceConfig) error {
+func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, cfg *composetypes.Config, svc *composetypes.ServiceConfig, hook DeployHook) error {
 	labels := map[string]string{
 		LabelProject: project,
 		LabelService: svc.Name,
@@ -351,6 +395,16 @@ func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, c
 			}
 		}
 		mounts = append(mounts, m)
+	}
+
+	// Let the hook (VaultSecret materializer) inject additional env/mounts.
+	if hook != nil {
+		newEnv, newMounts, err := hook.ApplyToService(ctx, project, svc.Name, env, mounts)
+		if err != nil {
+			return fmt.Errorf("hook apply %s: %w", svc.Name, err)
+		}
+		env = newEnv
+		mounts = newMounts
 	}
 
 	// networks: first listed (alphabetical or explicit) becomes primary
@@ -434,6 +488,14 @@ func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, c
 			Aliases: aliases[n],
 		}); err != nil {
 			return err
+		}
+	}
+
+	// AfterCreate runs before Start so the hook can populate tmpfs-backed
+	// secrets via CopyToContainer while the container is still stopped.
+	if hook != nil {
+		if err := hook.AfterCreate(ctx, e.cli, project, svc.Name, resp.ID); err != nil {
+			return fmt.Errorf("hook after-create %s: %w", svc.Name, err)
 		}
 	}
 
