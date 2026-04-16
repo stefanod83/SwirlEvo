@@ -30,6 +30,7 @@ const (
 	EventTypeChart     EventType = "Chart"
 	EventTypeSetting   EventType = "Setting"
 	EventTypeHost      EventType = "Host"
+	EventTypeBackup    EventType = "Backup"
 )
 
 type EventAction string
@@ -53,6 +54,8 @@ const (
 	EventActionUnpause    EventAction = "Unpause"
 	EventActionRename     EventAction = "Rename"
 	EventActionImport     EventAction = "Import"
+	EventActionRestore    EventAction = "Restore"
+	EventActionDownload   EventAction = "Download"
 )
 
 type EventBiz interface {
@@ -60,11 +63,11 @@ type EventBiz interface {
 	Prune(ctx context.Context, days int32) (err error)
 	CreateRegistry(action EventAction, id, name string, user web.User)
 	CreateNode(action EventAction, id, name string, user web.User)
-	CreateNetwork(action EventAction, id, name string, user web.User)
+	CreateNetwork(action EventAction, node, id, name string, user web.User)
 	CreateService(action EventAction, name string, user web.User)
 	CreateConfig(action EventAction, id, name string, user web.User)
 	CreateSecret(action EventAction, id, name string, user web.User)
-	CreateStack(action EventAction, name string, user web.User)
+	CreateStack(action EventAction, node, name string, user web.User)
 	CreateImage(action EventAction, node, id string, user web.User)
 	CreateContainer(action EventAction, node, id, name string, user web.User)
 	CreateVolume(action EventAction, node, name string, user web.User)
@@ -73,6 +76,7 @@ type EventBiz interface {
 	CreateChart(action EventAction, id, title string, user web.User)
 	CreateSetting(action EventAction, user web.User)
 	CreateHost(action EventAction, id, name string, user web.User)
+	CreateBackup(action EventAction, id, name string, user web.User)
 }
 
 func NewEvent(d dao.Interface) EventBiz {
@@ -117,8 +121,11 @@ func (b *eventBiz) CreateService(action EventAction, name string, user web.User)
 	b.create(EventTypeService, action, args, user)
 }
 
-func (b *eventBiz) CreateNetwork(action EventAction, id, name string, user web.User) {
+func (b *eventBiz) CreateNetwork(action EventAction, node, id, name string, user web.User) {
 	args := data.Map{"id": id, "name": name}
+	if node != "" {
+		args["node"] = node
+	}
 	b.create(EventTypeNetwork, action, args, user)
 }
 
@@ -154,8 +161,11 @@ func (b *eventBiz) CreateVolume(action EventAction, node, name string, user web.
 	b.create(EventTypeVolume, action, args, user)
 }
 
-func (b *eventBiz) CreateStack(action EventAction, name string, user web.User) {
+func (b *eventBiz) CreateStack(action EventAction, node, name string, user web.User) {
 	args := data.Map{"name": name}
+	if node != "" {
+		args["node"] = node
+	}
 	b.create(EventTypeStack, action, args, user)
 }
 
@@ -191,4 +201,9 @@ func (b *eventBiz) CreateChart(action EventAction, id, title string, user web.Us
 func (b *eventBiz) CreateHost(action EventAction, id, name string, user web.User) {
 	args := data.Map{"id": id, "name": name}
 	b.create(EventTypeHost, action, args, user)
+}
+
+func (b *eventBiz) CreateBackup(action EventAction, id, name string, user web.User) {
+	args := data.Map{"id": id, "name": name}
+	b.create(EventTypeBackup, action, args, user)
 }

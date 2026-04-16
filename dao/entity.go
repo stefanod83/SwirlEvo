@@ -306,3 +306,32 @@ type Session struct {
 	CreatedAt time.Time `json:"createdAt" bson:"created_at"`
 	UpdatedAt time.Time `json:"updatedAt" bson:"updated_at"`
 }
+
+// Backup represents a stored backup archive. Archive bytes live on disk
+// under /data/swirl/backups/<id>.swb; this struct holds only metadata.
+type Backup struct {
+	ID        string         `json:"id" bson:"_id"`
+	Name      string         `json:"name" bson:"name"`
+	Source    string         `json:"source" bson:"source"` // manual | daily | weekly | monthly
+	Size      int64          `json:"size" bson:"size"`
+	Checksum  string         `json:"checksum" bson:"checksum"` // sha256 of plaintext JSON
+	Path      string         `json:"path" bson:"path"`
+	Includes  []string       `json:"includes,omitempty" bson:"includes,omitempty"`
+	Stats     map[string]int `json:"stats,omitempty" bson:"stats,omitempty"`
+	CreatedAt time.Time      `json:"createdAt" bson:"created_at"`
+	CreatedBy Operator       `json:"createdBy" bson:"created_by"`
+}
+
+// BackupSchedule describes a recurring backup job.
+// The ID is the schedule type itself ("daily" | "weekly" | "monthly") so
+// there is at most one row per type.
+type BackupSchedule struct {
+	ID        string     `json:"id" bson:"_id"` // daily | weekly | monthly
+	Enabled   bool       `json:"enabled" bson:"enabled"`
+	DayConfig string     `json:"dayConfig" bson:"day_config"` // daily: "1,2,3,4,5" weekly: "1" monthly: "15"
+	Time      string     `json:"time" bson:"time"`            // HH:MM
+	Retention int        `json:"retention" bson:"retention"`  // 0 = unlimited
+	LastRunAt *time.Time `json:"lastRunAt,omitempty" bson:"last_run_at,omitempty"`
+	CreatedAt time.Time  `json:"createdAt" bson:"created_at"`
+	UpdatedAt time.Time  `json:"updatedAt" bson:"updated_at"`
+}

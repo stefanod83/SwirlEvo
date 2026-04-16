@@ -62,7 +62,7 @@ func New(addr string) (dao.Interface, error) {
 }
 
 func (d *Dao) init() error {
-	buckets := []string{"chart", "compose_stack", "dashboard", "event", "host", "registry", "role", "setting", "stack", "user", "session"}
+	buckets := []string{"backup", "backup_schedule", "chart", "compose_stack", "dashboard", "event", "host", "registry", "role", "setting", "stack", "user", "session"}
 	return d.db.Update(func(tx *bolt.Tx) error {
 		for _, bucket := range buckets {
 			if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {

@@ -551,6 +551,14 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    name: "backup_list",
+    path: "/system/backup",
+    component: () => import('../pages/backup/List.vue'),
+    meta: {
+      auth: 'backup.view',
+    }
+  },
+  {
     name: '403',
     path: '/403',
     component: ForbiddenPage,

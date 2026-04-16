@@ -116,7 +116,7 @@ func (b *stackBiz) Create(ctx context.Context, s *dao.Stack, user web.User) (err
 	stack.UpdatedBy = stack.CreatedBy
 	err = b.s.StackCreate(ctx, stack)
 	if err == nil {
-		b.eb.CreateStack(EventActionCreate, stack.Name, user)
+		b.eb.CreateStack(EventActionCreate, "", stack.Name, user)
 	}
 	return
 }
@@ -130,7 +130,7 @@ func (b *stackBiz) Update(ctx context.Context, s *dao.Stack, user web.User) (err
 	}
 	err = b.s.StackUpdate(ctx, stack)
 	if err == nil {
-		b.eb.CreateStack(EventActionUpdate, stack.Name, user)
+		b.eb.CreateStack(EventActionUpdate, "", stack.Name, user)
 	}
 	return
 }
@@ -141,7 +141,7 @@ func (b *stackBiz) Delete(ctx context.Context, name string, user web.User) (err 
 		err = b.s.StackDelete(ctx, name)
 	}
 	if err == nil {
-		b.eb.CreateStack(EventActionDelete, name, user)
+		b.eb.CreateStack(EventActionDelete, "", name, user)
 	}
 	return
 }
@@ -149,7 +149,7 @@ func (b *stackBiz) Delete(ctx context.Context, name string, user web.User) (err 
 func (b *stackBiz) Shutdown(ctx context.Context, name string, user web.User) (err error) {
 	err = b.d.StackRemove(ctx, name)
 	if err == nil {
-		b.eb.CreateStack(EventActionShutdown, name, user)
+		b.eb.CreateStack(EventActionShutdown, "", name, user)
 	}
 	return
 }
@@ -186,7 +186,7 @@ func (b *stackBiz) Deploy(ctx context.Context, name string, user web.User) (err 
 
 	err = b.d.StackDeploy(ctx, cfg, authes)
 	if err == nil {
-		b.eb.CreateStack(EventActionDeploy, name, user)
+		b.eb.CreateStack(EventActionDeploy, "", name, user)
 	}
 	return
 }

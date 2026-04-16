@@ -19,6 +19,7 @@ import (
 	"github.com/cuigh/auxo/net/web/filter"
 	"github.com/cuigh/auxo/util/run"
 	_ "github.com/cuigh/swirl/api"
+	"github.com/cuigh/swirl/backup"
 	"github.com/cuigh/swirl/biz"
 	_ "github.com/cuigh/swirl/dao/bolt"
 	_ "github.com/cuigh/swirl/dao/mongo"
@@ -36,7 +37,7 @@ func main() {
 	app.Version = "2.0.0rc1"
 	app.Desc = "A web management UI for Docker, focused on swarm cluster"
 	app.Action = func(ctx *app.Context) error {
-		return run.Pipeline(misc.LoadOptions, initSystem, scaler.Start, startServer)
+		return run.Pipeline(misc.LoadOptions, initSystem, scaler.Start, backup.Start, startServer)
 	}
 	app.Flags.Register(flag.All)
 	app.Start()

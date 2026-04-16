@@ -54,4 +54,5 @@ func init() {
 	container.Put(NewDashboard, container.Name("api.dashboard"))
 	container.Put(NewHost, container.Name("api.host"))
 	container.Put(NewComposeStack, container.Name("api.compose-stack"))
+	container.Put(NewBackup, container.Name("api.backup"))
 }

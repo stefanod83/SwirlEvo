@@ -30,6 +30,7 @@ var Resources = map[string]uint64{
 	"event":     1 << 15,
 	"setting":   1 << 16,
 	"host":      1 << 17,
+	"backup":    1 << 18,
 }
 
 // Actions holds all actions requiring authorization. Up to 24 actions are supported.
@@ -45,6 +46,8 @@ var Actions = map[string]uint64{
 	"deploy":     1 << 7,
 	"shutdown":   1 << 8,
 	"execute":    1 << 9,
+	"restore":    1 << 10,
+	"download":   1 << 11,
 }
 
 var Perms = map[string][]string{
@@ -66,6 +69,7 @@ var Perms = map[string][]string{
 	"event":     {"view"},
 	"setting":   {"view", "edit"},
 	"host":      {"view", "edit", "delete"},
+	"backup":    {"view", "edit", "delete", "restore", "download"},
 }
 
 type Authorizer struct {

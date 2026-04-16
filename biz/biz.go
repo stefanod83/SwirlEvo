@@ -133,4 +133,5 @@ func init() {
 	container.Put(NewSession)
 	container.Put(NewDashboard)
 	container.Put(NewHost)
+	container.Put(NewBackup)
 }

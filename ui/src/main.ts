@@ -35,9 +35,12 @@ store.subscribe((mutation, state) => {
   }
 })
 
-bootstrap()
-  .then(() => {
-    // If we're already authenticated (returning user with valid token), load hosts now.
-    if (store.state.user?.token) return loadHosts()
-  })
-  .finally(() => app.mount('#app'))
+// Mount immediately so the first paint is not blocked by the /system/mode
+// bootstrap call. The store starts with mode='swarm' as a safe default; once
+// bootstrap resolves it is switched to the real mode and the menu reacts.
+app.mount('#app')
+
+bootstrap().then(() => {
+  // Already authenticated on refresh? Load hosts in the background.
+  if (store.state.user?.token) return loadHosts()
+})

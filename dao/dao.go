@@ -92,6 +92,18 @@ type Interface interface {
 	ComposeStackUpdate(ctx context.Context, stack *ComposeStack) error
 	ComposeStackUpdateStatus(ctx context.Context, id, status string) error
 	ComposeStackDelete(ctx context.Context, id string) error
+
+	BackupGet(ctx context.Context, id string) (*Backup, error)
+	BackupGetAll(ctx context.Context) ([]*Backup, error)
+	BackupGetBySource(ctx context.Context, source string) ([]*Backup, error)
+	BackupCreate(ctx context.Context, backup *Backup) error
+	BackupDelete(ctx context.Context, id string) error
+
+	BackupScheduleGet(ctx context.Context, id string) (*BackupSchedule, error)
+	BackupScheduleGetAll(ctx context.Context) ([]*BackupSchedule, error)
+	BackupScheduleUpsert(ctx context.Context, schedule *BackupSchedule) error
+	BackupScheduleDelete(ctx context.Context, id string) error
+	BackupScheduleTouch(ctx context.Context, id string, lastRunAt time.Time) error
 }
 
 func newInterface() (i Interface) {

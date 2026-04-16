@@ -22,6 +22,7 @@ import {
   ImageOutline,
   ImagesOutline,
   LogoDocker,
+  CloudUploadOutline,
 } from "@vicons/ionicons5";
 import XIcon from "@/components/Icon.vue";
 import { t } from "@/locales";
@@ -148,6 +149,12 @@ const systemItem = (): MenuOption => ({
       key: "config",
       path: "/system/settings",
       icon: renderIcon(ConstructOutline),
+    },
+    {
+      label: t('objects.backup'),
+      key: "backup",
+      path: "/system/backup",
+      icon: renderIcon(CloudUploadOutline),
     },
   ],
 })

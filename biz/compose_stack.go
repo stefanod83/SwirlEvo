@@ -207,12 +207,12 @@ func (b *composeStackBiz) Save(ctx context.Context, stack *dao.ComposeStack, use
 		if err := b.di.ComposeStackCreate(ctx, stack); err != nil {
 			return "", err
 		}
-		b.eb.CreateStack(EventActionCreate, stack.Name, user)
+		b.eb.CreateStack(EventActionCreate, stack.HostID, stack.Name, user)
 	} else {
 		if err := b.di.ComposeStackUpdate(ctx, stack); err != nil {
 			return "", err
 		}
-		b.eb.CreateStack(EventActionUpdate, stack.Name, user)
+		b.eb.CreateStack(EventActionUpdate, stack.HostID, stack.Name, user)
 	}
 	return stack.ID, nil
 }
@@ -240,7 +240,7 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 		return id, err
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "active")
-	b.eb.CreateStack(EventActionDeploy, stack.Name, user)
+	b.eb.CreateStack(EventActionDeploy, stack.HostID, stack.Name, user)
 	return id, nil
 }
 
@@ -261,7 +261,7 @@ func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) e
 		return err
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "active")
-	b.eb.CreateStack(EventActionStart, stack.Name, user)
+	b.eb.CreateStack(EventActionStart, stack.HostID, stack.Name, user)
 	return nil
 }
 
@@ -282,7 +282,7 @@ func (b *composeStackBiz) Stop(ctx context.Context, id string, user web.User) er
 		return err
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "inactive")
-	b.eb.CreateStack(EventActionShutdown, stack.Name, user)
+	b.eb.CreateStack(EventActionShutdown, stack.HostID, stack.Name, user)
 	return nil
 }
 
@@ -302,7 +302,7 @@ func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes b
 	if err := b.di.ComposeStackDelete(ctx, id); err != nil {
 		return err
 	}
-	b.eb.CreateStack(EventActionDelete, stack.Name, user)
+	b.eb.CreateStack(EventActionDelete, stack.HostID, stack.Name, user)
 	return nil
 }
 
@@ -480,7 +480,7 @@ func (b *composeStackBiz) Import(ctx context.Context, stack *dao.ComposeStack, r
 	if redeploy {
 		id, err := b.Deploy(ctx, stack, pullImages, user)
 		if err == nil {
-			b.eb.CreateStack(EventActionImport, stack.Name, user)
+			b.eb.CreateStack(EventActionImport, stack.HostID, stack.Name, user)
 		}
 		return id, err
 	}
@@ -488,7 +488,7 @@ func (b *composeStackBiz) Import(ctx context.Context, stack *dao.ComposeStack, r
 	stack.Status = "active"
 	id, err := b.Save(ctx, stack, user)
 	if err == nil {
-		b.eb.CreateStack(EventActionImport, stack.Name, user)
+		b.eb.CreateStack(EventActionImport, stack.HostID, stack.Name, user)
 	}
 	return id, err
 }
@@ -503,7 +503,7 @@ func (b *composeStackBiz) StartExternal(ctx context.Context, hostID, name string
 	if err := engine.Start(ctx, name); err != nil {
 		return err
 	}
-	b.eb.CreateStack(EventActionStart, name, user)
+	b.eb.CreateStack(EventActionStart, hostID, name, user)
 	return nil
 }
 
@@ -517,7 +517,7 @@ func (b *composeStackBiz) StopExternal(ctx context.Context, hostID, name string,
 	if err := engine.Stop(ctx, name); err != nil {
 		return err
 	}
-	b.eb.CreateStack(EventActionShutdown, name, user)
+	b.eb.CreateStack(EventActionShutdown, hostID, name, user)
 	return nil
 }
 
@@ -531,7 +531,7 @@ func (b *composeStackBiz) RemoveExternal(ctx context.Context, hostID, name strin
 	if err := engine.Remove(ctx, name, removeVolumes); err != nil {
 		return err
 	}
-	b.eb.CreateStack(EventActionDelete, name, user)
+	b.eb.CreateStack(EventActionDelete, hostID, name, user)
 	return nil
 }
 

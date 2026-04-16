@@ -17,7 +17,7 @@ type NetworkBiz interface {
 	Delete(ctx context.Context, node, id, name string, user web.User) (err error)
 	Create(ctx context.Context, node string, n *Network, user web.User) (err error)
 	Disconnect(ctx context.Context, networkId, networkName, container string, user web.User) (err error)
-	Topology(ctx context.Context, node string) (*NetworkTopology, error)
+	Topology(ctx context.Context, node string, all bool) (*NetworkTopology, error)
 }
 
 func NewNetwork(d *docker.Docker, eb EventBiz) NetworkBiz {
@@ -52,7 +52,7 @@ func (b *networkBiz) Create(ctx context.Context, node string, n *Network, user w
 	}
 	err = b.d.NetworkCreateOnNode(ctx, node, n.Name, nc)
 	if err == nil {
-		b.eb.CreateNetwork(EventActionCreate, n.Name, n.Name, user)
+		b.eb.CreateNetwork(EventActionCreate, node, n.Name, n.Name, user)
 	}
 	return
 }
@@ -76,17 +76,50 @@ func (b *networkBiz) Search(ctx context.Context, node string) ([]*Network, error
 		return nil, err
 	}
 
+	// Scan all containers once to build the set of networks actually in use.
+	// Docker's List response populates c.NetworkSettings.Networks even for
+	// stopped containers, so any configured attachment counts as "used".
+	usedByID := make(map[string]bool)
+	usedByName := make(map[string]bool)
+	if containers, cErr := b.d.ContainerListAll(ctx, node); cErr == nil {
+		for _, c := range containers {
+			if c.NetworkSettings == nil {
+				continue
+			}
+			for name, ep := range c.NetworkSettings.Networks {
+				if name != "" {
+					usedByName[name] = true
+				}
+				if ep != nil && ep.NetworkID != "" {
+					usedByID[ep.NetworkID] = true
+				}
+			}
+		}
+	}
+
 	networks := make([]*Network, len(list))
 	for i, nr := range list {
-		networks[i] = newNetwork(&nr)
+		n := newNetwork(&nr)
+		n.Unused = !usedByID[n.ID] && !usedByName[n.Name] && !isSystemNetwork(n)
+		networks[i] = n
 	}
 	return networks, nil
+}
+
+// isSystemNetwork returns true for Docker's built-in networks which are
+// always present regardless of usage. They should never be flagged as unused.
+func isSystemNetwork(n *Network) bool {
+	switch n.Name {
+	case "bridge", "host", "none", "docker_gwbridge", "ingress":
+		return true
+	}
+	return false
 }
 
 func (b *networkBiz) Delete(ctx context.Context, node, id, name string, user web.User) (err error) {
 	err = b.d.NetworkRemoveOnNode(ctx, node, name)
 	if err == nil {
-		b.eb.CreateNetwork(EventActionDelete, id, name, user)
+		b.eb.CreateNetwork(EventActionDelete, node, id, name, user)
 	}
 	return
 }
@@ -94,29 +127,26 @@ func (b *networkBiz) Delete(ctx context.Context, node, id, name string, user web
 func (b *networkBiz) Disconnect(ctx context.Context, networkId, networkName, container string, user web.User) (err error) {
 	err = b.d.NetworkDisconnect(ctx, networkName, container)
 	if err == nil {
-		b.eb.CreateNetwork(EventActionDisconnect, networkId, networkName, user)
+		b.eb.CreateNetwork(EventActionDisconnect, "", networkId, networkName, user)
 	}
 	return
 }
 
-func (b *networkBiz) Topology(ctx context.Context, node string) (*NetworkTopology, error) {
+// Topology builds a host-networks-containers graph. When `all` is false
+// (default) only running containers are included; set it to true to also show
+// stopped/exited ones — they get an "inactive" flag so the UI can dim them.
+//
+// The traversal uses container.Summary.NetworkSettings.Networks (populated on
+// List responses) as the primary source of container→network edges, so we
+// don't need a per-network Inspect round-trip; the only Inspect call is to
+// pull IPAM config for the network-node tooltip. Unused networks (no
+// attachments, non-system) get an "unused" flag.
+func (b *networkBiz) Topology(ctx context.Context, node string, all bool) (*NetworkTopology, error) {
 	nets, err := b.d.NetworkListOnNode(ctx, node)
 	if err != nil {
 		return nil, err
 	}
 	containers, _ := b.d.ContainerListAll(ctx, node)
-
-	// Index containers by short ID (first 12 chars) and full ID so we can look them
-	// up from network.Inspect.Containers which keys on the full container ID.
-	ctrByID := make(map[string]*networkTopologyContainerData, len(containers)*2)
-	for i := range containers {
-		c := &containers[i]
-		data := buildTopologyContainer(c)
-		ctrByID[c.ID] = data
-		if len(c.ID) >= 12 {
-			ctrByID[c.ID[:12]] = data
-		}
-	}
 
 	topo := &NetworkTopology{
 		HostID: node,
@@ -124,50 +154,49 @@ func (b *networkBiz) Topology(ctx context.Context, node string) (*NetworkTopolog
 		Edges:  make([]NetworkTopologyEdge, 0),
 	}
 
-	// 1. Host node — anchor of the graph.
+	// 1. Host node.
 	hostLabel := node
 	if hostLabel == "" {
 		hostLabel = "host"
 	}
 	hostNodeID := "host:" + node
-	topo.Nodes = append(topo.Nodes, NetworkTopologyNode{
-		ID:    hostNodeID,
-		Type:  "host",
-		Label: hostLabel,
-		Meta: map[string]any{
-			"containerCount": len(containers),
-			"networkCount":   len(nets),
-		},
-	})
 
-	// 2. Walk networks, inspect each to fetch attached containers.
-	attachedContainerIDs := make(map[string]bool)
-	for _, nr := range nets {
-		full, _, ierr := b.d.NetworkInspectOnNode(ctx, node, nr.Name)
-		if ierr != nil {
-			// Skip networks we cannot inspect but still render a stub node so the
-			// operator sees they exist.
-			full = nr
-		}
-		nodeID := "net:" + full.ID
+	// 2. Network nodes + lookup maps (by ID and name).
+	netNodeByID := make(map[string]string)
+	netNodeByName := make(map[string]string)
+	netNameByNodeID := make(map[string]string) // node-id → network name (for container-side lookup)
+	netUsage := make(map[string]int)
+	netStackByNodeID := make(map[string]string) // node-id → compose project (may be empty)
+	directExposedNets := make(map[string]bool)
+	for i := range nets {
+		nr := nets[i]
 		flags := []string{}
-		if full.Internal {
+		if nr.Internal {
 			flags = append(flags, "isolated")
 		}
-		if full.Ingress {
+		if nr.Ingress {
 			flags = append(flags, "ingress")
 		}
-		meta := map[string]any{
-			"driver":     full.Driver,
-			"scope":      full.Scope,
-			"internal":   full.Internal,
-			"ingress":    full.Ingress,
-			"attachable": full.Attachable,
-			"ipv6":       full.EnableIPv6,
+		switch nr.Driver {
+		case "macvlan", "ipvlan", "host":
+			flags = append(flags, "exposed-direct")
+			directExposedNets[nr.ID] = true
 		}
-		if len(full.IPAM.Config) > 0 {
-			ipams := make([]map[string]string, 0, len(full.IPAM.Config))
-			for _, c := range full.IPAM.Config {
+		stack := nr.Labels["com.docker.compose.project"]
+		meta := map[string]any{
+			"driver":     nr.Driver,
+			"scope":      nr.Scope,
+			"internal":   nr.Internal,
+			"ingress":    nr.Ingress,
+			"attachable": nr.Attachable,
+			"ipv6":       nr.EnableIPv6,
+		}
+		if stack != "" {
+			meta["stack"] = stack
+		}
+		if len(nr.IPAM.Config) > 0 {
+			ipams := make([]map[string]string, 0, len(nr.IPAM.Config))
+			for _, c := range nr.IPAM.Config {
 				ipams = append(ipams, map[string]string{
 					"subnet":  c.Subnet,
 					"gateway": c.Gateway,
@@ -176,106 +205,211 @@ func (b *networkBiz) Topology(ctx context.Context, node string) (*NetworkTopolog
 			}
 			meta["ipam"] = ipams
 		}
+		nodeID := "net:" + nr.ID
+		netNodeByID[nr.ID] = nodeID
+		netNodeByName[nr.Name] = nodeID
+		netNameByNodeID[nodeID] = nr.Name
+		netStackByNodeID[nodeID] = stack
 		topo.Nodes = append(topo.Nodes, NetworkTopologyNode{
 			ID:    nodeID,
 			Type:  "network",
-			Label: full.Name,
+			Label: nr.Name,
 			Meta:  meta,
 			Flags: flags,
 		})
-		topo.Edges = append(topo.Edges, NetworkTopologyEdge{
-			Source: hostNodeID,
-			Target: nodeID,
-			Type:   "host-network",
-		})
+	}
 
-		// Fan out to attached containers.
-		for cid, ep := range full.Containers {
-			ctrID := "ct:" + cid
-			attachedContainerIDs[cid] = true
-			if _, exists := findNode(topo.Nodes, ctrID); !exists {
-				data := ctrByID[cid]
-				label := ep.Name
-				if label == "" && data != nil {
-					label = data.name
+	// 3. Container nodes + edges. Source of truth is NetworkSettings.Networks
+	// from ContainerList (includes stopped containers' configured networks).
+	seenContainers := make(map[string]bool)
+	seenEdges := make(map[string]bool) // "src|dst" pairs — prevents duplicate edges
+	totalRunning := 0
+	totalIncluded := 0
+	for i := range containers {
+		c := &containers[i]
+		isRunning := c.State == "running"
+		if isRunning {
+			totalRunning++
+		}
+		if !all && !isRunning {
+			continue
+		}
+		totalIncluded++
+
+		data := buildTopologyContainer(c)
+		ctrStack := c.Labels["com.docker.compose.project"]
+
+		// Resolve every network attachment up-front so we can both compute the
+		// exposure flags and populate the container's per-network IP list for
+		// the details panel.
+		type attachment struct {
+			netNodeID   string
+			netName     string
+			ip, ipv6    string
+			mac         string
+		}
+		attachments := []attachment{}
+		if c.HostConfig.NetworkMode == "host" {
+			data.exposedPublic = true
+			data.localOnly = false
+		}
+		if c.NetworkSettings != nil {
+			for netName, ep := range c.NetworkSettings.Networks {
+				if ep == nil {
+					continue
 				}
-				meta := map[string]any{
-					"name": label,
+				var netNodeID string
+				if ep.NetworkID != "" {
+					netNodeID = netNodeByID[ep.NetworkID]
 				}
-				flags := []string{}
-				if data != nil {
-					meta["image"] = data.image
-					meta["state"] = data.state
-					meta["status"] = data.status
-					if len(data.ports) > 0 {
-						meta["ports"] = data.ports
-					}
-					if data.exposedPublic {
-						flags = append(flags, "exposed-public")
-					} else if data.localOnly {
-						flags = append(flags, "local-only")
-					}
+				if netNodeID == "" {
+					netNodeID = netNodeByName[netName]
 				}
-				topo.Nodes = append(topo.Nodes, NetworkTopologyNode{
-					ID:    ctrID,
-					Type:  "container",
-					Label: label,
-					Meta:  meta,
-					Flags: flags,
+				if netNodeID == "" {
+					continue
+				}
+				if directExposedNets[ep.NetworkID] {
+					data.exposedPublic = true
+					data.localOnly = false
+				}
+				resolvedName := netNameByNodeID[netNodeID]
+				if resolvedName == "" {
+					resolvedName = netName
+				}
+				attachments = append(attachments, attachment{
+					netNodeID: netNodeID,
+					netName:   resolvedName,
+					ip:        ep.IPAddress,
+					ipv6:      ep.GlobalIPv6Address,
+					mac:       ep.MacAddress,
 				})
 			}
+		}
 
-			// Edge carries IPv4 (fallback IPv6) as label.
-			ipLabel := ep.IPv4Address
-			if ipLabel == "" {
-				ipLabel = ep.IPv6Address
+		ctrID := "ct:" + c.ID
+		if !seenContainers[c.ID] {
+			flags := []string{}
+			if data.exposedPublic {
+				flags = append(flags, "exposed-public")
+			} else if data.localOnly {
+				flags = append(flags, "local-only")
 			}
+			if !isRunning {
+				flags = append(flags, "inactive")
+			}
+			meta := map[string]any{
+				"name":        data.name,
+				"image":       data.image,
+				"state":       data.state,
+				"status":      data.status,
+				"networkMode": c.HostConfig.NetworkMode,
+			}
+			if ctrStack != "" {
+				meta["stack"] = ctrStack
+			}
+			if len(data.ports) > 0 {
+				meta["ports"] = data.ports
+			}
+			if len(attachments) > 0 {
+				nets := make([]map[string]any, 0, len(attachments))
+				for _, a := range attachments {
+					nets = append(nets, map[string]any{
+						"name": a.netName,
+						"ip":   a.ip,
+						"ipv6": a.ipv6,
+						"mac":  a.mac,
+					})
+				}
+				meta["networks"] = nets
+			}
+			topo.Nodes = append(topo.Nodes, NetworkTopologyNode{
+				ID:    ctrID,
+				Type:  "container",
+				Label: data.name,
+				Meta:  meta,
+				Flags: flags,
+			})
+			seenContainers[c.ID] = true
+		}
+
+		for _, a := range attachments {
+			edgeKey := a.netNodeID + "|" + ctrID
+			if seenEdges[edgeKey] {
+				continue
+			}
+			seenEdges[edgeKey] = true
+			netUsage[a.netNodeID]++
+			// No label on network-container edges anymore — IPs moved to the
+			// container's details panel.
 			topo.Edges = append(topo.Edges, NetworkTopologyEdge{
-				Source: nodeID,
+				Source: a.netNodeID,
 				Target: ctrID,
 				Type:   "network-container",
-				Label:  ipLabel,
 			})
+		}
+		if len(attachments) == 0 {
+			edgeKey := hostNodeID + "|" + ctrID
+			if !seenEdges[edgeKey] {
+				seenEdges[edgeKey] = true
+				topo.Edges = append(topo.Edges, NetworkTopologyEdge{
+					Source: hostNodeID,
+					Target: ctrID,
+					Type:   "host-container",
+					Label:  c.HostConfig.NetworkMode,
+				})
+			}
 		}
 	}
 
-	// 3. Any container not attached to any known network (NetworkMode=host, none,
-	// or container:xxx) is still worth showing — we link it directly to the host.
-	for i := range containers {
-		c := &containers[i]
-		if attachedContainerIDs[c.ID] {
+	// 4. Host node goes first in the slice (prepend after we know the counters).
+	hostNode := NetworkTopologyNode{
+		ID:    hostNodeID,
+		Type:  "host",
+		Label: hostLabel,
+		Meta: map[string]any{
+			"networkCount":   len(nets),
+			"runningCount":   totalRunning,
+			"totalCount":     len(containers),
+			"includedCount":  totalIncluded,
+			"showInactive":   all,
+		},
+	}
+	topo.Nodes = append([]NetworkTopologyNode{hostNode}, topo.Nodes...)
+
+	// 5. Mark unused networks + add host→network edges (skipping isolated
+	// networks — by definition they have no route to the host).
+	for i, nd := range topo.Nodes {
+		if nd.Type != "network" {
 			continue
 		}
-		data := ctrByID[c.ID]
-		ctrID := "ct:" + c.ID
-		meta := map[string]any{
-			"name":        data.name,
-			"image":       data.image,
-			"state":       data.state,
-			"status":      data.status,
-			"networkMode": c.HostConfig.NetworkMode,
+		// Detect system defaults by name (same rule used in Search).
+		systemByName := false
+		switch nd.Label {
+		case "bridge", "host", "none", "docker_gwbridge", "ingress":
+			systemByName = true
 		}
-		if len(data.ports) > 0 {
-			meta["ports"] = data.ports
+		if netUsage[nd.ID] == 0 && !systemByName {
+			nd.Flags = append(nd.Flags, "unused")
+			topo.Nodes[i] = nd
 		}
-		flags := []string{}
-		if data.exposedPublic {
-			flags = append(flags, "exposed-public")
-		} else if data.localOnly {
-			flags = append(flags, "local-only")
+		isIsolated := false
+		for _, f := range nd.Flags {
+			if f == "isolated" {
+				isIsolated = true
+				break
+			}
 		}
-		topo.Nodes = append(topo.Nodes, NetworkTopologyNode{
-			ID:    ctrID,
-			Type:  "container",
-			Label: data.name,
-			Meta:  meta,
-			Flags: flags,
-		})
+		if isIsolated {
+			continue
+		}
+		// Label the host→network edge with the compose project (if any) so
+		// the stack membership is visible without polluting the network node
+		// label itself.
 		topo.Edges = append(topo.Edges, NetworkTopologyEdge{
 			Source: hostNodeID,
-			Target: ctrID,
-			Type:   "host-container",
-			Label:  c.HostConfig.NetworkMode,
+			Target: nd.ID,
+			Type:   "host-network",
+			Label:  netStackByNodeID[nd.ID],
 		})
 	}
 
@@ -294,6 +428,19 @@ type networkTopologyContainerData struct {
 	localOnly     bool
 }
 
+// isLoopback reports whether a bind IP is part of 127.0.0.0/8 (IPv4) or ::1 (IPv6).
+// Empty string and 0.0.0.0 / :: are NOT loopback — they bind to every interface.
+func isLoopback(ip string) bool {
+	if ip == "" {
+		return false
+	}
+	if ip == "::1" {
+		return true
+	}
+	// IPv4 loopback = 127.0.0.0/8 → any address starting with "127."
+	return strings.HasPrefix(ip, "127.")
+}
+
 func buildTopologyContainer(c *container.Summary) *networkTopologyContainerData {
 	name := ""
 	if len(c.Names) > 0 {
@@ -305,7 +452,10 @@ func buildTopologyContainer(c *container.Summary) *networkTopologyContainerData 
 		state:  c.State,
 		status: c.Status,
 	}
-	// Analyse port bindings.
+	// Analyse port bindings. A container is "exposed to the outside" when at
+	// least one published port is bound to a non-loopback IP (0.0.0.0, "" =
+	// all interfaces, or a specific public address). Loopback-only bindings
+	// (127.0.0.0/8 or ::1) are tagged "local-only" — safe from external reach.
 	hasPublished := false
 	allLoopback := true
 	for _, p := range c.Ports {
@@ -320,31 +470,16 @@ func buildTopologyContainer(c *container.Summary) *networkTopologyContainerData 
 			"type":        p.Type,
 		}
 		data.ports = append(data.ports, entry)
-		switch p.IP {
-		case "127.0.0.1", "::1":
-			// loopback-only, do nothing to allLoopback
-		default:
-			// any other binding (0.0.0.0, empty, specific public IP) breaks loopback-only.
+		if !isLoopback(p.IP) {
 			allLoopback = false
-		}
-		switch p.IP {
-		case "0.0.0.0", "", "::":
 			data.exposedPublic = true
 		}
 	}
 	if hasPublished && allLoopback {
 		data.localOnly = true
+		data.exposedPublic = false
 	}
 	return data
-}
-
-func findNode(nodes []NetworkTopologyNode, id string) (NetworkTopologyNode, bool) {
-	for _, n := range nodes {
-		if n.ID == id {
-			return n, true
-		}
-	}
-	return NetworkTopologyNode{}, false
 }
 
 type Network struct {
@@ -365,6 +500,7 @@ type Network struct {
 	Options    data.Options        `json:"options"`
 	Labels     data.Options        `json:"labels"`
 	Containers []*NetworkContainer `json:"containers"`
+	Unused     bool                `json:"unused"`
 }
 
 type IPAMConfig struct {
