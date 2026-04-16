@@ -106,7 +106,8 @@ func networkTopology(nb biz.NetworkBiz) web.HandlerFunc {
 			// handler drop-in friendly.
 			hostID = c.Query("node")
 		}
-		topo, err := nb.Topology(ctx, hostID)
+		all := c.Query("all") == "true" || c.Query("all") == "1"
+		topo, err := nb.Topology(ctx, hostID, all)
 		if err != nil {
 			return err
 		}

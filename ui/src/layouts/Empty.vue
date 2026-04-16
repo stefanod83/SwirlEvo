@@ -36,6 +36,6 @@ const themeVars = useThemeVars()
 <style scoped>
 .content {
   padding: 48px 24px;
-  overflow-x: scroll;
+  overflow-x: auto;
 }
 </style>

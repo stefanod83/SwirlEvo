@@ -39,6 +39,6 @@ const isMobile = useIsMobile()
 <style scoped>
 .content {
   padding: 48px 24px;
-  overflow-x: scroll;
+  overflow-x: auto;
 }
 </style>

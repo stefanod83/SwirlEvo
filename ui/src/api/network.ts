@@ -34,6 +34,7 @@ export interface Network {
         ipv4: string;
         ipv6: string;
     }[];
+    unused?: boolean;
 }
 
 export interface FindResult {
@@ -83,8 +84,8 @@ export class NetworkApi {
         return ajax.post<Result<Object>>('/network/disconnect', { networkId, networkName, container })
     }
 
-    topology(hostId: string) {
-        return ajax.get<NetworkTopology>('/network/topology', { hostId })
+    topology(hostId: string, all: boolean = false) {
+        return ajax.get<NetworkTopology>('/network/topology', { hostId, all: all ? 'true' : '' })
     }
 }
 

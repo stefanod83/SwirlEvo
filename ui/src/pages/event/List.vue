@@ -45,7 +45,8 @@
 </template>
 
 <script setup lang="ts">
-import { h, reactive, ref } from "vue";
+import { computed, h, reactive, ref } from "vue";
+import { useStore } from "vuex";
 import {
   NSpace,
   NButton,
@@ -148,6 +149,22 @@ const types: any = [
     ],
   },
 ]
+const store = useStore()
+const hostNameById = computed<Record<string, string>>(() => {
+  const out: Record<string, string> = {}
+  for (const h of (store.state.hosts || []) as Array<{ id: string; name: string }>) {
+    out[h.id] = h.name
+  }
+  return out
+})
+
+function renderHost(e: Event) {
+  const id = e.args?.node
+  if (!id) return null
+  const name = hostNameById.value[id] || id
+  return renderTag(name, 'info')
+}
+
 const columns = [
   {
     title: t('fields.id'),
@@ -173,6 +190,11 @@ const columns = [
     title: t('fields.object'),
     key: "name",
     render: renderObject,
+  },
+  {
+    title: t('objects.host', 1),
+    key: "host",
+    render: renderHost,
   },
   {
     title: t('fields.operator'),

@@ -26,7 +26,10 @@
       <tbody>
         <tr v-for="(r, index) of model" :key="r.name">
           <td>
-            <x-anchor :url="{ name: 'network_detail', params: { name: r.name } }">{{ r.name }}</x-anchor>
+            <n-space :size="6" align="center" inline>
+              <x-anchor :url="{ name: 'network_detail', params: { name: r.name } }">{{ r.name }}</x-anchor>
+              <n-tag v-if="r.unused" round size="small" type="warning">{{ t('fields.unused') }}</n-tag>
+            </n-space>
           </td>
           <td>{{ r.id }}</td>
           <td>

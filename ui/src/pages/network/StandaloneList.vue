@@ -46,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, h, onMounted, ref, watch } from "vue";
 import {
   NSpace, NButton, NDataTable, NIcon,
   NTabs, NTabPane,
@@ -104,7 +104,16 @@ async function bulkDelete() {
 
 const columns: any[] = [
   { type: 'selection' },
-  { title: t('fields.name'), key: 'name' },
+  {
+    title: t('fields.name'),
+    key: 'name',
+    render: (r: Network) => h(NSpace, { size: 6, inline: true, align: 'center' }, {
+      default: () => [
+        r.name,
+        r.unused ? renderTag(t('fields.unused'), 'warning') : null,
+      ],
+    }),
+  },
   { title: t('fields.id'), key: 'id' },
   {
     title: t('fields.scope'),
