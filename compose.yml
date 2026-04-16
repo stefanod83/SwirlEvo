@@ -86,6 +86,7 @@ services:
       - AGENTS=swirl-dev_manager_agent,swirl-dev_worker_agent
       - DB_ADDRESS=mongodb://mongodb:27017/swirl
       - DOCKER_ENDPOINT=tcp://manager_agent:2375
+      - SWIRL_BACKUP_KEY=${SWIRL_BACKUP_KEY}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /mnt/gluster/managers/containers/swirl-dev/data:/data/swirl

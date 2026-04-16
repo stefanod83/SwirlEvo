@@ -17,6 +17,7 @@ services:
     environment:
       - MODE=standalone
       - DB_ADDRESS=mongodb://mongodb:27017/swirl
+      - SWIRL_BACKUP_KEY=${SWIRL_BACKUP_KEY}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:

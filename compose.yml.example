@@ -7,6 +7,7 @@ services:
       DB_ADDRESS: mongodb://<database_address>
       DOCKER_ENDPOINT: tcp://swirl_manager_agent:2375
       AGENTS: swirl_manager_agent,swirl_worker_agent
+      SWIRL_BACKUP_KEY: ${SWIRL_BACKUP_KEY}
     networks:
       - net
     ports:
