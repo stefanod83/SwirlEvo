@@ -31,6 +31,12 @@ var Resources = map[string]uint64{
 	"setting":   1 << 16,
 	"host":      1 << 17,
 	"backup":    1 << 18,
+	// Grants access to Vault connection settings + test endpoint. Separate
+	// from vault_secret so ops admins can manage the infrastructure without
+	// seeing or editing individual secret catalog entries.
+	"vault": 1 << 19,
+	// vault_secret catalog — stores references to KVv2 entries, never values.
+	"vault_secret": 1 << 20,
 }
 
 // Actions holds all actions requiring authorization. Up to 24 actions are supported.
@@ -48,6 +54,7 @@ var Actions = map[string]uint64{
 	"execute":    1 << 9,
 	"restore":    1 << 10,
 	"download":   1 << 11,
+	"admin":      1 << 12,
 }
 
 var Perms = map[string][]string{
@@ -70,6 +77,9 @@ var Perms = map[string][]string{
 	"setting":   {"view", "edit"},
 	"host":      {"view", "edit", "delete"},
 	"backup":    {"view", "edit", "delete", "restore", "download"},
+	// vault.admin guards Vault connection settings + test endpoint.
+	"vault":        {"admin"},
+	"vault_secret": {"view", "edit", "delete"},
 }
 
 type Authorizer struct {

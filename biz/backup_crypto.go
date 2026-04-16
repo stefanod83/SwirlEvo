@@ -2,12 +2,16 @@ package biz
 
 import (
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"sync"
+	"time"
 
 	"golang.org/x/crypto/scrypt"
 )
@@ -33,9 +37,64 @@ var (
 	errDecrypt       = errors.New("backup decryption failed — wrong key or corrupted data")
 )
 
-// backupKeyConfigured reports whether the master key env var is set and long enough.
+// BackupKeyProvider lets an external subsystem (e.g. Vault) supply the
+// backup passphrase when the SWIRL_BACKUP_KEY env var is unset. The
+// provider is consulted only when env is empty; env always wins.
+//
+// Lookup returns the passphrase as a string and a logical source tag for
+// logs/diagnostics ("vault", "env", ...). Errors are surfaced verbatim so
+// operators can see why the fallback failed.
+type BackupKeyProvider interface {
+	Lookup(ctx context.Context) (passphrase string, source string, err error)
+}
+
+var (
+	backupKeyProvider   BackupKeyProvider
+	backupKeyProviderMu sync.RWMutex
+
+	backupKeyCache        string
+	backupKeyCacheExpires time.Time
+	backupKeyCacheMu      sync.RWMutex
+)
+
+// SetBackupKeyProvider wires a fallback provider (typically the Vault
+// client) to be used when SWIRL_BACKUP_KEY is absent from the environment.
+// Passing nil removes any previously installed provider.
+func SetBackupKeyProvider(p BackupKeyProvider) {
+	backupKeyProviderMu.Lock()
+	backupKeyProvider = p
+	backupKeyProviderMu.Unlock()
+	// Invalidate any cached passphrase so the new provider is consulted
+	// on the next operation.
+	backupKeyCacheMu.Lock()
+	backupKeyCache = ""
+	backupKeyCacheExpires = time.Time{}
+	backupKeyCacheMu.Unlock()
+}
+
+// backupKeyConfigured reports whether a master key is currently available,
+// either via environment or via a cached/fetchable provider response.
+// A negative result here is the same "skip scheduled backups" signal used
+// historically — but now it also returns true when a Vault provider can
+// supply the key, without requiring an operator env var.
 func backupKeyConfigured() bool {
-	return len(os.Getenv(backupKeyEnv)) >= backupKeyMinLen
+	if len(os.Getenv(backupKeyEnv)) >= backupKeyMinLen {
+		return true
+	}
+	// Check cache first — cheap, avoids hammering Vault on every scheduler tick.
+	backupKeyCacheMu.RLock()
+	if backupKeyCache != "" && (backupKeyCacheExpires.IsZero() || time.Now().Before(backupKeyCacheExpires)) {
+		backupKeyCacheMu.RUnlock()
+		return len(backupKeyCache) >= backupKeyMinLen
+	}
+	backupKeyCacheMu.RUnlock()
+	// Attempt a provider fetch (best-effort). If this succeeds we also
+	// populate the cache for the actual encrypt/decrypt calls.
+	pw, err := fetchFromProvider()
+	if err != nil {
+		return false
+	}
+	return len(pw) >= backupKeyMinLen
 }
 
 // deriveKey runs scrypt over a passphrase with the given salt.
@@ -43,12 +102,55 @@ func deriveKey(passphrase, salt []byte) ([]byte, error) {
 	return scrypt.Key(passphrase, salt, scryptN, scryptR, scryptP, aesKeyLen)
 }
 
+// masterKey returns the derived AES key used for at-rest backup encryption.
+// Source order: (1) SWIRL_BACKUP_KEY env, (2) in-memory cache, (3) Vault
+// provider. Once fetched from Vault, the plaintext passphrase is cached
+// for a short TTL so the scheduler can keep running even if Vault blips.
 func masterKey() ([]byte, error) {
-	pw := os.Getenv(backupKeyEnv)
+	if pw := os.Getenv(backupKeyEnv); len(pw) >= backupKeyMinLen {
+		return deriveKey([]byte(pw), []byte(backupSaltAtRest))
+	}
+	// Try cache.
+	backupKeyCacheMu.RLock()
+	cached := backupKeyCache
+	fresh := !backupKeyCacheExpires.IsZero() && time.Now().Before(backupKeyCacheExpires)
+	backupKeyCacheMu.RUnlock()
+	if cached != "" && fresh {
+		return deriveKey([]byte(cached), []byte(backupSaltAtRest))
+	}
+	// Fetch from provider.
+	pw, err := fetchFromProvider()
+	if err != nil {
+		return nil, err
+	}
 	if len(pw) < backupKeyMinLen {
-		return nil, errMissingKey
+		return nil, fmt.Errorf("%w: provider returned a passphrase shorter than %d bytes", errMissingKey, backupKeyMinLen)
 	}
 	return deriveKey([]byte(pw), []byte(backupSaltAtRest))
+}
+
+// fetchFromProvider runs the installed provider (if any), stores the
+// result in cache, and returns the passphrase.
+func fetchFromProvider() (string, error) {
+	backupKeyProviderMu.RLock()
+	p := backupKeyProvider
+	backupKeyProviderMu.RUnlock()
+	if p == nil {
+		return "", errMissingKey
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pw, _, err := p.Lookup(ctx)
+	if err != nil {
+		return "", fmt.Errorf("backup key provider: %w", err)
+	}
+	// Cache for 5 minutes; short enough to pick up rotation reasonably fast,
+	// long enough to keep the scheduler working across transient Vault outages.
+	backupKeyCacheMu.Lock()
+	backupKeyCache = pw
+	backupKeyCacheExpires = time.Now().Add(5 * time.Minute)
+	backupKeyCacheMu.Unlock()
+	return pw, nil
 }
 
 func aesGCM(key []byte) (cipher.AEAD, error) {

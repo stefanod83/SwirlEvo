@@ -67,4 +67,12 @@ export const perms = [
         key: 'setting',
         actions: ['view', 'edit'],
     },
+    {
+        key: 'vault',
+        actions: ['admin'],
+    },
+    {
+        key: 'vault_secret',
+        actions: ['view', 'edit', 'delete'],
+    },
 ]

@@ -335,3 +335,85 @@ type BackupSchedule struct {
 	CreatedAt time.Time  `json:"createdAt" bson:"created_at"`
 	UpdatedAt time.Time  `json:"updatedAt" bson:"updated_at"`
 }
+
+// VaultSecret is a catalog entry that points at a secret stored inside
+// HashiCorp Vault. The catalog is used to emulate Docker Swarm secrets on
+// standalone Docker hosts: stacks reference these entries by ID and Swirl
+// resolves the current value from Vault at deploy time.
+//
+// Only references are persisted. The actual secret value never hits the
+// Swirl database and is never included in backups.
+type VaultSecret struct {
+	ID          string            `json:"id" bson:"_id"`
+	Name        string            `json:"name" bson:"name" valid:"required"`
+	Description string            `json:"desc,omitempty" bson:"desc,omitempty"`
+	// Path is the entry name below the configured global prefix
+	// (Settings.Vault.KVPrefix). For example, if prefix = "swirl/" and
+	// Path = "myapp/db", the fetch URL is <mount>/data/swirl/myapp/db.
+	Path string `json:"path" bson:"path" valid:"required"`
+	// Field selects a single field inside the KVv2 entry. When empty the
+	// *entire* JSON object is marshalled as the secret value (useful for
+	// consumers that expect to parse a JSON blob).
+	Field  string            `json:"field,omitempty" bson:"field,omitempty"`
+	Labels map[string]string `json:"labels,omitempty" bson:"labels,omitempty"`
+	CreatedAt Time     `json:"createdAt" bson:"created_at"`
+	UpdatedAt Time     `json:"updatedAt" bson:"updated_at"`
+	CreatedBy Operator `json:"createdBy" bson:"created_by"`
+	UpdatedBy Operator `json:"updatedBy" bson:"updated_by"`
+}
+
+type VaultSecretSearchArgs struct {
+	Name      string `bind:"name"`
+	PageIndex int    `bind:"pageIndex"`
+	PageSize  int    `bind:"pageSize"`
+}
+
+// ComposeStackSecretBinding attaches a VaultSecret catalog entry to a compose
+// stack deployed on a standalone host, describing how the secret value should
+// be materialized inside a container at deploy time.
+//
+// The binding never stores the secret value. At deploy time Swirl resolves the
+// value from Vault, materializes it according to StorageMode, and records a
+// SHA-256 hash (DeployedHash) for drift detection on the next restart.
+type ComposeStackSecretBinding struct {
+	ID            string `json:"id" bson:"_id"`
+	StackID       string `json:"stackId" bson:"stack_id" valid:"required"`
+	VaultSecretID string `json:"vaultSecretId" bson:"vault_secret_id" valid:"required"`
+	// Service name inside the compose file this binding applies to.
+	// Empty string means "all services" (useful when a stack has a single
+	// service and the user doesn't want to type the name).
+	Service string `json:"service,omitempty" bson:"service,omitempty"`
+	// TargetType selects the injection mechanism: "file" mounts the secret
+	// value as a file inside the container; "env" exposes it as an
+	// environment variable. Environment injection is convenient but the
+	// value shows up in `docker inspect` output, so "file" is preferred
+	// for production.
+	TargetType string `json:"targetType" bson:"target_type" valid:"required"` // file | env
+	// TargetPath is the path inside the container where the secret file is
+	// mounted (used when TargetType == "file"). Typical value:
+	// "/run/secrets/db_password".
+	TargetPath string `json:"targetPath,omitempty" bson:"target_path,omitempty"`
+	// EnvName is the environment variable name (used when TargetType == "env").
+	EnvName string `json:"envName,omitempty" bson:"env_name,omitempty"`
+	// File mode / ownership — applied only when TargetType == "file".
+	UID  int    `json:"uid,omitempty" bson:"uid,omitempty"`
+	GID  int    `json:"gid,omitempty" bson:"gid,omitempty"`
+	Mode string `json:"mode,omitempty" bson:"mode,omitempty"` // octal, e.g. "0400"
+	// StorageMode controls where the materialized secret lives on the host:
+	//   - "tmpfs":   a tmpfs mount backing a single file in the container
+	//     (cleanest, value never touches the host disk).
+	//   - "volume":  a project-scoped named volume populated before start
+	//     (persists across restarts, preserved on redeploy).
+	//   - "init":    a sidecar init container writes the file into a shared
+	//     volume before the service container starts.
+	// Ignored when TargetType == "env".
+	StorageMode string `json:"storageMode" bson:"storage_mode"` // tmpfs | volume | init
+	// DeployedHash is the SHA-256 of the value that was materialized at the
+	// last successful Deploy. Used by the drift check at restart.
+	DeployedHash string `json:"deployedHash,omitempty" bson:"deployed_hash,omitempty"`
+	DeployedAt   Time   `json:"deployedAt,omitempty" bson:"deployed_at,omitempty"`
+	CreatedAt    Time   `json:"createdAt" bson:"created_at"`
+	UpdatedAt    Time   `json:"updatedAt" bson:"updated_at"`
+	CreatedBy    Operator `json:"createdBy" bson:"created_by"`
+	UpdatedBy    Operator `json:"updatedBy" bson:"updated_by"`
+}

@@ -5,6 +5,26 @@ export interface Setting {
     keycloak: KeycloakSetting;
     metric: MetricSetting;
     deploy: DeployOptions;
+    vault: VaultSetting;
+}
+
+export interface VaultSetting {
+    enabled: boolean;
+    address: string;
+    namespace: string;
+    auth_method: 'token' | 'approle';
+    token: string;
+    approle_path: string;
+    role_id: string;
+    secret_id: string;
+    kv_mount: string;
+    kv_prefix: string;
+    backup_key_path: string;
+    backup_key_field: string;
+    default_storage_mode: 'tmpfs' | 'volume' | 'init';
+    tls_skip_verify: boolean;
+    ca_cert: string;
+    request_timeout: number;
 }
 
 export interface KeycloakGroupRole {

@@ -55,4 +55,7 @@ func init() {
 	container.Put(NewHost, container.Name("api.host"))
 	container.Put(NewComposeStack, container.Name("api.compose-stack"))
 	container.Put(NewBackup, container.Name("api.backup"))
+	container.Put(NewVault, container.Name("api.vault"))
+	container.Put(NewVaultSecret, container.Name("api.vault-secret"))
+	container.Put(NewComposeStackSecret, container.Name("api.compose-stack-secret"))
 }

@@ -23,12 +23,13 @@ func NewScheduler(b biz.BackupBiz) *Scheduler {
 	return &Scheduler{b: b, logger: log.Get(Name)}
 }
 
-// Start launches the hourly ticker. A missing or short SWIRL_BACKUP_KEY
-// is logged as a warning; the ticker still runs, but each tick will skip
-// actual archive creation until the key is configured.
+// Start launches the hourly ticker. If neither the SWIRL_BACKUP_KEY env
+// var nor the Vault fallback yields a usable passphrase, a warning is
+// logged; the ticker still runs, but each tick skips archive creation
+// until a key becomes available.
 func (s *Scheduler) Start() {
 	if !s.b.KeyConfigured() {
-		s.logger.Warn("SWIRL_BACKUP_KEY is not configured — scheduled backups will be skipped")
+		s.logger.Warn("backup passphrase is not available — set SWIRL_BACKUP_KEY or configure Vault with backup_key_path. Scheduled backups will be skipped.")
 	}
 	run.Schedule(time.Hour, s.tick, func(e interface{}) {
 		s.logger.Error("backup scheduler panic: ", e)
@@ -62,7 +63,9 @@ func (s *Scheduler) tick() {
 	}
 }
 
-// Start is the hook called from main.Pipeline.
+// Start is the hook called from main.Pipeline. The Vault-backed fallback for
+// SWIRL_BACKUP_KEY is installed earlier by main.initBackupKeyProvider — here
+// we only need to launch the scheduler.
 func Start() error {
 	s, err := container.TryFind(Name)
 	if err == nil {

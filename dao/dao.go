@@ -104,6 +104,22 @@ type Interface interface {
 	BackupScheduleUpsert(ctx context.Context, schedule *BackupSchedule) error
 	BackupScheduleDelete(ctx context.Context, id string) error
 	BackupScheduleTouch(ctx context.Context, id string, lastRunAt time.Time) error
+
+	VaultSecretGet(ctx context.Context, id string) (*VaultSecret, error)
+	VaultSecretGetByName(ctx context.Context, name string) (*VaultSecret, error)
+	VaultSecretGetAll(ctx context.Context) ([]*VaultSecret, error)
+	VaultSecretSearch(ctx context.Context, args *VaultSecretSearchArgs) (items []*VaultSecret, count int, err error)
+	VaultSecretCreate(ctx context.Context, secret *VaultSecret) error
+	VaultSecretUpdate(ctx context.Context, secret *VaultSecret) error
+	VaultSecretDelete(ctx context.Context, id string) error
+
+	ComposeStackSecretBindingGet(ctx context.Context, id string) (*ComposeStackSecretBinding, error)
+	ComposeStackSecretBindingGetByStack(ctx context.Context, stackID string) ([]*ComposeStackSecretBinding, error)
+	ComposeStackSecretBindingGetByVaultSecret(ctx context.Context, vaultSecretID string) ([]*ComposeStackSecretBinding, error)
+	ComposeStackSecretBindingGetAll(ctx context.Context) ([]*ComposeStackSecretBinding, error)
+	ComposeStackSecretBindingUpsert(ctx context.Context, binding *ComposeStackSecretBinding) error
+	ComposeStackSecretBindingDelete(ctx context.Context, id string) error
+	ComposeStackSecretBindingDeleteByStack(ctx context.Context, stackID string) error
 }
 
 func newInterface() (i Interface) {

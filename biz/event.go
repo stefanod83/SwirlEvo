@@ -30,7 +30,8 @@ const (
 	EventTypeChart     EventType = "Chart"
 	EventTypeSetting   EventType = "Setting"
 	EventTypeHost      EventType = "Host"
-	EventTypeBackup    EventType = "Backup"
+	EventTypeBackup      EventType = "Backup"
+	EventTypeVaultSecret EventType = "VaultSecret"
 )
 
 type EventAction string
@@ -77,6 +78,7 @@ type EventBiz interface {
 	CreateSetting(action EventAction, user web.User)
 	CreateHost(action EventAction, id, name string, user web.User)
 	CreateBackup(action EventAction, id, name string, user web.User)
+	CreateVaultSecret(action EventAction, id, name string, user web.User)
 }
 
 func NewEvent(d dao.Interface) EventBiz {
@@ -206,4 +208,9 @@ func (b *eventBiz) CreateHost(action EventAction, id, name string, user web.User
 func (b *eventBiz) CreateBackup(action EventAction, id, name string, user web.User) {
 	args := data.Map{"id": id, "name": name}
 	b.create(EventTypeBackup, action, args, user)
+}
+
+func (b *eventBiz) CreateVaultSecret(action EventAction, id, name string, user web.User) {
+	args := data.Map{"id": id, "name": name}
+	b.create(EventTypeVaultSecret, action, args, user)
 }

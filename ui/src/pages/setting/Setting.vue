@@ -247,6 +247,135 @@
       </n-form>
     </x-panel>
     <x-panel
+      title="HashiCorp Vault"
+      :subtitle="t('tips.vault')"
+      divider="bottom"
+      :collapsed="panel !== 'vault'"
+    >
+      <template #action>
+        <n-button
+          secondary
+          strong
+          class="toggle"
+          size="small"
+          @click="togglePanel('vault')"
+        >{{ panel === 'vault' ? t('buttons.collapse') : t('buttons.expand') }}</n-button>
+      </template>
+      <n-alert type="info" style="margin: 4px 0 12px 0">
+        {{ t('tips.vault_setup') }}
+      </n-alert>
+      <n-form
+        :model="setting"
+        ref="formVault"
+        label-placement="left"
+        style="padding: 4px 0 0 12px"
+        label-width="auto"
+      >
+        <n-form-item :label="t('fields.enabled')" path="vault.enabled" label-align="right">
+          <n-switch v-model:value="setting.vault.enabled" />
+        </n-form-item>
+        <n-form-item :label="t('fields.address')" path="vault.address" label-align="right">
+          <n-input placeholder="https://vault.example.com:8200" v-model:value="setting.vault.address" />
+        </n-form-item>
+        <n-form-item :label="t('fields.namespace')" path="vault.namespace" label-align="right">
+          <n-input :placeholder="t('tips.vault_namespace')" v-model:value="setting.vault.namespace" />
+        </n-form-item>
+        <n-form-item :label="t('fields.auth_method')" path="vault.auth_method">
+          <n-radio-group v-model:value="setting.vault.auth_method">
+            <n-radio value="token">Token</n-radio>
+            <n-radio value="approle">AppRole</n-radio>
+          </n-radio-group>
+        </n-form-item>
+        <n-form-item
+          :label="t('fields.token')"
+          path="vault.token"
+          label-align="right"
+          v-show="setting.vault.auth_method === 'token'"
+        >
+          <n-input
+            type="password"
+            show-password-on="click"
+            :placeholder="t('tips.vault_token')"
+            v-model:value="setting.vault.token"
+          />
+        </n-form-item>
+        <n-form-item
+          :label="t('fields.approle_path')"
+          path="vault.approle_path"
+          label-align="right"
+          v-show="setting.vault.auth_method === 'approle'"
+        >
+          <n-input placeholder="approle" v-model:value="setting.vault.approle_path" />
+        </n-form-item>
+        <n-form-item
+          :label="t('fields.role_id')"
+          path="vault.role_id"
+          label-align="right"
+          v-show="setting.vault.auth_method === 'approle'"
+        >
+          <n-input v-model:value="setting.vault.role_id" />
+        </n-form-item>
+        <n-form-item
+          :label="t('fields.secret_id')"
+          path="vault.secret_id"
+          label-align="right"
+          v-show="setting.vault.auth_method === 'approle'"
+        >
+          <n-input
+            type="password"
+            show-password-on="click"
+            v-model:value="setting.vault.secret_id"
+          />
+        </n-form-item>
+        <n-form-item :label="t('fields.kv_mount')" path="vault.kv_mount" label-align="right">
+          <n-input placeholder="secret" v-model:value="setting.vault.kv_mount" />
+        </n-form-item>
+        <n-form-item :label="t('fields.kv_prefix')" path="vault.kv_prefix" label-align="right">
+          <n-input placeholder="swirl/" v-model:value="setting.vault.kv_prefix" />
+        </n-form-item>
+        <n-form-item :label="t('fields.backup_key_path')" path="vault.backup_key_path" label-align="right">
+          <n-input placeholder="backup-key" v-model:value="setting.vault.backup_key_path" />
+        </n-form-item>
+        <n-form-item :label="t('fields.backup_key_field')" path="vault.backup_key_field" label-align="right">
+          <n-input placeholder="value" v-model:value="setting.vault.backup_key_field" />
+        </n-form-item>
+        <n-form-item :label="t('fields.default_storage_mode')" path="vault.default_storage_mode">
+          <n-radio-group v-model:value="setting.vault.default_storage_mode">
+            <n-radio value="tmpfs">{{ t('enums.storage_tmpfs') }}</n-radio>
+            <n-radio value="volume">{{ t('enums.storage_volume') }}</n-radio>
+            <n-radio value="init">{{ t('enums.storage_init') }}</n-radio>
+          </n-radio-group>
+        </n-form-item>
+        <n-form-item :label="t('fields.tls_skip_verify')" path="vault.tls_skip_verify" label-align="right">
+          <n-switch v-model:value="setting.vault.tls_skip_verify" />
+        </n-form-item>
+        <n-form-item :label="t('fields.ca_cert')" path="vault.ca_cert" label-align="right">
+          <n-input
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 8 }"
+            placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+            v-model:value="setting.vault.ca_cert"
+          />
+        </n-form-item>
+        <n-form-item :label="t('fields.request_timeout')" path="vault.request_timeout" label-align="right">
+          <n-input-number
+            :min="1"
+            :max="120"
+            v-model:value="setting.vault.request_timeout"
+          />
+        </n-form-item>
+        <n-space>
+          <n-button type="primary" @click="() => save('vault', setting.vault)">{{ t('buttons.save') }}</n-button>
+          <n-button :loading="vaultTesting" @click="testVault">{{ t('buttons.test_connection') }}</n-button>
+        </n-space>
+        <n-alert
+          v-if="vaultTestMsg"
+          :type="vaultTestType"
+          style="margin-top: 12px"
+        >{{ vaultTestMsg }}</n-alert>
+      </n-form>
+    </x-panel>
+    <x-panel
       :title="t('fields.monitor')"
       :subtitle="t('tips.monitor')"
       :collapsed="panel !== 'metric'"
@@ -288,6 +417,7 @@ import {
   NInput,
   NInputGroup,
   NInputGroupLabel,
+  NInputNumber,
   NForm,
   NFormItem,
   NFormItemGi,
@@ -302,6 +432,7 @@ import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import settingApi from "@/api/setting";
 import type { Setting } from "@/api/setting";
+import vaultApi from "@/api/vault";
 import roleApi from "@/api/role";
 import { useI18n } from 'vue-i18n'
 
@@ -327,10 +458,31 @@ const setting = ref({
   },
   metric: {},
   deploy: {},
+  vault: {
+    enabled: false,
+    address: '',
+    namespace: '',
+    auth_method: 'token',
+    token: '',
+    approle_path: 'approle',
+    role_id: '',
+    secret_id: '',
+    kv_mount: 'secret',
+    kv_prefix: 'swirl/',
+    backup_key_path: 'backup-key',
+    backup_key_field: 'value',
+    default_storage_mode: 'tmpfs',
+    tls_skip_verify: false,
+    ca_cert: '',
+    request_timeout: 10,
+  },
 } as Setting);
 const panel = ref('')
 const roleOptions = ref<{ label: string; value: string }[]>([])
 const groupRolePairs = ref<{ group: string; role: string }[]>([])
+const vaultTesting = ref(false)
+const vaultTestMsg = ref('')
+const vaultTestType = ref<'success' | 'error' | 'warning' | 'info'>('info')
 
 const computedRedirectURI = computed(() => {
   return window.location.origin + '/api/auth/keycloak/callback'
@@ -371,6 +523,30 @@ async function save(id: string, options: any) {
   window.message.info(t('texts.action_success'));
 }
 
+async function testVault() {
+  // Persist current edits first so the backend tests the in-UI values.
+  // This mirrors what the Save button would do for the vault section only.
+  vaultTesting.value = true
+  vaultTestMsg.value = ''
+  try {
+    await settingApi.save('vault', setting.value.vault)
+    const r = await vaultApi.test()
+    const res = r.data?.data
+    if (res?.ok) {
+      vaultTestType.value = 'success'
+      vaultTestMsg.value = t('texts.vault_test_ok') + (res.version ? ` (v${res.version})` : '')
+    } else {
+      vaultTestType.value = 'error'
+      vaultTestMsg.value = `[${res?.stage || 'error'}] ${res?.error || t('texts.vault_test_failed')}`
+    }
+  } catch (e: any) {
+    vaultTestType.value = 'error'
+    vaultTestMsg.value = e?.message || t('texts.vault_test_failed')
+  } finally {
+    vaultTesting.value = false
+  }
+}
+
 async function fetchData() {
   let r = (await settingApi.load()).data as Setting;
   setting.value = Object.assign(setting.value, r)
@@ -394,6 +570,28 @@ async function fetchData() {
   }
   const map = setting.value.keycloak.group_role_map || {}
   groupRolePairs.value = Object.keys(map).map(g => ({ group: g, role: map[g] }))
+
+  // hydrate vault defaults if missing in persisted blob
+  if (!setting.value.vault) {
+    setting.value.vault = {
+      enabled: false,
+      address: '',
+      namespace: '',
+      auth_method: 'token',
+      token: '',
+      approle_path: 'approle',
+      role_id: '',
+      secret_id: '',
+      kv_mount: 'secret',
+      kv_prefix: 'swirl/',
+      backup_key_path: 'backup-key',
+      backup_key_field: 'value',
+      default_storage_mode: 'tmpfs',
+      tls_skip_verify: false,
+      ca_cert: '',
+      request_timeout: 10,
+    }
+  }
 
   // load roles for the dropdown
   try {

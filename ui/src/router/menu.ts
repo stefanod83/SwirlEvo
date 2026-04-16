@@ -156,6 +156,12 @@ const systemItem = (): MenuOption => ({
       path: "/system/backup",
       icon: renderIcon(CloudUploadOutline),
     },
+    {
+      label: t('objects.vault_secret', 2),
+      key: "vault_secret_list",
+      path: "/vault/secrets",
+      icon: renderIcon(DocumentLockOutline),
+    },
   ],
 })
 

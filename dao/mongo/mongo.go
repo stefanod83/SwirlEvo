@@ -43,6 +43,16 @@ var indexes = map[string][]mongo.IndexModel{
 			Options: options.Index().SetExpireAfterSeconds(3600),
 		},
 	},
+	"vault_secret": {
+		mongo.IndexModel{
+			Keys:    bson.D{{"name", 1}},
+			Options: options.Index().SetUnique(true),
+		},
+	},
+	"compose_stack_secret_binding": {
+		mongo.IndexModel{Keys: bson.D{{"stack_id", 1}}},
+		mongo.IndexModel{Keys: bson.D{{"vault_secret_id", 1}}},
+	},
 }
 
 type Dao struct {

@@ -25,6 +25,7 @@ import (
 	_ "github.com/cuigh/swirl/dao/mongo"
 	"github.com/cuigh/swirl/misc"
 	"github.com/cuigh/swirl/scaler"
+	"github.com/cuigh/swirl/vault"
 )
 
 var (
@@ -37,7 +38,7 @@ func main() {
 	app.Version = "2.0.0rc1"
 	app.Desc = "A web management UI for Docker, focused on swarm cluster"
 	app.Action = func(ctx *app.Context) error {
-		return run.Pipeline(misc.LoadOptions, initSystem, scaler.Start, backup.Start, startServer)
+		return run.Pipeline(misc.LoadOptions, initSystem, initBackupKeyProvider, scaler.Start, backup.Start, startServer)
 	}
 	app.Flags.Register(flag.All)
 	app.Start()
@@ -104,6 +105,20 @@ func initSystem() error {
 		defer cancel()
 
 		return b.Init(ctx)
+	})
+}
+
+// initBackupKeyProvider installs the Vault-backed fallback for
+// SWIRL_BACKUP_KEY. Runs after Settings are loaded but before the backup
+// scheduler starts, so the very first scheduler tick can already source the
+// passphrase from Vault when env is empty. A missing/invalid Vault config is
+// not fatal — masterKey() will simply fall back to errMissingKey.
+func initBackupKeyProvider() error {
+	return container.Call(func(c *vault.Client, s *misc.Setting) {
+		if c == nil {
+			return
+		}
+		biz.SetBackupKeyProvider(vault.NewBackupKeyProvider(c, func() *misc.Setting { return s }))
 	})
 }
 

@@ -46,6 +46,13 @@ const (
 	ComponentHosts         = "hosts"
 	ComponentCharts        = "charts"
 	ComponentEvents        = "events"
+	// VaultSecrets only persists *references* (mount/prefix/path/field).
+	// Secret values never leave Vault and must not be included in backups.
+	ComponentVaultSecrets = "vaultSecrets"
+	// ComposeStackSecretBindings are stack-to-secret references. Like
+	// VaultSecrets they carry no secret values — only the mapping between
+	// a compose stack and a catalog entry, plus injection metadata.
+	ComponentComposeStackSecretBindings = "composeStackSecretBindings"
 )
 
 // AllBackupComponents lists every restorable component. The order matters: it
@@ -59,6 +66,8 @@ var AllBackupComponents = []string{
 	ComponentComposeStacks,
 	ComponentHosts,
 	ComponentCharts,
+	ComponentVaultSecrets,
+	ComponentComposeStackSecretBindings,
 	ComponentEvents,
 }
 
@@ -75,7 +84,14 @@ type BackupDocument struct {
 	ComposeStacks []*dao.ComposeStack `json:"composeStacks,omitempty"`
 	Hosts         []*hostExport       `json:"hosts,omitempty"`
 	Charts        []*dao.Chart        `json:"charts,omitempty"`
-	Events        []*dao.Event        `json:"events,omitempty"`
+	// VaultSecrets stores catalog references only (name/path/field/labels).
+	// Values live exclusively inside Vault and are resolved on demand.
+	VaultSecrets []*dao.VaultSecret `json:"vaultSecrets,omitempty"`
+	// ComposeStackSecretBindings tie a compose stack to a VaultSecret plus
+	// injection metadata (target path/env, ownership, storage mode). Never
+	// contain the secret value.
+	ComposeStackSecretBindings []*dao.ComposeStackSecretBinding `json:"composeStackSecretBindings,omitempty"`
+	Events                     []*dao.Event                     `json:"events,omitempty"`
 }
 
 // userExport is a JSON-only projection of dao.User that includes the
@@ -536,6 +552,18 @@ func (b *backupBiz) exportDocument(ctx context.Context) (*BackupDocument, error)
 	}
 	doc.Charts = filtered
 
+	vaultSecrets, err := b.d.VaultSecretGetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	doc.VaultSecrets = vaultSecrets
+
+	bindings, err := b.d.ComposeStackSecretBindingGetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	doc.ComposeStackSecretBindings = bindings
+
 	return doc, nil
 }
 
@@ -710,6 +738,44 @@ func (b *backupBiz) restoreComponent(ctx context.Context, comp string, doc *Back
 		}
 		return len(doc.Charts), nil
 
+	case ComponentVaultSecrets:
+		// References only — wipe + reinsert so renamed/deleted entries in the
+		// source are honoured. The underlying Vault KV data is untouched.
+		existing, err := b.d.VaultSecretGetAll(ctx)
+		if err != nil {
+			return 0, err
+		}
+		for _, s := range existing {
+			if err := b.d.VaultSecretDelete(ctx, s.ID); err != nil {
+				return 0, err
+			}
+		}
+		for _, s := range doc.VaultSecrets {
+			if err := b.d.VaultSecretCreate(ctx, s); err != nil {
+				return 0, err
+			}
+		}
+		return len(doc.VaultSecrets), nil
+
+	case ComponentComposeStackSecretBindings:
+		// References only. Wipe + reinsert to match source exactly. This
+		// runs after VaultSecrets so foreign-key-like integrity is kept.
+		existing, err := b.d.ComposeStackSecretBindingGetAll(ctx)
+		if err != nil {
+			return 0, err
+		}
+		for _, bnd := range existing {
+			if err := b.d.ComposeStackSecretBindingDelete(ctx, bnd.ID); err != nil {
+				return 0, err
+			}
+		}
+		for _, bnd := range doc.ComposeStackSecretBindings {
+			if err := b.d.ComposeStackSecretBindingUpsert(ctx, bnd); err != nil {
+				return 0, err
+			}
+		}
+		return len(doc.ComposeStackSecretBindings), nil
+
 	case ComponentEvents:
 		// Append-only: don't wipe, just import.
 		for _, e := range doc.Events {
@@ -833,15 +899,17 @@ func unmarshalGzip(data []byte) (*BackupDocument, error) {
 
 func statsFromDocument(doc *BackupDocument) map[string]int {
 	return map[string]int{
-		ComponentSettings:      len(doc.Settings),
-		ComponentRoles:         len(doc.Roles),
-		ComponentUsers:         len(doc.Users),
-		ComponentRegistries:    len(doc.Registries),
-		ComponentStacks:        len(doc.Stacks),
-		ComponentComposeStacks: len(doc.ComposeStacks),
-		ComponentHosts:         len(doc.Hosts),
-		ComponentCharts:        len(doc.Charts),
-		ComponentEvents:        len(doc.Events),
+		ComponentSettings:                   len(doc.Settings),
+		ComponentRoles:                      len(doc.Roles),
+		ComponentUsers:                      len(doc.Users),
+		ComponentRegistries:                 len(doc.Registries),
+		ComponentStacks:                     len(doc.Stacks),
+		ComponentComposeStacks:              len(doc.ComposeStacks),
+		ComponentHosts:                      len(doc.Hosts),
+		ComponentCharts:                     len(doc.Charts),
+		ComponentVaultSecrets:               len(doc.VaultSecrets),
+		ComponentComposeStackSecretBindings: len(doc.ComposeStackSecretBindings),
+		ComponentEvents:                     len(doc.Events),
 	}
 }
 

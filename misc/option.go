@@ -84,6 +84,24 @@ type Setting struct {
 	Metric struct {
 		Prometheus string `json:"prometheus"`
 	} `json:"metric"`
+	Vault struct {
+		Enabled            bool   `json:"enabled"`
+		Address            string `json:"address"`              // e.g. https://vault.example.com:8200
+		Namespace          string `json:"namespace"`            // optional, Vault Enterprise
+		AuthMethod         string `json:"auth_method"`          // "token" | "approle"
+		Token              string `json:"token"`                // used when AuthMethod == "token"
+		AppRolePath        string `json:"approle_path"`         // auth mount path for AppRole (default "approle")
+		RoleID             string `json:"role_id"`              // used when AuthMethod == "approle"
+		SecretID           string `json:"secret_id"`            // used when AuthMethod == "approle"
+		KVMount            string `json:"kv_mount"`             // KVv2 mount point (default "secret")
+		KVPrefix           string `json:"kv_prefix"`            // logical prefix inside the mount (e.g. "swirl/")
+		BackupKeyPath      string `json:"backup_key_path"`      // path (under prefix) to the SWIRL_BACKUP_KEY secret (default "backup-key")
+		BackupKeyField     string `json:"backup_key_field"`     // field name inside the KV entry (default "value")
+		DefaultStorageMode string `json:"default_storage_mode"` // "tmpfs" | "volume" | "init" (default "tmpfs")
+		TLSSkipVerify      bool   `json:"tls_skip_verify"`      // dev only
+		CACert             string `json:"ca_cert"`              // PEM-encoded, optional
+		RequestTimeout     int    `json:"request_timeout"`      // seconds, default 10
+	} `json:"vault"`
 }
 
 // IsStandalone returns true when Swirl is running in standalone mode.

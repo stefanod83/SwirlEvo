@@ -383,6 +383,38 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    name: 'vault_secret_list',
+    path: "/vault/secrets",
+    component: () => import('../pages/vault-secret/List.vue'),
+    meta: {
+      auth: 'vault_secret.view',
+    }
+  },
+  {
+    name: 'vault_secret_new',
+    path: "/vault/secrets/new",
+    component: () => import('../pages/vault-secret/Edit.vue'),
+    meta: {
+      auth: 'vault_secret.edit',
+    }
+  },
+  {
+    name: 'vault_secret_detail',
+    path: "/vault/secrets/:id",
+    component: () => import('../pages/vault-secret/Edit.vue'),
+    meta: {
+      auth: 'vault_secret.view',
+    }
+  },
+  {
+    name: 'vault_secret_edit',
+    path: "/vault/secrets/:id/edit",
+    component: () => import('../pages/vault-secret/Edit.vue'),
+    meta: {
+      auth: 'vault_secret.edit',
+    }
+  },
+  {
     name: "image_list",
     path: "/local/images",
     component: () => import('../pages/image/List.vue'),
