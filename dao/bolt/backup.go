@@ -17,6 +17,13 @@ func (d *Dao) BackupCreate(ctx context.Context, backup *dao.Backup) error {
 	return d.replace(Backup, backup.ID, backup)
 }
 
+// BackupUpdate overwrites the persisted record. Bolt's replace is upsert
+// semantics — same primitive as Create but with intent renamed for the
+// callers that mutate an existing row (e.g. Recover, Verify backfill).
+func (d *Dao) BackupUpdate(ctx context.Context, backup *dao.Backup) error {
+	return d.replace(Backup, backup.ID, backup)
+}
+
 func (d *Dao) BackupGet(ctx context.Context, id string) (backup *dao.Backup, err error) {
 	backup = &dao.Backup{}
 	err = d.get(Backup, id, backup)

@@ -97,6 +97,7 @@ type Interface interface {
 	BackupGetAll(ctx context.Context) ([]*Backup, error)
 	BackupGetBySource(ctx context.Context, source string) ([]*Backup, error)
 	BackupCreate(ctx context.Context, backup *Backup) error
+	BackupUpdate(ctx context.Context, backup *Backup) error
 	BackupDelete(ctx context.Context, id string) error
 
 	BackupScheduleGet(ctx context.Context, id string) (*BackupSchedule, error)

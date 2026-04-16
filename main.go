@@ -141,6 +141,10 @@ func loadSetting(sb biz.SettingBiz) *misc.Setting {
 	if err != nil {
 		log.Get("misc").Error("failed to load setting: ", err)
 	}
+	// Hand the live pointer to the biz layer so subsequent settings
+	// saves can refresh it in place — keeps the Vault client + backup
+	// key provider closures up to date without a restart.
+	biz.SetLiveSettings(s)
 	return s
 }
 

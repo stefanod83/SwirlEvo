@@ -5,7 +5,10 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -185,14 +188,30 @@ func encryptAtRest(plaintext []byte) ([]byte, error) {
 	return out, nil
 }
 
-// decryptAtRest reverses encryptAtRest.
+// decryptAtRest reverses encryptAtRest using the current master key.
 func decryptAtRest(archive []byte) ([]byte, error) {
-	if len(archive) < len(magicAtRest)+nonceLen || !bytes.Equal(archive[:len(magicAtRest)], magicAtRest) {
-		return nil, errInvalidFormat
-	}
 	key, err := masterKey()
 	if err != nil {
 		return nil, err
+	}
+	return openAtRest(archive, key)
+}
+
+// decryptAtRestWithKey reverses encryptAtRest using an explicit AES key
+// instead of the current master key. Used by recovery flows that need to
+// decrypt with the OLD key (derived from a passphrase the operator
+// supplies) before re-encrypting with the new master key.
+func decryptAtRestWithKey(archive, key []byte) ([]byte, error) {
+	return openAtRest(archive, key)
+}
+
+// openAtRest holds the shared cipher logic for both decrypt entry-points.
+// Validates magic + length, then runs AES-GCM Open. On AEAD failure returns
+// errDecrypt so callers can distinguish "wrong key / corrupted" from
+// "malformed archive".
+func openAtRest(archive, key []byte) ([]byte, error) {
+	if len(archive) < len(magicAtRest)+nonceLen || !bytes.Equal(archive[:len(magicAtRest)], magicAtRest) {
+		return nil, errInvalidFormat
 	}
 	aead, err := aesGCM(key)
 	if err != nil {
@@ -205,6 +224,39 @@ func decryptAtRest(archive []byte) ([]byte, error) {
 		return nil, errDecrypt
 	}
 	return pt, nil
+}
+
+// keyFingerprint returns a stable, key-derived 16-byte tag (hex-encoded)
+// suitable for storing alongside an archive. The label includes a version
+// suffix so the scheme can be rotated without false-negatives on existing
+// fingerprints. HMAC over a fixed label gives indistinguishability without
+// leaking the key.
+func keyFingerprint(key []byte) string {
+	h := hmac.New(sha256.New, key)
+	_, _ = h.Write([]byte("swirl-backup-key-fp/v1"))
+	sum := h.Sum(nil)
+	return hex.EncodeToString(sum[:16])
+}
+
+// currentKeyFingerprint computes the fingerprint of the current master
+// key. Returns "" (no error) when no master key is configured — callers
+// use the empty string to mean "key unknown / unconfigured".
+func currentKeyFingerprint() string {
+	key, err := masterKey()
+	if err != nil {
+		return ""
+	}
+	return keyFingerprint(key)
+}
+
+// deriveKeyFromPassphrase wraps deriveKey with the fixed at-rest salt so
+// callers (e.g. the Recover handler) can hand in a raw passphrase without
+// having to know about salt management.
+func deriveKeyFromPassphrase(passphrase string) ([]byte, error) {
+	if len(passphrase) == 0 {
+		return nil, errors.New("passphrase is required")
+	}
+	return deriveKey([]byte(passphrase), []byte(backupSaltAtRest))
 }
 
 // encryptPortable encrypts plaintext with a passphrase-derived key.

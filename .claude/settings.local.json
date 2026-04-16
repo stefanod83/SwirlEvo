@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(command -v go)",
+      "Bash(command -v node yarn npm)"
     ]
   }
 }

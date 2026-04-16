@@ -1,4 +1,4 @@
-import ajax, { Result } from './ajax'
+import ajax from './ajax'
 
 export interface VaultTestResult {
     ok: boolean;
@@ -10,8 +10,12 @@ export interface VaultTestResult {
 }
 
 export class VaultApi {
+    // ajax.post() already unwraps the outer envelope and returns
+    // Result<VaultTestResult>, so the response body is `r.data` (NOT
+    // `r.data.data` — that double-access was the source of the silent
+    // "Vault connection failed" message).
     test() {
-        return ajax.post<Result<VaultTestResult>>('/vault/test', {})
+        return ajax.post<VaultTestResult>('/vault/test', {})
     }
 }
 

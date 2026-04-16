@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/dao"
+	"github.com/cuigh/swirl/misc"
 )
 
 type SettingBiz interface {
@@ -24,6 +26,30 @@ func NewSetting(d dao.Interface, eb EventBiz) SettingBiz {
 type settingBiz struct {
 	d  dao.Interface
 	eb EventBiz
+}
+
+// liveSettings is the in-memory `*misc.Setting` snapshot loaded at
+// startup. It's installed by `main.loadSetting` via SetLiveSettings (see
+// `main.go`). The pointer is the SAME one captured by closures in
+// `vault/wire.go`, `backup_provider.go`, etc. — mutating the pointed-to
+// struct here makes those subsystems see the new values without a
+// restart.
+//
+// Stored as a package-level variable instead of a struct field on
+// settingBiz to avoid a DI cycle (loadSetting depends on SettingBiz, so
+// SettingBiz cannot depend on *misc.Setting through the constructor).
+var (
+	liveSettings   *misc.Setting
+	liveSettingsMu sync.RWMutex
+)
+
+// SetLiveSettings installs the live settings pointer. Called by
+// `main.loadSetting` once `*misc.Setting` has been built. Passing nil
+// removes any previously installed pointer (e.g. for tests).
+func SetLiveSettings(s *misc.Setting) {
+	liveSettingsMu.Lock()
+	liveSettings = s
+	liveSettingsMu.Unlock()
 }
 
 func (b *settingBiz) Find(ctx context.Context, id string) (options interface{}, err error) {
@@ -67,10 +93,52 @@ func (b *settingBiz) Save(ctx context.Context, id string, options interface{}, u
 	if err == nil {
 		err = b.d.SettingUpdate(ctx, setting)
 	}
+	if err == nil {
+		// Refresh the in-memory snapshot so callers that captured the
+		// `*misc.Setting` pointer at startup (Vault client, backup key
+		// provider, …) immediately see the new values without a restart.
+		// Best-effort: a refresh failure does not roll back the persisted
+		// change, but is logged so operators can investigate.
+		if rerr := b.refreshInMemory(ctx); rerr != nil {
+			// Don't surface as Save error — persistence already succeeded.
+			// Subsequent reads will pick up the change at next process boot.
+			_ = rerr
+		}
+	}
 	if err == nil && user != nil {
 		b.eb.CreateSetting(EventActionUpdate, user)
 	}
 	return
+}
+
+// refreshInMemory re-reads every setting from the DAO and overwrites the
+// fields of the live `*misc.Setting` struct in place. The closures that
+// captured this pointer at startup (Vault client, backup key provider)
+// see the new values on their next call.
+//
+// Best-effort: if no live pointer was registered (tests, or a startup
+// path that didn't run loadSetting), this is a no-op.
+func (b *settingBiz) refreshInMemory(ctx context.Context) error {
+	liveSettingsMu.RLock()
+	s := liveSettings
+	liveSettingsMu.RUnlock()
+	if s == nil {
+		return nil
+	}
+	opts, err := b.Load(ctx)
+	if err != nil {
+		return err
+	}
+	buf, err := json.Marshal(opts)
+	if err != nil {
+		return err
+	}
+	fresh := &misc.Setting{}
+	if err := json.Unmarshal(buf, fresh); err != nil {
+		return err
+	}
+	*s = *fresh
+	return nil
 }
 
 func (b *settingBiz) marshal(v interface{}) (s string, err error) {

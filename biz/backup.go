@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cuigh/auxo/app"
@@ -148,6 +149,27 @@ type BackupManifest struct {
 	Stats        map[string]int `json:"stats"`
 }
 
+// Backup KeyStatus constants — kept symmetric with the JSON values so the
+// UI can switch on them without translating.
+const (
+	BackupKeyCompatible   = "compatible"
+	BackupKeyIncompatible = "incompatible"
+	BackupKeyUnverified   = "unverified" // legacy record without a stored fingerprint
+	BackupKeyMissingFile  = "missing"    // file gone from disk
+	BackupKeyUnknown      = "unknown"    // master key not configured
+)
+
+// BackupKeyStatusSummary is the aggregate result of a VerifyAll pass.
+type BackupKeyStatusSummary struct {
+	Total        int    `json:"total"`
+	Compatible   int    `json:"compatible"`
+	Incompatible int    `json:"incompatible"`
+	Unverified   int    `json:"unverified"`
+	Missing      int    `json:"missing"`
+	KeyMissing   bool   `json:"keyMissing"`
+	Fingerprint  string `json:"fingerprint,omitempty"`
+}
+
 type BackupBiz interface {
 	KeyConfigured() bool
 	List(ctx context.Context) ([]*dao.Backup, error)
@@ -159,6 +181,20 @@ type BackupBiz interface {
 	Restore(ctx context.Context, id string, components []string, user web.User) (map[string]int, error)
 	PreviewUpload(ctx context.Context, archive []byte, password string) (*BackupManifest, error)
 	RestoreUpload(ctx context.Context, archive []byte, password string, components []string, user web.User) (map[string]int, error)
+
+	// KeyFingerprint returns the fingerprint of the current master key, or
+	// "" if no master key is configured. Useful for diagnostics.
+	KeyFingerprint() string
+	// Verify probes a single backup against the current master key. Backfills
+	// the stored fingerprint on legacy records that decrypt successfully.
+	Verify(ctx context.Context, id string) (*dao.Backup, error)
+	// VerifyAll classifies every backup record without trial-decrypting
+	// legacy archives (those stay "unverified" until probed on demand).
+	VerifyAll(ctx context.Context) BackupKeyStatusSummary
+	// Recover decrypts a backup with `oldPassphrase`, then re-encrypts it
+	// in-place with the current master key. Used when the operator has
+	// rotated SWIRL_BACKUP_KEY (or Vault rotated the underlying secret).
+	Recover(ctx context.Context, id, oldPassphrase string, user web.User) (*dao.Backup, error)
 
 	Schedules(ctx context.Context) ([]*dao.BackupSchedule, error)
 	SaveSchedule(ctx context.Context, schedule *dao.BackupSchedule, user web.User) error
@@ -173,13 +209,101 @@ type BackupBiz interface {
 }
 
 func NewBackup(d dao.Interface, eb EventBiz) BackupBiz {
-	return &backupBiz{d: d, eb: eb, logger: log.Get("backup")}
+	return &backupBiz{
+		d:           d,
+		eb:          eb,
+		logger:      log.Get("backup"),
+		statusCache: map[string]string{},
+		recoverLock: map[string]*sync.Mutex{},
+	}
 }
 
 type backupBiz struct {
 	d      dao.Interface
 	eb     EventBiz
 	logger log.Logger
+
+	// statusCache memoises the per-backup KeyStatus from the last VerifyAll
+	// pass so List/Find can decorate records cheaply (no extra Vault round
+	// trips, no trial decrypts). Invalidated when the current key
+	// fingerprint changes (e.g. Vault rotation, SWIRL_BACKUP_KEY change).
+	statusMu    sync.RWMutex
+	statusCache map[string]string
+	statusFP    string
+	statusAt    time.Time
+
+	// recoverLock serialises in-place file rewrites (Recover) against
+	// concurrent Delete on the same backup ID, so a recovery does not
+	// resurrect a file that another goroutine has just removed.
+	recoverMu   sync.Mutex
+	recoverLock map[string]*sync.Mutex
+}
+
+// lockBackup returns an unlock function the caller must defer. Used by
+// Recover and Delete to serialise mutations of a single backup file.
+func (b *backupBiz) lockBackup(id string) func() {
+	b.recoverMu.Lock()
+	mu, ok := b.recoverLock[id]
+	if !ok {
+		mu = &sync.Mutex{}
+		b.recoverLock[id] = mu
+	}
+	b.recoverMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
+}
+
+// decorateStatus copies the cached KeyStatus onto a record. The cache is
+// considered valid only if its snapshot fingerprint matches the current
+// key fingerprint — handles Vault key rotation transparently.
+func (b *backupBiz) decorateStatus(records ...*dao.Backup) {
+	currentFP := currentKeyFingerprint()
+	b.statusMu.RLock()
+	defer b.statusMu.RUnlock()
+	if b.statusFP != currentFP || currentFP == "" {
+		// Cache stale (rotation) or no key: surface "unknown" until a
+		// VerifyAll pass refreshes the cache.
+		fallback := BackupKeyUnknown
+		if currentFP != "" {
+			fallback = ""
+		}
+		for _, r := range records {
+			if r == nil {
+				continue
+			}
+			if currentFP == "" {
+				r.KeyStatus = fallback
+				continue
+			}
+			// We have a key but no cache entry — best-effort classify
+			// from the stored fingerprint alone.
+			r.KeyStatus = classifyByFingerprint(r, currentFP)
+		}
+		return
+	}
+	for _, r := range records {
+		if r == nil {
+			continue
+		}
+		if s, ok := b.statusCache[r.ID]; ok {
+			r.KeyStatus = s
+		} else {
+			r.KeyStatus = classifyByFingerprint(r, currentFP)
+		}
+	}
+}
+
+// classifyByFingerprint applies the stored-fingerprint comparison without
+// touching the cache or the file. Used when the cache has no entry for
+// the record (e.g. a Create that landed after the last VerifyAll).
+func classifyByFingerprint(r *dao.Backup, currentFP string) string {
+	if r.KeyFingerprint == "" {
+		return BackupKeyUnverified
+	}
+	if r.KeyFingerprint == currentFP {
+		return BackupKeyCompatible
+	}
+	return BackupKeyIncompatible
 }
 
 // --- public surface -------------------------------------------------------
@@ -189,11 +313,25 @@ func (b *backupBiz) KeyConfigured() bool {
 }
 
 func (b *backupBiz) List(ctx context.Context) ([]*dao.Backup, error) {
-	return b.d.BackupGetAll(ctx)
+	records, err := b.d.BackupGetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	b.decorateStatus(records...)
+	return records, nil
 }
 
 func (b *backupBiz) Find(ctx context.Context, id string) (*dao.Backup, error) {
-	return b.d.BackupGet(ctx, id)
+	rec, err := b.d.BackupGet(ctx, id)
+	if err != nil || rec == nil {
+		return rec, err
+	}
+	b.decorateStatus(rec)
+	return rec, nil
+}
+
+func (b *backupBiz) KeyFingerprint() string {
+	return currentKeyFingerprint()
 }
 
 func (b *backupBiz) Manifest(ctx context.Context, id string) (*BackupManifest, error) {
@@ -247,16 +385,23 @@ func (b *backupBiz) Create(ctx context.Context, source string, user web.User) (*
 	}
 
 	sum := sha256.Sum256(plaintext)
+	now := time.Now()
+	// Snapshot the current key's fingerprint so future restores/verifications
+	// can detect a mismatch without trying to decrypt the whole archive.
+	fp := currentKeyFingerprint()
+	verified := now
 	record := &dao.Backup{
-		ID:        id,
-		Name:      fmt.Sprintf("%s-%s", source, time.Now().UTC().Format(backupExportFormat)),
-		Source:    source,
-		Size:      int64(len(archive)),
-		Checksum:  hex.EncodeToString(sum[:]),
-		Path:      path,
-		Includes:  AllBackupComponents,
-		Stats:     statsFromDocument(doc),
-		CreatedAt: time.Now(),
+		ID:             id,
+		Name:           fmt.Sprintf("%s-%s", source, now.UTC().Format(backupExportFormat)),
+		Source:         source,
+		Size:           int64(len(archive)),
+		Checksum:       hex.EncodeToString(sum[:]),
+		Path:           path,
+		Includes:       AllBackupComponents,
+		Stats:          statsFromDocument(doc),
+		KeyFingerprint: fp,
+		VerifiedAt:     &verified,
+		CreatedAt:      now,
 	}
 	if user != nil {
 		record.CreatedBy = dao.Operator{ID: user.ID(), Name: user.Name()}
@@ -266,6 +411,13 @@ func (b *backupBiz) Create(ctx context.Context, source string, user web.User) (*
 		_ = os.Remove(path)
 		return nil, err
 	}
+	// Pre-warm the cache so the next List call doesn't have to wait for the
+	// next VerifyAll pass.
+	b.statusMu.Lock()
+	if b.statusFP == fp {
+		b.statusCache[record.ID] = BackupKeyCompatible
+	}
+	b.statusMu.Unlock()
 
 	if user != nil {
 		b.eb.CreateBackup(EventActionCreate, record.ID, record.Name, user)
@@ -274,6 +426,11 @@ func (b *backupBiz) Create(ctx context.Context, source string, user web.User) (*
 }
 
 func (b *backupBiz) Delete(ctx context.Context, id string, user web.User) error {
+	// Hold the per-id lock so a concurrent Recover doesn't resurrect the
+	// file via writeFileAtomic after we've removed it.
+	unlock := b.lockBackup(id)
+	defer unlock()
+
 	rec, err := b.d.BackupGet(ctx, id)
 	if err != nil || rec == nil {
 		if rec == nil && err == nil {
@@ -289,6 +446,11 @@ func (b *backupBiz) Delete(ctx context.Context, id string, user web.User) error 
 			b.logger.Warnf("failed to remove backup file %s: %v", rec.Path, rmErr)
 		}
 	}
+	// Drop the cache entry so a stale "compatible" badge doesn't outlive
+	// the record itself.
+	b.statusMu.Lock()
+	delete(b.statusCache, id)
+	b.statusMu.Unlock()
 	if user != nil {
 		b.eb.CreateBackup(EventActionDelete, rec.ID, rec.Name, user)
 	}
@@ -397,6 +559,199 @@ func (b *backupBiz) RestoreUpload(ctx context.Context, archive []byte, password 
 		b.eb.CreateBackup(EventActionRestore, "", name, user)
 	}
 	return counts, nil
+}
+
+// --- key compatibility & recovery -----------------------------------------
+
+// Verify probes a single backup against the current master key and updates
+// its KeyStatus (and the cache) accordingly. Legacy records (no stored
+// fingerprint) get a one-time trial decrypt: success backfills the
+// fingerprint persistently; failure marks the record incompatible without
+// persisting anything (the operator may still recover with the old key).
+func (b *backupBiz) Verify(ctx context.Context, id string) (*dao.Backup, error) {
+	rec, err := b.d.BackupGet(ctx, id)
+	if err != nil || rec == nil {
+		if rec == nil && err == nil {
+			return nil, errors.New("backup not found")
+		}
+		return nil, err
+	}
+	if !backupKeyConfigured() {
+		rec.KeyStatus = BackupKeyUnknown
+		b.cacheStatus(rec.ID, BackupKeyUnknown)
+		return rec, nil
+	}
+	if _, statErr := os.Stat(rec.Path); os.IsNotExist(statErr) {
+		rec.KeyStatus = BackupKeyMissingFile
+		b.cacheStatus(rec.ID, BackupKeyMissingFile)
+		return rec, nil
+	}
+	currentFP := currentKeyFingerprint()
+	if rec.KeyFingerprint != "" {
+		if rec.KeyFingerprint == currentFP {
+			rec.KeyStatus = BackupKeyCompatible
+			now := time.Now()
+			rec.VerifiedAt = &now
+			_ = b.d.BackupUpdate(ctx, rec)
+		} else {
+			rec.KeyStatus = BackupKeyIncompatible
+		}
+		b.cacheStatus(rec.ID, rec.KeyStatus)
+		return rec, nil
+	}
+	// Legacy record: trial-decrypt with the current key. We deliberately do
+	// not log or surface the secret payload — only the success/failure
+	// signal matters here.
+	raw, readErr := os.ReadFile(rec.Path)
+	if readErr != nil {
+		rec.KeyStatus = BackupKeyMissingFile
+		b.cacheStatus(rec.ID, BackupKeyMissingFile)
+		return rec, nil
+	}
+	if _, decErr := decryptAtRest(raw); decErr != nil {
+		// Could be wrong key OR corrupted file — both surface as
+		// "incompatible" so the operator can attempt a recovery with the
+		// presumed-old passphrase.
+		rec.KeyStatus = BackupKeyIncompatible
+		b.cacheStatus(rec.ID, BackupKeyIncompatible)
+		return rec, nil
+	}
+	// Success: persist the fingerprint so subsequent boots avoid the
+	// trial decrypt.
+	rec.KeyFingerprint = currentFP
+	now := time.Now()
+	rec.VerifiedAt = &now
+	if err := b.d.BackupUpdate(ctx, rec); err != nil {
+		b.logger.Warnf("verify: cannot persist fingerprint for %s: %v", rec.ID, err)
+	}
+	rec.KeyStatus = BackupKeyCompatible
+	b.cacheStatus(rec.ID, BackupKeyCompatible)
+	return rec, nil
+}
+
+// VerifyAll runs the cheap classification pass (no trial decryption of
+// legacy records) and refreshes the cache. Intended to be called once at
+// startup and on demand from the UI.
+func (b *backupBiz) VerifyAll(ctx context.Context) BackupKeyStatusSummary {
+	sum := BackupKeyStatusSummary{}
+	currentFP := currentKeyFingerprint()
+	sum.Fingerprint = currentFP
+	if currentFP == "" {
+		sum.KeyMissing = true
+	}
+	records, err := b.d.BackupGetAll(ctx)
+	if err != nil {
+		b.logger.Warnf("VerifyAll: cannot list backups: %v", err)
+		return sum
+	}
+	sum.Total = len(records)
+	cache := make(map[string]string, len(records))
+	for _, r := range records {
+		var status string
+		if currentFP == "" {
+			status = BackupKeyUnknown
+		} else if _, statErr := os.Stat(r.Path); os.IsNotExist(statErr) {
+			status = BackupKeyMissingFile
+			sum.Missing++
+		} else if r.KeyFingerprint == "" {
+			status = BackupKeyUnverified
+			sum.Unverified++
+		} else if r.KeyFingerprint == currentFP {
+			status = BackupKeyCompatible
+			sum.Compatible++
+		} else {
+			status = BackupKeyIncompatible
+			sum.Incompatible++
+		}
+		r.KeyStatus = status
+		cache[r.ID] = status
+	}
+	b.statusMu.Lock()
+	b.statusCache = cache
+	b.statusFP = currentFP
+	b.statusAt = time.Now()
+	b.statusMu.Unlock()
+	return sum
+}
+
+// Recover decrypts a backup using `oldPassphrase` and re-encrypts it in
+// place with the current master key. Intended for the case where the
+// operator has rotated SWIRL_BACKUP_KEY (or Vault rotated the underlying
+// secret) and old archives can no longer be opened by the standard restore
+// path. The caller must hold the right permission (`backup.recover`).
+func (b *backupBiz) Recover(ctx context.Context, id, oldPassphrase string, user web.User) (*dao.Backup, error) {
+	if len(oldPassphrase) < backupKeyMinLen {
+		return nil, fmt.Errorf("passphrase must be at least %d characters", backupKeyMinLen)
+	}
+	if !backupKeyConfigured() {
+		return nil, errMissingKey
+	}
+	unlock := b.lockBackup(id)
+	defer unlock()
+
+	rec, err := b.d.BackupGet(ctx, id)
+	if err != nil || rec == nil {
+		if rec == nil && err == nil {
+			return nil, errors.New("backup not found")
+		}
+		return nil, err
+	}
+	raw, err := os.ReadFile(rec.Path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read backup archive: %w", err)
+	}
+	oldKey, err := deriveKeyFromPassphrase(oldPassphrase)
+	if err != nil {
+		return nil, err
+	}
+	plaintext, err := decryptAtRestWithKey(raw, oldKey)
+	if err != nil {
+		// errDecrypt → bubble up unchanged so the API can map it to 401.
+		return nil, err
+	}
+	// Re-encrypt with the current master key.
+	archive, err := encryptAtRest(plaintext)
+	if err != nil {
+		return nil, err
+	}
+	// Sanity check: the plaintext bytes should be identical, so the existing
+	// checksum must match. A divergence would mean corruption between
+	// encrypt cycles (extremely unlikely, but worth a warn for ops).
+	sum := sha256.Sum256(plaintext)
+	newChecksum := hex.EncodeToString(sum[:])
+	if rec.Checksum != "" && rec.Checksum != newChecksum {
+		b.logger.Warnf("recover: checksum drift on %s (was %s, now %s)", rec.ID, rec.Checksum, newChecksum)
+	}
+	if err := writeFileAtomic(rec.Path, archive); err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	rec.Size = int64(len(archive))
+	rec.Checksum = newChecksum
+	rec.KeyFingerprint = currentKeyFingerprint()
+	rec.VerifiedAt = &now
+	if err := b.d.BackupUpdate(ctx, rec); err != nil {
+		return nil, err
+	}
+	b.cacheStatus(rec.ID, BackupKeyCompatible)
+	rec.KeyStatus = BackupKeyCompatible
+	if user != nil {
+		b.eb.CreateBackup(EventActionUpdate, rec.ID, "recover:"+rec.Name, user)
+	}
+	return rec, nil
+}
+
+// cacheStatus writes a single record's status into the cache without
+// invalidating the snapshot fingerprint. Used by Verify/Create/Recover.
+func (b *backupBiz) cacheStatus(id, status string) {
+	b.statusMu.Lock()
+	if b.statusFP == "" {
+		// Pin the cache to the current fingerprint on first write so a
+		// subsequent List() pass sees it as fresh.
+		b.statusFP = currentKeyFingerprint()
+	}
+	b.statusCache[id] = status
+	b.statusMu.Unlock()
 }
 
 // --- schedules ------------------------------------------------------------

@@ -20,9 +20,12 @@ Repository: <https://github.com/stefanod83/SwirlEvo>
 * Compose parser + deployment (Swarm stacks + standalone stacks).
 * Service monitoring based on Prometheus and cAdvisor (Swarm mode).
 * Service auto scaling (Swarm mode only).
-* LDAP authentication.
+* **Network topology view**: interactive graph of networks, containers and connectivity per host; red highlights for ports published to public addresses, blue border for internal/isolated networks. See `Network → Topology`.
+* **HashiCorp Vault integration**: `SWIRL_BACKUP_KEY` fallback via Vault, `VaultSecret` reference catalog (values never persisted in Swirl), per-stack secret bindings on standalone compose stacks (modes: `tmpfs` / `volume` / `init` / `env`), drift check. See [docs/vault.md](docs/vault.md).
+* **Internal backup**: AES-256-GCM at-rest encryption, daily/weekly/monthly schedules with retention, raw + portable export, component-selective restore, and **key recovery** for archives encrypted under a previous `SWIRL_BACKUP_KEY`. See [docs/backup.md](docs/backup.md).
+* LDAP and Keycloak (OIDC) authentication.
 * Full permission control based on RBAC.
-* i18n: English, Chinese.
+* i18n: English, Italian, Chinese.
 
 ## Operating Modes
 
@@ -99,15 +102,19 @@ The reconstruction is approximate: fields not derivable from a running container
 
 ### Environment Variables
 
-| Name               | Default                          | Description                                   |
-|--------------------|----------------------------------|-----------------------------------------------|
-| MODE               | swarm                            | Operating mode: `swarm` or `standalone`       |
-| DB_TYPE            | mongo                            | Storage engine: `mongo` or `bolt`             |
-| DB_ADDRESS         | mongodb://localhost:27017/swirl  | MongoDB URI, or directory path for BoltDB     |
-| TOKEN_EXPIRY       | 30m                              | JWT token lifetime                            |
-| DOCKER_ENDPOINT    | (from env)                       | Docker daemon endpoint                        |
-| DOCKER_API_VERSION | (auto-negotiated)                | Docker API version (optional)                 |
-| AGENTS             | (empty)                          | Swarm agent services (swarm mode only)        |
+| Name                | Default                          | Description                                                    |
+|---------------------|----------------------------------|----------------------------------------------------------------|
+| MODE                | swarm                            | Operating mode: `swarm` or `standalone`                        |
+| DB_TYPE             | mongo                            | Storage engine: `mongo` or `bolt`                              |
+| DB_ADDRESS          | mongodb://localhost:27017/swirl  | MongoDB URI, or directory path for BoltDB                      |
+| TOKEN_EXPIRY        | 30m                              | JWT token lifetime                                             |
+| DOCKER_ENDPOINT     | (from env)                       | Docker daemon endpoint                                         |
+| DOCKER_API_VERSION  | (auto-negotiated)                | Docker API version (optional)                                  |
+| AGENTS              | (empty)                          | Swarm agent services (swarm mode only)                         |
+| SWIRL_BACKUP_KEY    | (empty)                          | Master passphrase for backup AES-256-GCM (≥ 16 chars). When empty, Swirl falls back to the configured Vault entry. See [docs/backup.md](docs/backup.md). |
+| SWIRL_BACKUP_DIR    | /data/swirl/backups              | Directory where `.swb` archives are stored.                    |
+
+Vault connection settings (address, token / AppRole, KV mount/prefix, TLS, …) are configured via the **Settings → Vault** UI panel — see [docs/vault.md](docs/vault.md).
 
 ### Config File
 
@@ -326,6 +333,11 @@ cd /opt/DockerData/swirl
 docker build -t swirl:standalone .
 docker compose -f docker-compose.standalone-bolt.yml up -d
 ```
+
+## Documentation
+
+- [docs/vault.md](docs/vault.md) — HashiCorp Vault integration: client/auth setup, `SWIRL_BACKUP_KEY` fallback, `VaultSecret` catalog, per-stack secret bindings (tmpfs / volume / init / env), drift check, troubleshooting.
+- [docs/backup.md](docs/backup.md) — Backup subsystem: storage layout, AES-256-GCM at-rest format, scheduling and retention, restore flow, raw vs portable download, **key recovery** (`backup.recover` permission) for archives encrypted under a previous master key.
 
 ## Architecture
 

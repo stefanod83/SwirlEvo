@@ -24,6 +24,8 @@ import { computed, defineComponent, h } from "vue";
 import {
   zhCN,
   dateZhCN,
+  itIT,
+  dateItIT,
   NConfigProvider,
   NDialogProvider,
   NNotificationProvider,
@@ -81,8 +83,18 @@ export default defineComponent({
   setup() {
     const store = useStore();
     const theme = computed(() => store.state.preference?.theme === "dark" ? darkTheme : null);
-    const locale = computed(() => store.state.preference?.locale === 'zh' ? zhCN : null);
-    const dateLocale = computed(() => store.state.preference?.locale === 'zh' ? dateZhCN : null);
+    const locale = computed(() => {
+      const l = store.state.preference?.locale
+      if (l === 'zh') return zhCN
+      if (l === 'it') return itIT
+      return null
+    });
+    const dateLocale = computed(() => {
+      const l = store.state.preference?.locale
+      if (l === 'zh') return dateZhCN
+      if (l === 'it') return dateItIT
+      return null
+    });
     const themeFixed = {
       Form: {
         feedbackHeightMedium: "20px",

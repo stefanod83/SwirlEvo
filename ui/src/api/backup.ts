@@ -9,11 +9,30 @@ export interface Backup {
     path: string;
     includes?: string[];
     stats?: { [key: string]: number };
+    // KeyFingerprint of the master key the archive was encrypted with.
+    // Empty for backups created before this field was introduced.
+    keyFingerprint?: string;
+    // KeyStatus is computed server-side at read time. The UI should treat
+    // it as advisory: 'compatible' / 'incompatible' / 'unverified' / 'missing' / 'unknown'.
+    keyStatus?: 'compatible' | 'incompatible' | 'unverified' | 'missing' | 'unknown';
+    verifiedAt?: string | null;
     createdAt: string;
     createdBy?: {
         id: string;
         name: string;
     };
+}
+
+// BackupKeyStatusSummary mirrors biz.BackupKeyStatusSummary — it's the
+// aggregate result of /backup/key-status.
+export interface BackupKeyStatusSummary {
+    total: number;
+    compatible: number;
+    incompatible: number;
+    unverified: number;
+    missing: number;
+    keyMissing: boolean;
+    fingerprint?: string;
 }
 
 export interface BackupSchedule {
@@ -116,6 +135,18 @@ export class BackupApi {
 
     deleteSchedule(id: string) {
         return ajax.post<Result<Object>>('/backup/schedule/delete', { id })
+    }
+
+    keyStatus() {
+        return ajax.get<BackupKeyStatusSummary>('/backup/key-status')
+    }
+
+    verify(id: string) {
+        return ajax.post<Backup>('/backup/verify', { id })
+    }
+
+    recover(id: string, oldPassphrase: string) {
+        return ajax.post<Backup>('/backup/recover', { id, oldPassphrase })
     }
 }
 

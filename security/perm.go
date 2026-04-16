@@ -55,6 +55,10 @@ var Actions = map[string]uint64{
 	"restore":    1 << 10,
 	"download":   1 << 11,
 	"admin":      1 << 12,
+	// recover: re-encrypt a backup archive with the current master key
+	// using a previously-valid passphrase. Distinct from `restore`
+	// (data-destructive) and `edit` (creates new backups).
+	"recover": 1 << 13,
 }
 
 var Perms = map[string][]string{
@@ -76,7 +80,7 @@ var Perms = map[string][]string{
 	"event":     {"view"},
 	"setting":   {"view", "edit"},
 	"host":      {"view", "edit", "delete"},
-	"backup":    {"view", "edit", "delete", "restore", "download"},
+	"backup":    {"view", "edit", "delete", "restore", "download", "recover"},
 	// vault.admin guards Vault connection settings + test endpoint.
 	"vault":        {"admin"},
 	"vault_secret": {"view", "edit", "delete"},

@@ -318,8 +318,18 @@ type Backup struct {
 	Path      string         `json:"path" bson:"path"`
 	Includes  []string       `json:"includes,omitempty" bson:"includes,omitempty"`
 	Stats     map[string]int `json:"stats,omitempty" bson:"stats,omitempty"`
-	CreatedAt time.Time      `json:"createdAt" bson:"created_at"`
-	CreatedBy Operator       `json:"createdBy" bson:"created_by"`
+	// KeyFingerprint is the HMAC tag of the master key the archive was
+	// encrypted with. Empty for backups created before this field was added
+	// (treated as "unverified" by the compatibility check).
+	KeyFingerprint string `json:"keyFingerprint,omitempty" bson:"key_fingerprint,omitempty"`
+	// VerifiedAt records when this backup was last successfully verified
+	// against the current master key.
+	VerifiedAt *time.Time `json:"verifiedAt,omitempty" bson:"verified_at,omitempty"`
+	// KeyStatus is computed at read time and never persisted. One of
+	// "compatible" | "incompatible" | "unverified" | "missing" | "unknown".
+	KeyStatus string   `json:"keyStatus,omitempty" bson:"-"`
+	CreatedAt time.Time `json:"createdAt" bson:"created_at"`
+	CreatedBy Operator  `json:"createdBy" bson:"created_by"`
 }
 
 // BackupSchedule describes a recurring backup job.

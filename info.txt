@@ -1,16 +1,16 @@
 # Copy and run on WSL
-rsync -a --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.git' --exclude='.planning' /mnt/c/GitRepos/swirl/ /opt/DockerData/swirl/ 2>&1 | tail -3 && \
-  cd /opt/DockerData/swirl && docker compose -f docker-compose.standalone-bolt.yml down 2>&1 | tail -2 && \
-  docker build -t swirl:standalone . 2>&1 | tail -5 && \
-  docker compose -f docker-compose.standalone-bolt.yml up -d 2>&1 | tail -2
+rsync -a --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.git' --exclude='.planning' --exclude=.gocache --exclude=.claude /mnt/c/GitRepos/swirl/ /opt/DockerData/swirl/ && \
+  cd /opt/DockerData/swirl && docker compose -f docker-compose.standalone-bolt.yml down && \
+  docker build -t swirl:standalone . && \
+  docker compose -f docker-compose.standalone-bolt.yml up -d
 
 
 
 # Add cleaned bundle and build
 rm -rf /opt/DockerData/swirl/ui/dist /mnt/c/GitRepos/swirl/ui/dist 2>&1; 
 echo "---"; 
-rsync -a --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.git' --exclude='.planning' /mnt/c/GitRepos/swirl/ /opt/DockerData/swirl/ && \
-  cd /opt/DockerData/swirl && docker compose -f docker-compose.standalone-bolt.yml down 2>&1 | tail -1 && \
-  docker build --no-cache -t swirl:standalone . 2>&1 | tail -5 && \
-  docker compose -f docker-compose.standalone-bolt.yml up -d 2>&1 | tail -1
+rsync -a --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.git' --exclude='.planning' --exclude=.gocache --exclude=.claude /mnt/c/GitRepos/swirl/ /opt/DockerData/swirl/ && \
+  cd /opt/DockerData/swirl && docker compose -f docker-compose.standalone-bolt.yml down && \
+  docker build --no-cache -t swirl:standalone . && \
+  docker compose -f docker-compose.standalone-bolt.yml up -d
 

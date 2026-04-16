@@ -157,6 +157,7 @@
             <n-radio-group v-model:value="preference.locale">
               <n-radio-button value="zh">中文</n-radio-button>
               <n-radio-button value="en">English</n-radio-button>
+              <n-radio-button value="it">Italiano</n-radio-button>
             </n-radio-group>
           </n-form-item>
           <n-form-item :label="t('fields.theme')" path="theme">

@@ -31,9 +31,36 @@ func (s *Scheduler) Start() {
 	if !s.b.KeyConfigured() {
 		s.logger.Warn("backup passphrase is not available — set SWIRL_BACKUP_KEY or configure Vault with backup_key_path. Scheduled backups will be skipped.")
 	}
+	// Run the key compatibility check on a goroutine so it never blocks
+	// startup. One log line summarises the result; per-backup detail is
+	// available via the API/UI.
+	go s.runStartupKeyCheck()
 	run.Schedule(time.Hour, s.tick, func(e interface{}) {
 		s.logger.Error("backup scheduler panic: ", e)
 	})
+}
+
+// runStartupKeyCheck does a single, non-trial-decrypting pass over all
+// backups and logs the aggregate result. Cheap and rotation-aware — see
+// biz.BackupBiz.VerifyAll for the classification rules.
+func (s *Scheduler) runStartupKeyCheck() {
+	if !s.b.KeyConfigured() {
+		s.logger.Info("backup key compatibility check skipped: no master key configured")
+		return
+	}
+	ctx, cancel := misc.Context(2 * time.Minute)
+	defer cancel()
+	sum := s.b.VerifyAll(ctx)
+	if sum.Total == 0 {
+		return
+	}
+	if sum.Incompatible == 0 {
+		s.logger.Infof("backup key check: %d/%d compatible (%d legacy unverified, %d missing files)",
+			sum.Compatible, sum.Total, sum.Unverified, sum.Missing)
+	} else {
+		s.logger.Warnf("backup key check: %d incompatible / %d legacy unverified out of %d (key fingerprint %s). Use 'Recover' on the Backups page to re-encrypt with the current key.",
+			sum.Incompatible, sum.Unverified, sum.Total, sum.Fingerprint)
+	}
 }
 
 func (s *Scheduler) tick() {

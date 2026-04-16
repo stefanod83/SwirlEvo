@@ -1,7 +1,11 @@
 package api
 
 import (
+	"errors"
 	"io"
+	"net/http"
+	"os"
+	"strings"
 
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/biz"
@@ -14,10 +18,13 @@ type BackupHandler struct {
 	Search         web.HandlerFunc `path:"/search" auth:"backup.view" desc:"list backups"`
 	Find           web.HandlerFunc `path:"/find" auth:"backup.view" desc:"get backup metadata"`
 	Status         web.HandlerFunc `path:"/status" auth:"backup.view" desc:"check backup subsystem status"`
+	KeyStatus      web.HandlerFunc `path:"/key-status" auth:"backup.view" desc:"current key fingerprint and aggregate verification summary"`
 	Create         web.HandlerFunc `path:"/create" method:"post" auth:"backup.edit" desc:"create a manual backup"`
 	Delete         web.HandlerFunc `path:"/delete" method:"post" auth:"backup.delete" desc:"delete a backup"`
 	Download       web.HandlerFunc `path:"/download" method:"post" auth:"backup.download" desc:"download a backup archive"`
 	Restore        web.HandlerFunc `path:"/restore" method:"post" auth:"backup.restore" desc:"restore from a stored backup"`
+	Verify         web.HandlerFunc `path:"/verify" method:"post" auth:"backup.view" desc:"re-probe one backup against the current master key"`
+	Recover        web.HandlerFunc `path:"/recover" method:"post" auth:"backup.recover" desc:"re-encrypt a backup with the current key using the old passphrase"`
 	Preview        web.HandlerFunc `path:"/preview" method:"post" auth:"backup.restore" desc:"preview an uploaded backup"`
 	Upload         web.HandlerFunc `path:"/upload" method:"post" auth:"backup.restore" desc:"restore from an uploaded backup file"`
 	Schedules      web.HandlerFunc `path:"/schedules" auth:"backup.view" desc:"list backup schedules"`
@@ -31,10 +38,13 @@ func NewBackup(b biz.BackupBiz) *BackupHandler {
 		Search:         backupSearch(b),
 		Find:           backupFind(b),
 		Status:         backupStatus(b),
+		KeyStatus:      backupKeyStatus(b),
 		Create:         backupCreate(b),
 		Delete:         backupDelete(b),
 		Download:       backupDownload(b),
 		Restore:        backupRestore(b),
+		Verify:         backupVerify(b),
+		Recover:        backupRecover(b),
 		Preview:        backupPreview(b),
 		Upload:         backupUpload(b),
 		Schedules:      backupSchedules(b),
@@ -247,6 +257,66 @@ func backupDeleteSchedule(b biz.BackupBiz) web.HandlerFunc {
 
 		err := b.DeleteSchedule(ctx, args.ID, c.User())
 		return ajax(c, err)
+	}
+}
+
+func backupKeyStatus(b biz.BackupBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		summary := b.VerifyAll(ctx)
+		return success(c, summary)
+	}
+}
+
+func backupVerify(b biz.BackupBiz) web.HandlerFunc {
+	type Args struct {
+		ID string `json:"id"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		rec, err := b.Verify(ctx, args.ID)
+		if err != nil {
+			return err
+		}
+		return success(c, rec)
+	}
+}
+
+func backupRecover(b biz.BackupBiz) web.HandlerFunc {
+	type Args struct {
+		ID            string `json:"id"`
+		OldPassphrase string `json:"oldPassphrase"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(5 * defaultTimeout)
+		defer cancel()
+		rec, err := b.Recover(ctx, args.ID, args.OldPassphrase, c.User())
+		if err != nil {
+			// Map well-known errors to actionable HTTP statuses so the UI
+			// can show a precise message instead of a generic 500.
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				return web.NewError(http.StatusGone, "backup file is missing on disk")
+			case strings.Contains(err.Error(), "decryption failed"):
+				return web.NewError(http.StatusUnauthorized, "the supplied passphrase did not decrypt the archive — verify it matches the SWIRL_BACKUP_KEY in effect when the backup was created")
+			case strings.Contains(err.Error(), "SWIRL_BACKUP_KEY is not configured"):
+				return web.NewError(http.StatusPreconditionFailed, "no master key configured — set SWIRL_BACKUP_KEY or configure Vault before recovering")
+			case strings.Contains(err.Error(), "passphrase must be at least"):
+				return web.NewError(http.StatusBadRequest, err.Error())
+			}
+			return err
+		}
+		return success(c, rec)
 	}
 }
 

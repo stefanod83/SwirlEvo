@@ -219,6 +219,127 @@ First release of the SwirlEvo fork (continues [cuigh/swirl](https://github.com/c
   * Dependencies: `github.com/coreos/go-oidc/v3 v3.18.0`,
     `golang.org/x/oauth2 v0.36.0`.
 
+### Network topology view
+
+* New **Topology** tab under `Network`: interactive graph of networks,
+  containers, and connectivity for the selected host.
+* Visual cues: red highlight for ports published to `0.0.0.0` / `::`
+  (publicly exposed); blue border for `internal=true` networks (isolated).
+* Layouts: force-directed, circular, radial, sunburst, treemap, sankey,
+  hierarchical — picker in the top-right of the canvas.
+* New `Host` column on `Events` so audit entries are filterable by host
+  in standalone mode.
+* Branding refresh: `SwirlEvo` displayed across login, page header and
+  system info; bootstrap login fix (loads `/system/mode` before the form
+  renders so the right realm options are shown).
+
+### HashiCorp Vault integration
+
+* New `vault/` package: thin HTTP client for Vault KVv2.
+  * `vault/client.go` — Token + AppRole auth, `ReadKVv2`, request
+    timeout, TLS (`tls_skip_verify`, `ca_cert` PEM), namespace header
+    for Enterprise, token cache with TTL, `TestAuth` for the UI test
+    button. Token is `strings.TrimSpace`-d to neutralise pasted
+    newlines.
+  * `vault/backup_provider.go` — implements `biz.BackupKeyProvider` so
+    `SWIRL_BACKUP_KEY` can be sourced from a KVv2 entry when the env
+    var is empty. 5-minute cache for the resolved passphrase.
+  * `vault/wire.go` — DI registration with a closure that always
+    resolves the *live* `*misc.Setting` pointer.
+* New settings block `Settings.Vault` (`misc/option.go`) covering
+  enabled, address, namespace, auth_method, token, approle_*, kv_*,
+  backup_key_*, default_storage_mode, TLS, request_timeout.
+* New `Settings → Vault` UI panel with **Test connection** action that
+  surfaces the actual backend reason (sealed / not initialised / wrong
+  token / TLS error). Save now refreshes the in-memory settings
+  snapshot in place — closures captured at startup (Vault client,
+  backup key provider) see the new values without a restart.
+* **VaultSecret catalog**: `dao.VaultSecret` (entity), DAO methods on
+  both BoltDB and MongoDB, `biz.VaultSecretBiz` (CRUD + `Preview`
+  showing only field names, never values), API at
+  `/api/vault-secret/*`, Vue pages at `ui/src/pages/vault-secret/`.
+  Permissions: `vault_secret.{view,edit,delete}`.
+* **Per-stack secret bindings** (standalone compose stacks):
+  * `dao.ComposeStackSecretBinding` entity + DAO methods (Mongo + Bolt).
+  * `biz.ComposeStackSecretBiz` with materializer hook implementing
+    `compose.DeployHook` (`BeforeDeploy` / `ApplyToService` /
+    `AfterCreate` / `AfterRemove`); resolves the Vault value once per
+    deploy, computes `sha256` and stores it as `DeployedHash`.
+  * Three storage modes for files: **`tmpfs`** (in-memory tmpfs over
+    parent dir + `CopyToContainer` between Create and Start;
+    multiple bindings sharing the same parent collapse to one
+    mount), **`volume`** (project-scoped named volume populated by a
+    short-lived `busybox` helper container), **`init`** (same as
+    `volume` but the helper persists for audit). Plus **`env`** for
+    environment-variable injection.
+  * Cleanup is label-driven (`com.swirl.compose.secret-stack`,
+    `com.swirl.compose.secret-binding`) via a separate `cleanupHook`
+    so stack removal works even when Vault is unreachable.
+  * UI: bindings panel inside the standalone stack editor with add /
+    edit / delete, validation matching the biz layer, Vault secret
+    picker populated from `/vault-secret/list`.
+  * API at `/api/compose-stack-secret/{list,find,save,delete,drift}`,
+    permissions inherited from `stack.{view,edit}`.
+* **Drift check**: `CheckDrift(stackID)` per binding compares the
+  current Vault value's `sha256` against the stored `DeployedHash`.
+  States: `ok`, `drifted`, `missing`, `error`, `unknown`. Read-only,
+  best-effort, per-binding tolerant — surfaces orange/red badges next
+  to the deploy timestamp in the bindings table.
+* `BackupDocument` now includes `vaultSecrets` and
+  `composeStackSecretBindings` arrays (references only, never values).
+  Restore order respects dependencies: vault secrets before bindings.
+
+### Internal backup management
+
+* New backup subsystem (`biz/backup.go`, `biz/backup_crypto.go`,
+  `backup/backup.go`, `api/backup.go`):
+  * AES-256-GCM at-rest archives (`.swb` magic `SWBR`); 12-byte random
+    nonce; 32-byte key derived from `SWIRL_BACKUP_KEY` via
+    `scryptKDF(N=32768, r=8, p=1)` with fixed salt
+    `swirl-backup-at-rest`.
+  * Portable export format (`.enc` magic `SWBP`) with random per-file
+    salt — share archives across instances using only a passphrase
+    chosen at download time.
+  * Atomic file writes (`writeFileAtomic` = temp + `rename(2)`),
+    `0600` file mode, `0750` directory mode, configurable directory
+    via `SWIRL_BACKUP_DIR` (default `/data/swirl/backups`).
+  * Manual + scheduled backups (`daily`, `weekly`, `monthly`) with
+    retention; hourly scheduler tick; one schedule per type.
+  * Component-selective restore (settings, roles, users, registries,
+    Swarm stacks, compose stacks, hosts, charts, vault secret refs,
+    binding refs, events). Events are opt-in.
+  * Permissions: `backup.{view,edit,delete,restore,download}`.
+* **Key compatibility check + recovery** (new):
+  * Backup records now carry a 16-byte HMAC-SHA-256 fingerprint of
+    the master key they were encrypted with (label
+    `swirl-backup-key-fp/v1`). Stored in `dao.Backup.KeyFingerprint`
+    + `VerifiedAt` (both with `omitempty` for backward compatibility).
+  * Non-blocking startup goroutine compares stored fingerprints
+    against the current key's fingerprint and logs one summary line
+    (`backup key check: N/M compatible …`); per-failure detail
+    available via the API/UI. Legacy backups (no stored fingerprint)
+    appear as `unverified` until the operator clicks **Verify**.
+  * UI: per-row badge (`compatible` / `incompatible` / `unverified` /
+    `missing` / `unknown`) + page-level error banner counting
+    incompatibles + dialog accepting the **old** `SWIRL_BACKUP_KEY`,
+    decrypting with it via the new `decryptAtRestWithKey` helper, and
+    re-encrypting in place with the current master key. Atomic
+    rewrite + `BackupUpdate` DAO method (split from insert-only
+    `BackupCreate`); per-id mutex serialises Recover vs Delete.
+  * New API endpoints: `/backup/key-status`, `/backup/verify`,
+    `/backup/recover`. New permission **`backup.recover`**
+    (bit `1 << 13`), distinct from `restore` and `edit`.
+
+### i18n
+
+* Italian locale added (`ui/src/locales/it.ts`), wired in
+  `locales/index.ts`, `Profile.vue` (radio button), and `App.vue`
+  (Naive UI `itIT` + `dateItIT`). UI now ships **English / Italiano /
+  中文**.
+* Missing `buttons.prev` / `buttons.next` keys added to all three
+  locales (the backup restore/upload wizard buttons used to render the
+  raw key path).
+
 ---
 
 ## v1.0.0 (2021-12-15)

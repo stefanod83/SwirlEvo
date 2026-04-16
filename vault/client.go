@@ -286,10 +286,14 @@ func (c *Client) authenticate(ctx context.Context, cli *http.Client, s *misc.Set
 	}
 	switch method {
 	case AuthToken:
-		if s.Vault.Token == "" {
+		// Trim whitespace defensively: pasted Vault tokens often arrive
+		// with a trailing newline that the HTTP layer would happily send,
+		// causing Vault to reject them as malformed.
+		tok := strings.TrimSpace(s.Vault.Token)
+		if tok == "" {
 			return "", 0, errors.New("vault token is empty")
 		}
-		return s.Vault.Token, 0, nil
+		return tok, 0, nil
 	case AuthAppRole:
 		return loginAppRole(ctx, cli, s)
 	default:

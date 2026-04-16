@@ -531,7 +531,8 @@ async function testVault() {
   try {
     await settingApi.save('vault', setting.value.vault)
     const r = await vaultApi.test()
-    const res = r.data?.data
+    // r is Result<VaultTestResult> → r.data is the VaultTestResult.
+    const res = r.data
     if (res?.ok) {
       vaultTestType.value = 'success'
       vaultTestMsg.value = t('texts.vault_test_ok') + (res.version ? ` (v${res.version})` : '')

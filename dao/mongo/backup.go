@@ -18,6 +18,21 @@ func (d *Dao) BackupCreate(ctx context.Context, backup *dao.Backup) error {
 	return d.create(ctx, Backup, backup)
 }
 
+// BackupUpdate sets only the mutable fields. created_at / created_by /
+// name / source are preserved so a recovery never accidentally rewrites
+// the audit trail.
+func (d *Dao) BackupUpdate(ctx context.Context, backup *dao.Backup) error {
+	return d.update(ctx, Backup, backup.ID, bson.M{"$set": bson.M{
+		"size":            backup.Size,
+		"checksum":        backup.Checksum,
+		"path":            backup.Path,
+		"includes":        backup.Includes,
+		"stats":           backup.Stats,
+		"key_fingerprint": backup.KeyFingerprint,
+		"verified_at":     backup.VerifiedAt,
+	}})
+}
+
 func (d *Dao) BackupGet(ctx context.Context, id string) (backup *dao.Backup, err error) {
 	backup = &dao.Backup{}
 	found, err := d.find(ctx, Backup, id, backup)

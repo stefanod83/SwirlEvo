@@ -104,11 +104,24 @@
       </n-grid>
     </x-panel>
 
+    <n-alert
+      v-if="keySummary && keySummary.incompatible > 0"
+      type="error"
+    >
+      <n-space :size="12" align="center">
+        <span>{{ t('backup.key_summary_banner', { incompatible: keySummary.incompatible }) }}</span>
+        <n-button size="tiny" type="error" @click="refreshKeyStatus">
+          {{ t('backup.key_summary_refresh') }}
+        </n-button>
+      </n-space>
+    </n-alert>
+
     <n-table size="small" :bordered="true" :single-line="false">
       <thead>
         <tr>
           <th>{{ t('fields.name') }}</th>
           <th>{{ t('backup.source') }}</th>
+          <th>{{ t('backup.key_status') }}</th>
           <th>{{ t('backup.size') }}</th>
           <th>{{ t('fields.created_at') }}</th>
           <th>{{ t('fields.actions') }}</th>
@@ -116,7 +129,7 @@
       </thead>
       <tbody>
         <tr v-if="backups.length === 0">
-          <td colspan="5" style="text-align:center; opacity: 0.6;">{{ t('backup.empty') }}</td>
+          <td colspan="6" style="text-align:center; opacity: 0.6;">{{ t('backup.empty') }}</td>
         </tr>
         <tr v-for="(r, index) of backups" :key="r.id">
           <td>
@@ -124,6 +137,16 @@
           </td>
           <td>
             <n-tag size="small" :type="sourceColor(r.source)">{{ t('backup.source_' + r.source) }}</n-tag>
+          </td>
+          <td>
+            <n-tooltip v-if="keyBadge(r)" trigger="hover">
+              <template #trigger>
+                <n-tag size="small" :type="keyBadge(r)!.type as any">
+                  {{ keyBadge(r)!.label }}
+                </n-tag>
+              </template>
+              {{ keyBadge(r)!.tooltip }}
+            </n-tooltip>
           </td>
           <td>{{ formatSize(r.size) }}</td>
           <td>
@@ -136,6 +159,24 @@
               </n-button>
               <n-button size="tiny" quaternary type="warning" @click="openRestore(r)">
                 {{ t('backup.restore') }}
+              </n-button>
+              <n-button
+                v-if="r.keyStatus === 'unverified'"
+                size="tiny"
+                quaternary
+                type="info"
+                @click="doVerify(r, index)"
+              >
+                {{ t('backup.verify') }}
+              </n-button>
+              <n-button
+                v-if="r.keyStatus === 'incompatible' || r.keyStatus === 'unverified'"
+                size="tiny"
+                quaternary
+                type="warning"
+                @click="openRecover(r)"
+              >
+                {{ t('backup.recover') }}
               </n-button>
               <n-popconfirm :show-icon="false" @positive-click="deleteBackup(r.id, index)">
                 <template #trigger>
@@ -247,6 +288,28 @@
       </n-alert>
     </div>
   </n-modal>
+
+  <n-modal
+    v-model:show="recoverDialog.show"
+    preset="dialog"
+    style="width: 480px"
+    :title="t('backup.recover_title')"
+    :positive-text="t('backup.recover')"
+    :negative-text="t('buttons.cancel')"
+    :loading="recoverDialog.loading"
+    @positive-click="doRecover"
+  >
+    <n-space vertical :size="12">
+      <n-alert type="info">{{ t('backup.recover_hint') }}</n-alert>
+      <n-input
+        v-model:value="recoverDialog.oldPassphrase"
+        type="password"
+        :placeholder="t('backup.recover_passphrase')"
+        show-password-on="click"
+        @keyup.enter="doRecover"
+      />
+    </n-space>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -255,14 +318,14 @@ import {
   NSpace, NButton, NTable, NTag, NTime, NPopconfirm, NIcon, NAlert,
   NCard, NForm, NFormItem, NSwitch, NInput, NInputNumber, NTimePicker,
   NSelect, NCheckbox, NCheckboxGroup, NRadio, NRadioGroup, NModal,
-  NGrid, NGi, NUpload,
+  NGrid, NGi, NUpload, NTooltip,
 } from 'naive-ui'
 import type { UploadCustomRequestOptions } from 'naive-ui'
 import { AddOutline as AddIcon, CloudUploadOutline as CloudUploadIcon } from '@vicons/ionicons5'
 import XPageHeader from '@/components/PageHeader.vue'
 import XPanel from '@/components/Panel.vue'
 import backupApi from '@/api/backup'
-import type { Backup, BackupSchedule, BackupStatus } from '@/api/backup'
+import type { Backup, BackupSchedule, BackupStatus, BackupKeyStatusSummary } from '@/api/backup'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -276,6 +339,7 @@ const status = ref<BackupStatus>({ keyConfigured: true })
 const backups = ref<Backup[]>([])
 const creating = ref(false)
 const schedulesOpen = ref(false)
+const keySummary = ref<BackupKeyStatusSummary | null>(null)
 
 type ScheduleKind = 'daily' | 'weekly' | 'monthly'
 
@@ -327,6 +391,52 @@ async function refresh() {
 
   const s = await backupApi.schedules()
   for (const row of (s.data || [])) loadSchedule(row)
+
+  // The key-status summary drives the page-level banner. Best-effort:
+  // if the call fails (e.g. API not yet rolled out) the rest of the page
+  // still renders.
+  await refreshKeyStatus()
+}
+
+async function refreshKeyStatus() {
+  try {
+    const r = await backupApi.keyStatus()
+    keySummary.value = r.data || null
+  } catch {
+    keySummary.value = null
+  }
+}
+
+// keyBadge maps a backup's KeyStatus to a Naive UI tag config. Returns
+// null when no badge should be rendered (compatible / unknown).
+function keyBadge(r: Backup): { label: string; type: string; tooltip: string } | null {
+  switch (r.keyStatus) {
+    case 'incompatible':
+      return { label: t('backup.key_incompatible'), type: 'error', tooltip: t('backup.key_incompatible_tooltip') }
+    case 'unverified':
+      return { label: t('backup.key_unverified'), type: 'warning', tooltip: t('backup.key_unverified_tooltip') }
+    case 'missing':
+      return { label: t('backup.key_missing_file'), type: 'default', tooltip: t('backup.recover_failed_missing_file') }
+    case 'unknown':
+      return { label: t('backup.key_unknown'), type: 'default', tooltip: t('backup.key_check_skipped') }
+    default:
+      return null
+  }
+}
+
+async function doVerify(r: Backup, index: number) {
+  try {
+    const resp = await backupApi.verify(r.id)
+    if (resp.data) backups.value[index] = resp.data
+    if (resp.data?.keyStatus === 'compatible') {
+      window.message?.success?.(t('backup.verify_done'))
+    } else {
+      window.message?.warning?.(t('backup.verify_failed'))
+    }
+    await refreshKeyStatus()
+  } catch (e: any) {
+    window.message?.error?.(e?.message || String(e))
+  }
 }
 
 function loadSchedule(row: BackupSchedule) {
@@ -548,6 +658,50 @@ function uploadPrev() {
     return false
   }
   return true
+}
+
+// ------- Recover dialog -------
+
+const recoverDialog = reactive({
+  show: false,
+  loading: false,
+  id: '',
+  oldPassphrase: '',
+})
+
+function openRecover(r: Backup) {
+  recoverDialog.id = r.id
+  recoverDialog.oldPassphrase = ''
+  recoverDialog.loading = false
+  recoverDialog.show = true
+}
+
+async function doRecover() {
+  if (!recoverDialog.oldPassphrase || recoverDialog.oldPassphrase.length < 16) {
+    // Mirror the backend's backupKeyMinLen so the user gets immediate feedback.
+    window.message?.error?.(t('backup.key_missing_body'))
+    return false
+  }
+  recoverDialog.loading = true
+  try {
+    const r = await backupApi.recover(recoverDialog.id, recoverDialog.oldPassphrase)
+    // Replace the row in-place so the UI reflects the new keyStatus.
+    if (r.data) {
+      const idx = backups.value.findIndex(b => b.id === recoverDialog.id)
+      if (idx >= 0) backups.value[idx] = r.data
+    }
+    window.message?.success?.(t('backup.recover_done'))
+    await refreshKeyStatus()
+    recoverDialog.show = false
+    return true
+  } catch (e: any) {
+    // The handler already returns the localized-ish messages — just surface.
+    const msg = e?.response?.data?.message || e?.message || String(e)
+    window.message?.error?.(msg)
+    return false
+  } finally {
+    recoverDialog.loading = false
+  }
 }
 
 onMounted(refresh)
