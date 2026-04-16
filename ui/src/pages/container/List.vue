@@ -8,6 +8,27 @@
           </template>
           {{ t('buttons.refresh') || 'Refresh' }}
         </n-button>
+        <!-- Bulk actions: visible when at least one container is selected -->
+        <n-button
+          v-if="checkedIds.length"
+          secondary size="small" type="success"
+          @click="bulkAction('start')"
+        >{{ t('buttons.start') }} ({{ checkedIds.length }})</n-button>
+        <n-button
+          v-if="checkedIds.length"
+          secondary size="small" type="warning"
+          @click="bulkAction('stop')"
+        >{{ t('buttons.stop') }} ({{ checkedIds.length }})</n-button>
+        <n-button
+          v-if="checkedIds.length"
+          secondary size="small" type="info"
+          @click="bulkAction('restart')"
+        >{{ t('buttons.restart') }} ({{ checkedIds.length }})</n-button>
+        <n-button
+          v-if="checkedIds.length"
+          secondary size="small" type="error"
+          @click="bulkActionConfirm('delete')"
+        >{{ t('buttons.delete') }} ({{ checkedIds.length }})</n-button>
         <n-button secondary size="small" type="warning" @click="prune" :disabled="!filter.node">
           <template #icon>
             <n-icon><close-icon /></n-icon>
@@ -42,6 +63,15 @@
           @update:value="() => fetchData()"
           style="width: 220px"
         />
+        <n-select
+          size="small"
+          v-model:value="filter.status"
+          :options="statusOptions"
+          clearable
+          :placeholder="t('container.all_states')"
+          @update:value="() => fetchData()"
+          style="width: 150px;"
+        />
         <n-input size="small" v-model:value="filter.name" :placeholder="t('fields.name')" clearable />
         <n-button size="small" type="primary" @click="() => fetchData()">{{ t('buttons.search') }}</n-button>
       </n-space>
@@ -51,6 +81,9 @@
         :loading="state.loading"
         :pagination="pagination"
         :show-stack-column="isStandalone"
+        selectable
+        :checked-keys="checkedIds"
+        @update:checked-keys="(k: string[]) => checkedIds = k"
         @refresh="fetchData"
         @update:page="fetchData"
         @update-page-size="changePageSize"
@@ -91,12 +124,26 @@ const dialog = useDialog()
 const message = useMessage()
 const isStandalone = computed(() => store.state.mode === 'standalone')
 const selectedHostId = computed(() => store.state.selectedHostId as string | null)
-const filter = reactive({ node: '', name: '', project: '' })
+const filter = reactive({ node: '', name: '', project: '', status: '' })
 const nodes: any = ref([])
 const stackOptions: any = ref([])
+const checkedIds = ref<string[]>([])
 const showEmpty = computed(() => isStandalone.value && !selectedHostId.value)
 
-const { state, pagination, fetchData, changePageSize } = useDataTable(containerApi.search, filter, false)
+const statusOptions = [
+  { label: t('container.all_states'), value: '' },
+  { label: 'Running', value: 'running' },
+  { label: 'Exited', value: 'exited' },
+  { label: 'Created', value: 'created' },
+  { label: 'Paused', value: 'paused' },
+]
+
+const { state, pagination, fetchData: fetchDataRaw, changePageSize } = useDataTable(containerApi.search, filter, false)
+
+function fetchData(page?: number) {
+  checkedIds.value = []
+  return fetchDataRaw(page)
+}
 
 async function loadStacks() {
   if (!isStandalone.value || !filter.node) {
@@ -128,6 +175,53 @@ async function prune() {
         size: formatSize(r.data?.size as number),
       }));
       fetchData();
+    }
+  })
+}
+
+async function bulkAction(action: 'start' | 'stop' | 'restart') {
+  const ids = [...checkedIds.value]
+  const errors: string[] = []
+  for (const id of ids) {
+    try {
+      const name = (state.data as any[])?.find((c: any) => c.id === id)?.name || id
+      switch (action) {
+        case 'start': await containerApi.start(filter.node, id, name); break
+        case 'stop': await containerApi.stop(filter.node, id, name); break
+        case 'restart': await containerApi.restart(filter.node, id, name); break
+      }
+    } catch (e: any) {
+      errors.push(`${id.substring(0, 12)}: ${e?.message || e}`)
+    }
+  }
+  checkedIds.value = []
+  if (errors.length) message.error(errors.join('\n'))
+  else message.success(`${action}: ${ids.length} container(s)`)
+  fetchData()
+}
+
+function bulkActionConfirm(action: 'delete' | 'kill') {
+  dialog.warning({
+    title: action === 'delete' ? t('buttons.delete') : t('buttons.kill'),
+    content: t('prompts.delete'),
+    positiveText: t('buttons.confirm'),
+    negativeText: t('buttons.cancel'),
+    onPositiveClick: async () => {
+      const ids = [...checkedIds.value]
+      const errors: string[] = []
+      for (const id of ids) {
+        try {
+          const name = (state.data as any[])?.find((c: any) => c.id === id)?.name || id
+          if (action === 'delete') await containerApi.delete(filter.node, id, name)
+          else await containerApi.kill(filter.node, id, name)
+        } catch (e: any) {
+          errors.push(`${id.substring(0, 12)}: ${e?.message || e}`)
+        }
+      }
+      checkedIds.value = []
+      if (errors.length) message.error(errors.join('\n'))
+      else message.success(`${action}: ${ids.length} container(s)`)
+      fetchData()
     }
   })
 }

@@ -39,6 +39,7 @@ export interface SearchArgs {
     node?: string;
     name?: string;
     status?: string;
+    project?: string;
     pageIndex: number;
     pageSize: number;
 }

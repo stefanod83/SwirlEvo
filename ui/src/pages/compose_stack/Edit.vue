@@ -12,6 +12,15 @@
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="16">
+    <n-alert
+      v-if="model.errorMessage"
+      type="error"
+      :title="t('stack_secret.deploy_error_title')"
+      closable
+      @close="model.errorMessage = ''"
+    >
+      <pre style="white-space: pre-wrap; margin: 0; font-size: 12px;">{{ model.errorMessage }}</pre>
+    </n-alert>
     <n-form :model="model" ref="form" :rules="rules" label-placement="top">
       <n-grid cols="2" x-gap="16">
         <n-form-item-gi :label="t('objects.host')" path="hostId">
@@ -304,6 +313,7 @@ const model = reactive({
   hostId: '',
   name: '',
   content: '',
+  errorMessage: '',
 } as ComposeStack)
 
 const hosts: any = ref([])
@@ -530,6 +540,7 @@ onMounted(async () => {
       model.hostId = s.data.hostId
       model.name = s.data.name
       model.content = s.data.content || ''
+      model.errorMessage = s.data.errorMessage || ''
     }
     await Promise.all([loadVaultSecrets(), reloadBindings()])
   } else {

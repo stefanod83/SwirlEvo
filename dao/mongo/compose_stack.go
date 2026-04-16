@@ -33,6 +33,10 @@ func (d *Dao) ComposeStackUpdateStatus(ctx context.Context, id, status string) e
 	return d.update(ctx, ComposeStack, id, bson.M{"$set": bson.M{"status": status}})
 }
 
+func (d *Dao) ComposeStackUpdateError(ctx context.Context, id, errorMessage string) error {
+	return d.update(ctx, ComposeStack, id, bson.M{"$set": bson.M{"error_message": errorMessage}})
+}
+
 func (d *Dao) ComposeStackGet(ctx context.Context, id string) (*dao.ComposeStack, error) {
 	s := &dao.ComposeStack{}
 	found, err := d.find(ctx, ComposeStack, id, s)

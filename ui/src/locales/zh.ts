@@ -649,6 +649,9 @@ export default {
         "vault_prefix": "Vault 子前缀",
         "storage_vault_hint": "归档将写入 <kv_mount>/data/<kv_prefix><vault_prefix>/<id>。Swirl 使用的 Vault token 必须对这些路径具有 create/update/read/delete 权限。KVv2 默认每条目 1 MiB 限制 — 如备份较大请在 Vault 中调高该限制。"
     },
+    "container": {
+        "all_states": "所有状态"
+    },
     "image": {
         "tag_action": "添加 tag",
         "tag_title": "添加新 tag",
@@ -740,7 +743,8 @@ export default {
         "drift_missing": "已删除",
         "drift_error": "Vault 错误",
         "target_path_required": "目标路径不能为空，且必须为绝对路径（以 '/' 开头）。",
-        "env_name_required": "环境变量名不能为空。"
+        "env_name_required": "环境变量名不能为空。",
+        "deploy_error_title": "上次部署失败"
     },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork)。保留所有权利。",
 }

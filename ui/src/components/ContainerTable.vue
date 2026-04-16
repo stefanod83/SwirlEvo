@@ -2,11 +2,13 @@
   <n-data-table
     :row-key="(row: any) => row.id"
     size="small"
-    :columns="columns"
+    :columns="allColumns"
     :data="data"
     :pagination="pagination"
     :loading="loading"
     remote
+    :checked-row-keys="selectable ? checkedKeys : undefined"
+    @update:checked-row-keys="(k: any) => $emit('update:checkedKeys', k)"
     @update:page="(p: number) => $emit('update:page', p)"
     @update-page-size="(s: number) => $emit('update-page-size', s)"
     scroll-x="max-content"
@@ -35,12 +37,15 @@ const props = defineProps<{
   loading?: boolean;
   pagination?: any;
   showStackColumn?: boolean;
+  selectable?: boolean;
+  checkedKeys?: string[];
 }>()
 
 const emit = defineEmits<{
   (e: 'refresh'): void;
   (e: 'update:page', p: number): void;
   (e: 'update-page-size', s: number): void;
+  (e: 'update:checkedKeys', keys: string[]): void;
 }>()
 
 const { t } = useI18n()
@@ -73,6 +78,11 @@ function confirmDelete(c: Container) {
 function projectOf(c: Container): string {
   return c.labels?.find(l => l.name === 'com.docker.compose.project')?.value || ''
 }
+
+const allColumns = computed(() => {
+  const sel = props.selectable ? [{ type: 'selection' as const, fixed: 'left' as const }] : []
+  return [...sel, ...columns.value]
+})
 
 const columns = computed(() => {
   const base: any[] = [

@@ -33,6 +33,14 @@ func (d *Dao) ComposeStackUpdateStatus(ctx context.Context, id, status string) e
 	})
 }
 
+func (d *Dao) ComposeStackUpdateError(ctx context.Context, id, errorMessage string) error {
+	old := &dao.ComposeStack{}
+	return d.update(ComposeStack, id, old, func() interface{} {
+		old.ErrorMessage = errorMessage
+		return old
+	})
+}
+
 func (d *Dao) ComposeStackGet(ctx context.Context, id string) (*dao.ComposeStack, error) {
 	s := &dao.ComposeStack{}
 	err := d.get(ComposeStack, id, s)

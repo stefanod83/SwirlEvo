@@ -655,6 +655,9 @@ export default {
         "vault_prefix": "Vault sub-prefix",
         "storage_vault_hint": "Archives are stored under <kv_mount>/data/<kv_prefix><vault_prefix>/<id>. The Vault token used by Swirl needs create/update/read/delete capabilities on those paths. KVv2 defaults to a 1 MiB limit per entry — raise it in Vault if your backups grow large."
     },
+    "container": {
+        "all_states": "All states"
+    },
     "image": {
         "tag_action": "Add tag",
         "tag_title": "Add a new tag",
@@ -746,7 +749,8 @@ export default {
         "drift_missing": "missing",
         "drift_error": "vault error",
         "target_path_required": "Target path is required and must be absolute (start with '/').",
-        "env_name_required": "Environment variable name is required."
+        "env_name_required": "Environment variable name is required.",
+        "deploy_error_title": "Last deploy failed"
     },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork). All rights reserved.",
 }

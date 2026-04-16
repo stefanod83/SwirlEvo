@@ -7,6 +7,7 @@ export interface ComposeStack {
     name: string;
     content: string;
     status?: string;
+    errorMessage?: string;
     containers?: number;
     running?: number;
     services?: number;

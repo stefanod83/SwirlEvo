@@ -241,17 +241,21 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 	// A nil hook is perfectly valid — the engine skips over it.
 	hook, err := b.sec.NewHook(ctx, id)
 	if err != nil {
+		errMsg := fmt.Sprintf("prepare secrets: %v", err)
 		_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
-		return id, fmt.Errorf("prepare secrets: %w", err)
+		_ = b.di.ComposeStackUpdateError(ctx, id, errMsg)
+		return id, fmt.Errorf("%s", errMsg)
 	}
 	if err := engine.Deploy(ctx, stack.Name, stack.Content, compose.DeployOptions{
 		PullImages: pullImages,
 		Hook:       hook,
 	}); err != nil {
 		_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
+		_ = b.di.ComposeStackUpdateError(ctx, id, err.Error())
 		return id, err
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "active")
+	_ = b.di.ComposeStackUpdateError(ctx, id, "") // clear previous error on success
 	b.eb.CreateStack(EventActionDeploy, stack.HostID, stack.Name, user)
 	return id, nil
 }
