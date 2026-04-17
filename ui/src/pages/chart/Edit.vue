@@ -1,7 +1,7 @@
 <template>
   <x-page-header>
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'chart_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -141,10 +141,21 @@ import type { Chart } from "@/api/chart";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
 import { useForm, requiredRule, customRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
+
+function onReturn() {
+  const id = route.params.id as string
+  if (id) {
+    returnTo({ name: 'chart_detail', params: { id } })
+  } else {
+    returnTo({ name: 'chart_list' })
+  }
+}
+
 const model = ref({
   type: 'line',
   dashboard: 'home',

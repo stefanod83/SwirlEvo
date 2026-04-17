@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="model.name">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'role_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -100,11 +100,21 @@ import roleApi from "@/api/role";
 import type { Role } from "@/api/role";
 import { perms } from "@/utils/perm";
 import { useForm, requiredRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
 const model = ref({ perms: [] as string[] } as Role);
+
+function onReturn() {
+  const id = route.params.id as string
+  if (id) {
+    returnTo({ name: 'role_detail', params: { id } })
+  } else {
+    returnTo({ name: 'role_list' })
+  }
+}
 const rules: any = {
   name: requiredRule(),
 };

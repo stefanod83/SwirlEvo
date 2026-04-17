@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="model.name">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'service_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -544,10 +544,20 @@ import secretApi from "@/api/secret";
 import networkApi from "@/api/network";
 import type { Network } from "@/api/network";
 import { useForm, requiredRule, customRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
+
+function onReturn() {
+  const name = route.params.name as string
+  if (name) {
+    returnTo({ name: 'service_detail', params: { name } })
+  } else {
+    returnTo({ name: 'service_list' })
+  }
+}
 const model = ref({
   replicas: 1,
   endpoint: {},

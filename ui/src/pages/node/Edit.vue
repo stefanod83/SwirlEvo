@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="model.name ?? model.hostname">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'node_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -90,11 +90,21 @@ import type { Node } from "@/api/node";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
 import { useForm } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Node);
+
+function onReturn() {
+  const id = route.params.id as string
+  if (id) {
+    returnTo({ name: 'node_detail', params: { id } })
+  } else {
+    returnTo({ name: 'node_list' })
+  }
+}
 const form = ref();
 const { submit, submiting } = useForm(form, () => nodeApi.save(model.value), () => {
   window.message.info(t('texts.action_success'));

@@ -1,7 +1,7 @@
 <template>
   <x-page-header>
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'std_network_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -97,6 +97,7 @@ import networkApi from "@/api/network";
 import type { Network } from "@/api/network";
 import { router } from "@/router/router";
 import { useForm, requiredRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useStore } from "vuex";
 import { useI18n } from 'vue-i18n'
 
@@ -104,6 +105,10 @@ const { t } = useI18n()
 const store = useStore()
 const selectedHostId = computed(() => store.state.selectedHostId as string | null)
 const model = ref({ driver: 'bridge', scope: 'local', ipam: { config: [] as any[] } } as any as Network);
+
+function onReturn() {
+  returnTo({ name: 'std_network_list' })
+}
 const rules: any = { name: requiredRule() }
 const form = ref();
 const { submit, submiting } = useForm(form,

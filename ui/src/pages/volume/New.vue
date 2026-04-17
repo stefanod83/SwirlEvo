@@ -1,7 +1,7 @@
 <template>
   <x-page-header>
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'volume_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -87,10 +87,15 @@ import volumeApi from "@/api/volume";
 import type { Volume } from "@/api/volume";
 import { router } from "@/router/router";
 import { useForm, requiredRule, customRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const model = ref({ driver: 'local' } as Volume);
+
+function onReturn() {
+  returnTo({ name: 'volume_list' })
+}
 const rules: any = {
   name: requiredRule(),
   driver: customRule((rule: any, value: string): boolean => {

@@ -1,7 +1,7 @@
 <template>
   <x-page-header>
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'std_stack_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <arrow-back-icon />
@@ -416,6 +416,7 @@ import * as hostApi from "@/api/host";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from 'vue-i18n'
 import { requiredRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 
 const { t } = useI18n()
 const route = useRoute()
@@ -425,6 +426,17 @@ const form = ref()
 const submitting = ref(false)
 const pullImages = ref(false)
 const isEdit = computed(() => !!route.params.id)
+
+function onReturn() {
+  // When editing an existing stack and there's no history (deep link), go to
+  // the stack's detail page rather than the list — the detail page is the
+  // "parent" context for the editor.
+  if (isEdit.value && route.params.id) {
+    returnTo({ name: 'std_stack_detail', params: { id: route.params.id as string } })
+  } else {
+    returnTo({ name: 'std_stack_list' })
+  }
+}
 
 const model = reactive({
   id: '',

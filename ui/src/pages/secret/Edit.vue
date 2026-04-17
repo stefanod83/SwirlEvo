@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="model.name">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'secret_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -113,11 +113,21 @@ import type { Secret } from "@/api/secret";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
 import { useForm, requiredRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
 const name = route.params.name as string || ''
+
+function onReturn() {
+  const id = route.params.id as string
+  if (id) {
+    returnTo({ name: 'secret_detail', params: { id } })
+  } else {
+    returnTo({ name: 'secret_list' })
+  }
+}
 const model = ref({
   driver: {},
   templating: { name: 'none' },

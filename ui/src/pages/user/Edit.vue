@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="user.id">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'user_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -159,10 +159,20 @@ import { useForm, emailRule, requiredRule, customRule } from "@/utils/form";
 import { useI18n } from 'vue-i18n'
 import { useClipboard } from '@vueuse/core'
 import { guid } from "@/utils";
+import { returnTo } from "@/utils/nav";
 
 const { t } = useI18n()
 const route = useRoute();
 const user = ref({ type: 'internal', admin: false } as User)
+
+function onReturn() {
+  const id = route.params.id as string
+  if (id) {
+    returnTo({ name: 'user_detail', params: { id } })
+  } else {
+    returnTo({ name: 'user_list' })
+  }
+}
 const roles = ref([] as Role[]);
 // Password is required only for new internal users. LDAP / Keycloak
 // users authenticate against the upstream provider — no local password.

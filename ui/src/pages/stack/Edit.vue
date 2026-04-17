@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="model.name">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'stack_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -105,11 +105,21 @@ import type { Stack } from "@/api/stack";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
 import { requiredRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Stack);
+
+function onReturn() {
+  const name = route.params.name as string
+  if (name) {
+    returnTo({ name: 'stack_detail', params: { name } })
+  } else {
+    returnTo({ name: 'stack_list' })
+  }
+}
 const type = ref("input")
 const rules: any = {
   name: requiredRule(),

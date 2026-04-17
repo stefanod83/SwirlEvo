@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="model.name">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'vault_secret_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon><back-icon /></n-icon>
         </template>
@@ -235,6 +235,7 @@ import settingApi from "@/api/setting";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
 import { useForm, requiredRule, customRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 interface LabelPair { name: string; value: string }
@@ -246,6 +247,12 @@ const form = ref()
 const model = ref({} as VaultSecret)
 const labels = ref<LabelPair[]>([])
 const catalogCollapsed = ref(false)
+
+function onReturn() {
+  // Vault secrets don't have a separate View page — detail/edit share Edit.vue.
+  // Fallback to the list; honour browser history when available.
+  returnTo({ name: 'vault_secret_list' })
+}
 
 // Vault status + preview (single refresh call hydrates both)
 const statusInfo = ref<VaultSecretStatus | null>(null)

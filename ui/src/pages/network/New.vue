@@ -1,7 +1,7 @@
 <template>
   <x-page-header>
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'network_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -142,10 +142,15 @@ import networkApi from "@/api/network";
 import type { Network } from "@/api/network";
 import { router } from "@/router/router";
 import { useForm, requiredRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const model = ref({ driver: 'overlay', scope: 'swarm', ipam: {} } as Network);
+
+function onReturn() {
+  returnTo({ name: 'network_list' })
+}
 const rules: any = {
   name: requiredRule(),
 };

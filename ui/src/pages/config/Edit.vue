@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="model.name">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'config_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -95,12 +95,22 @@ import type { Config } from "@/api/config";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
 import { useForm, requiredRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
 const name = route.params.name as string || ''
 const model = ref({ templating: { name: 'none' } } as Config);
+
+function onReturn() {
+  const id = route.params.id as string
+  if (id) {
+    returnTo({ name: 'config_detail', params: { id } })
+  } else {
+    returnTo({ name: 'config_list' })
+  }
+}
 const rules: any = {
   name: requiredRule(),
   data: requiredRule(),

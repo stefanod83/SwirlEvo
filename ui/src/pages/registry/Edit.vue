@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="model.name">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'registry_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -74,11 +74,21 @@ import type { Registry } from "@/api/registry";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
 import { useForm, requiredRule } from "@/utils/form";
+import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Registry);
+
+function onReturn() {
+  const id = route.params.id as string
+  if (id) {
+    returnTo({ name: 'registry_detail', params: { id } })
+  } else {
+    returnTo({ name: 'registry_list' })
+  }
+}
 const form = ref();
 const rules: any = {
   name: requiredRule(),
