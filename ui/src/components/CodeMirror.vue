@@ -5,7 +5,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, onBeforeUnmount, onMounted, ref, toRefs, watch } from "vue";
+import { computed, defineComponent, onBeforeUnmount, onMounted, ref, toRefs, watch } from "vue";
 import { useThemeVars } from "naive-ui";
 import { useStore } from "vuex";
 // CodeMirror: common
@@ -53,6 +53,14 @@ export default defineComponent({
     const editorRef = ref();
     let editor: CodeMirror.EditorFromTextArea | null;
 
+    // Track the preference store so the CodeMirror theme updates on the fly
+    // when the user toggles dark/light mode without a page refresh. Without
+    // this, the editor stays on whichever theme was active at mount time —
+    // resulting in a white-on-white (or dark-on-dark) editor after toggling.
+    const cmTheme = computed(() =>
+      store.state.preference.theme === 'dark' ? 'seti' : 'default'
+    );
+
     watch(modelValue, () => {
       if (null != editor && modelValue.value && modelValue.value !== editor.getValue()) {
         editor.setValue(modelValue.value);
@@ -61,6 +69,11 @@ export default defineComponent({
     watch(readonly, () => {
       if (null != editor) {
         editor.setOption("readOnly", readonly.value);
+      }
+    });
+    watch(cmTheme, (v) => {
+      if (null != editor) {
+        editor.setOption("theme", v);
       }
     });
     onMounted(() => {
@@ -73,7 +86,7 @@ export default defineComponent({
         foldGutter: true,
         lineWrapping: true,
         gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter", "CodeMirror-lint-markers"],
-        theme: store.state.preference.theme === 'dark' ? 'seti' : 'default',
+        theme: cmTheme.value,
       });
       editor.on("change", () => {
         context.emit("update:modelValue", editor?.getValue());

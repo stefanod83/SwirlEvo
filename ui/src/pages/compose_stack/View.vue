@@ -76,7 +76,7 @@
           v-model="editableContent"
           :readonly="detail.managed"
           height="70vh"
-          :style="{ width: '100%', border: '1px solid #ddd' }"
+          :style="{ width: '100%' }"
         />
 
         <!-- Env vars (read-only) -->
@@ -296,9 +296,15 @@ onMounted(async () => {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
-  background: var(--n-color-modal, #f5f5f5);
+  /* Use a semi-transparent neutral that adapts to both light and dark
+     themes without depending on a specific Naive UI CSS variable — those
+     are only populated inside the n-config-provider and their fallback
+     colors (e.g. #f5f5f5) render as "light on light" in dark mode. */
+  background-color: rgba(128, 128, 128, 0.08);
+  color: inherit;
   padding: 12px;
   border-radius: 4px;
+  border: 1px solid rgba(128, 128, 128, 0.15);
   margin: 0;
 }
 </style>

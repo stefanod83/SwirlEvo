@@ -50,7 +50,7 @@
         v-model:value="model.envFile"
         :placeholder="t('stack_secret.env_file_placeholder')"
         :autosize="{ minRows: 3, maxRows: 15 }"
-        style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;"
+        :input-props="{ style: 'font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;' }"
       />
     </x-panel>
 
