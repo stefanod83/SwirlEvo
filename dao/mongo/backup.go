@@ -68,6 +68,39 @@ func (d *Dao) BackupDelete(ctx context.Context, id string) error {
 	return d.delete(ctx, Backup, id)
 }
 
+const BackupArchive = "backup_archive"
+
+func (d *Dao) BackupArchiveWrite(ctx context.Context, id string, data []byte) error {
+	_, err := d.db.Collection(BackupArchive).InsertOne(ctx, bson.M{
+		"_id":  id,
+		"data": data,
+	})
+	if err != nil {
+		// If it already exists, replace it.
+		_, err = d.db.Collection(BackupArchive).ReplaceOne(ctx, bson.M{"_id": id}, bson.M{
+			"_id":  id,
+			"data": data,
+		})
+	}
+	return err
+}
+
+func (d *Dao) BackupArchiveRead(ctx context.Context, id string) ([]byte, error) {
+	var doc struct {
+		Data []byte `bson:"data"`
+	}
+	err := d.db.Collection(BackupArchive).FindOne(ctx, bson.M{"_id": id}).Decode(&doc)
+	if err != nil {
+		return nil, err
+	}
+	return doc.Data, nil
+}
+
+func (d *Dao) BackupArchiveDelete(ctx context.Context, id string) error {
+	_, err := d.db.Collection(BackupArchive).DeleteOne(ctx, bson.M{"_id": id})
+	return err
+}
+
 func (d *Dao) BackupScheduleGet(ctx context.Context, id string) (schedule *dao.BackupSchedule, err error) {
 	schedule = &dao.BackupSchedule{}
 	found, err := d.find(ctx, BackupSchedule, id, schedule)

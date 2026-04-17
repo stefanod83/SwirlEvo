@@ -655,6 +655,7 @@ export default {
         "storage_mode": "Storage mode",
         "storage_fs": "Local filesystem (SWIRL_BACKUP_DIR, default)",
         "storage_vault": "HashiCorp Vault (KVv2)",
+        "storage_db": "Database (MongoDB only)",
         "vault_prefix": "Vault sub-prefix",
         "storage_vault_hint": "Archives are stored under <kv_mount>/data/<kv_prefix><vault_prefix>/<id>. The Vault token used by Swirl needs create/update/read/delete capabilities on those paths. KVv2 defaults to a 1 MiB limit per entry — raise it in Vault if your backups grow large."
     },

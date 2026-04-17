@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -73,6 +74,20 @@ func (d *Dao) BackupGetBySource(ctx context.Context, source string) (backups []*
 
 func (d *Dao) BackupDelete(ctx context.Context, id string) error {
 	return d.delete(Backup, id)
+}
+
+var errDBStorageNotSupported = fmt.Errorf("backup storage mode 'db' is not supported with BoltDB — use 'fs' or 'vault'")
+
+func (d *Dao) BackupArchiveWrite(ctx context.Context, id string, data []byte) error {
+	return errDBStorageNotSupported
+}
+
+func (d *Dao) BackupArchiveRead(ctx context.Context, id string) ([]byte, error) {
+	return nil, errDBStorageNotSupported
+}
+
+func (d *Dao) BackupArchiveDelete(ctx context.Context, id string) error {
+	return errDBStorageNotSupported
 }
 
 func (d *Dao) BackupScheduleGet(ctx context.Context, id string) (schedule *dao.BackupSchedule, err error) {

@@ -30,7 +30,7 @@
       <n-form-item :label="t('fields.content')" path="content">
         <x-code-mirror
           v-model="model.content"
-          :style="{ width: '100%', height: '55vh', border: '1px solid #ddd' }"
+          :style="{ width: '100%', height: '55vh' }"
         />
       </n-form-item>
       <n-space>

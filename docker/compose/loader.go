@@ -295,6 +295,7 @@ func createTransformHook(additionalTransformers ...Transformer) mapstructure.Dec
 		reflect.TypeOf(composetypes.HealthCheckTest{}):                  transformHealthCheckTest,
 		reflect.TypeOf(composetypes.ShellCommand{}):                     transformShellCommand,
 		reflect.TypeOf(composetypes.StringList{}):                       transformStringList,
+		reflect.TypeOf(composetypes.DependsOnList{}):                    transformDependsOnList,
 		reflect.TypeOf(map[string]string{}):                             transformMapStringString,
 		reflect.TypeOf(composetypes.UlimitsConfig{}):                    transformUlimits,
 		reflect.TypeOf(composetypes.UnitBytes(0)):                       transformSize,
@@ -785,6 +786,50 @@ func transformStringList(data interface{}) (interface{}, error) {
 		return value, nil
 	default:
 		return data, fmt.Errorf("invalid type %T for string list", value)
+	}
+}
+
+// transformDependsOnList accepts both compose v3 forms:
+//
+//	depends_on:
+//	  - serviceA
+//	  - serviceB
+//
+// and
+//
+//	depends_on:
+//	  serviceA:
+//	    condition: service_healthy
+//	  serviceB:
+//	    condition: service_started
+//
+// Only the service names are retained; condition/restart/required are
+// discarded because Swirl's standalone deploy does not enforce readiness.
+// Map keys are sorted for a deterministic result.
+func transformDependsOnList(data interface{}) (interface{}, error) {
+	switch value := data.(type) {
+	case []interface{}:
+		result := make([]string, 0, len(value))
+		for _, item := range value {
+			switch v := item.(type) {
+			case string:
+				result = append(result, v)
+			default:
+				return data, fmt.Errorf("invalid depends_on entry type %T", item)
+			}
+		}
+		return result, nil
+	case map[string]interface{}:
+		result := make([]string, 0, len(value))
+		for key := range value {
+			result = append(result, key)
+		}
+		sort.Strings(result)
+		return result, nil
+	case nil:
+		return []string{}, nil
+	default:
+		return data, fmt.Errorf("invalid type %T for depends_on", value)
 	}
 }
 

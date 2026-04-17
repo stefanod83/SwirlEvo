@@ -649,6 +649,7 @@ export default {
         "storage_mode": "存储方式",
         "storage_fs": "本地文件系统（SWIRL_BACKUP_DIR，默认）",
         "storage_vault": "HashiCorp Vault（KVv2）",
+        "storage_db": "数据库（仅 MongoDB）",
         "vault_prefix": "Vault 子前缀",
         "storage_vault_hint": "归档将写入 <kv_mount>/data/<kv_prefix><vault_prefix>/<id>。Swirl 使用的 Vault token 必须对这些路径具有 create/update/read/delete 权限。KVv2 默认每条目 1 MiB 限制 — 如备份较大请在 Vault 中调高该限制。"
     },

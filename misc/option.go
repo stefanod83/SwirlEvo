@@ -106,7 +106,7 @@ type Setting struct {
 	// SWIRL_BACKUP_KEY) does not depend on the storage location; only the
 	// destination of the encrypted bytes does.
 	Backup struct {
-		StorageMode string `json:"storage_mode"` // "fs" (default) | "vault"
+		StorageMode string `json:"storage_mode"` // "fs" (default) | "vault" | "db"
 		// VaultPrefix is appended to the configured Vault.KVPrefix when
 		// storage_mode=vault. Defaults to "backups" so the full KVv2
 		// path becomes `<mount>/data/<kv_prefix><vault_prefix>/<id>`.

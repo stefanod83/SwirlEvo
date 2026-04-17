@@ -164,7 +164,7 @@ type ServiceConfig struct {
 	Configs         []ServiceConfigObjConfig         `yaml:",omitempty" json:"configs,omitempty"`
 	ContainerName   string                           `mapstructure:"container_name" yaml:"container_name,omitempty" json:"container_name,omitempty"`
 	CredentialSpec  CredentialSpecConfig             `mapstructure:"credential_spec" yaml:"credential_spec,omitempty" json:"credential_spec,omitempty"`
-	DependsOn       []string                         `mapstructure:"depends_on" yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	DependsOn       DependsOnList                    `mapstructure:"depends_on" yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
 	Deploy          DeployConfig                     `yaml:",omitempty" json:"deploy,omitempty"`
 	Devices         []string                         `yaml:",omitempty" json:"devices,omitempty"`
 	DNS             StringList                       `yaml:",omitempty" json:"dns,omitempty"`
@@ -228,6 +228,13 @@ type ShellCommand []string
 
 // StringList is a type for fields that can be a string or list of strings
 type StringList []string
+
+// DependsOnList is the list of services a service depends on. It supports both
+// the compose v3 short form (a plain list of service names) and the long form
+// (a map keyed by service name with {condition, restart, required} values);
+// only the service names are retained — condition and restart are not
+// enforced by Swirl's standalone engine.
+type DependsOnList []string
 
 // StringOrNumberList is a type for fields that can be a list of strings or
 // numbers

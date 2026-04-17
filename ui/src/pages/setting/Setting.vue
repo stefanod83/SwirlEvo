@@ -446,6 +446,7 @@
           <n-radio-group v-model:value="setting.backup.storage_mode">
             <n-radio value="fs">{{ t('backup.storage_fs') }}</n-radio>
             <n-radio value="vault">{{ t('backup.storage_vault') }}</n-radio>
+            <n-radio value="db">{{ t('backup.storage_db') }}</n-radio>
           </n-radio-group>
         </n-form-item>
         <n-form-item

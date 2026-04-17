@@ -1209,6 +1209,7 @@ func backupDir() string {
 const (
 	backupSchemaFile  = "file://"
 	backupSchemaVault = "vault:"
+	backupSchemaDB    = "db:"
 )
 
 // backupStorageMode reads the live Settings and returns "fs" (default) or
@@ -1231,11 +1232,30 @@ func backupStorageMode() (mode, vaultPrefix string) {
 	return m, p
 }
 
+// isDBAvailable reports whether the current DAO supports backup archive
+// storage (MongoDB yes, BoltDB no). Used by the UI to disable the "db"
+// option when running with BoltDB.
+func (b *backupBiz) isDBStorageAvailable() bool {
+	err := b.d.BackupArchiveWrite(context.Background(), "__probe__", nil)
+	if err != nil && strings.Contains(err.Error(), "not supported") {
+		return false
+	}
+	// Clean up the probe (no-op if write failed).
+	_ = b.d.BackupArchiveDelete(context.Background(), "__probe__")
+	return true
+}
+
 // writeArchive persists an encrypted backup blob in the configured
 // storage backend and returns its schema-prefixed path for storage in
 // `dao.Backup.Path`.
 func (b *backupBiz) writeArchive(ctx context.Context, id string, archive []byte) (string, error) {
 	mode, vaultPrefix := backupStorageMode()
+	if mode == "db" {
+		if err := b.d.BackupArchiveWrite(ctx, id, archive); err != nil {
+			return "", fmt.Errorf("db write: %w", err)
+		}
+		return backupSchemaDB + id, nil
+	}
 	if mode == "vault" {
 		vc, err := lookupVaultClient()
 		if err != nil {
@@ -1279,6 +1299,8 @@ func (b *backupBiz) writeArchive(ctx context.Context, id string, archive []byte)
 func (b *backupBiz) readArchive(ctx context.Context, rec *dao.Backup) ([]byte, error) {
 	schema, loc := splitStoragePath(rec.Path)
 	switch schema {
+	case backupSchemaDB:
+		return b.d.BackupArchiveRead(ctx, loc)
 	case backupSchemaVault:
 		return b.readArchiveFromVault(ctx, loc)
 	default:
@@ -1292,6 +1314,8 @@ func (b *backupBiz) readArchive(ctx context.Context, rec *dao.Backup) ([]byte, e
 func (b *backupBiz) rewriteArchive(ctx context.Context, rec *dao.Backup, archive []byte) error {
 	schema, loc := splitStoragePath(rec.Path)
 	switch schema {
+	case backupSchemaDB:
+		return b.d.BackupArchiveWrite(ctx, loc, archive)
 	case backupSchemaVault:
 		vc, err := lookupVaultClient()
 		if err != nil {
@@ -1312,6 +1336,8 @@ func (b *backupBiz) rewriteArchive(ctx context.Context, rec *dao.Backup, archive
 func (b *backupBiz) deleteArchiveByPath(ctx context.Context, path string) error {
 	schema, loc := splitStoragePath(path)
 	switch schema {
+	case backupSchemaDB:
+		return b.d.BackupArchiveDelete(ctx, loc)
 	case backupSchemaVault:
 		vc, err := lookupVaultClient()
 		if err != nil {
@@ -1331,6 +1357,12 @@ func (b *backupBiz) deleteArchiveByPath(ctx context.Context, path string) error 
 func (b *backupBiz) archiveMissing(ctx context.Context, rec *dao.Backup) (bool, error) {
 	schema, loc := splitStoragePath(rec.Path)
 	switch schema {
+	case backupSchemaDB:
+		data, err := b.d.BackupArchiveRead(ctx, loc)
+		if err != nil {
+			return true, nil
+		}
+		return len(data) == 0, nil
 	case backupSchemaVault:
 		vc, err := lookupVaultClient()
 		if err != nil {
@@ -1376,6 +1408,8 @@ func (b *backupBiz) readArchiveFromVault(ctx context.Context, logical string) ([
 // with no schema prefix are treated as filesystem paths.
 func splitStoragePath(path string) (schema, loc string) {
 	switch {
+	case strings.HasPrefix(path, backupSchemaDB):
+		return backupSchemaDB, strings.TrimPrefix(path, backupSchemaDB)
 	case strings.HasPrefix(path, backupSchemaVault):
 		return backupSchemaVault, strings.TrimPrefix(path, backupSchemaVault)
 	case strings.HasPrefix(path, backupSchemaFile):

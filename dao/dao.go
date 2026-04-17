@@ -101,6 +101,12 @@ type Interface interface {
 	BackupUpdate(ctx context.Context, backup *Backup) error
 	BackupDelete(ctx context.Context, id string) error
 
+	// BackupArchive stores/retrieves the encrypted backup blob in the DB
+	// itself (only meaningful for MongoDB — BoltDB returns ErrNotSupported).
+	BackupArchiveWrite(ctx context.Context, id string, data []byte) error
+	BackupArchiveRead(ctx context.Context, id string) ([]byte, error)
+	BackupArchiveDelete(ctx context.Context, id string) error
+
 	BackupScheduleGet(ctx context.Context, id string) (*BackupSchedule, error)
 	BackupScheduleGetAll(ctx context.Context) ([]*BackupSchedule, error)
 	BackupScheduleUpsert(ctx context.Context, schedule *BackupSchedule) error
