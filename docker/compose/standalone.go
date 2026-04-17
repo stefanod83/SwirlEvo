@@ -113,6 +113,10 @@ func (e *StandaloneEngine) Deploy(ctx context.Context, projectName, content stri
 		return fmt.Errorf("parse compose: %w", err)
 	}
 
+	if err := validateServices(cfg); err != nil {
+		return err
+	}
+
 	if err := e.removeProjectContainers(ctx, projectName, false); err != nil {
 		return err
 	}
@@ -138,6 +142,38 @@ func (e *StandaloneEngine) Deploy(ctx context.Context, projectName, content stri
 		}
 		if err := e.createAndStart(ctx, projectName, cfg, &cfg.Services[i], opts.Hook); err != nil {
 			return fmt.Errorf("service %s: %w", svc.Name, err)
+		}
+	}
+	return nil
+}
+
+// validateServices enforces the standalone-mode service contract BEFORE any
+// side effect is performed (no pull, no container create, no hook call).
+//
+// Rules (strict, Opzione A1):
+//
+//  1. `build:` is NOT supported — the standalone engine does not invoke
+//     `ImageBuild` on the daemon. A service that declares `build.context`
+//     (with or without `image:`) is rejected up-front with an actionable
+//     message. Previously such services reached `ContainerCreate` with an
+//     empty image reference and produced a confusing "no command specified"
+//     error from the Docker daemon.
+//  2. Each service must reference an image. A service that has neither
+//     `image:` nor `build:` is a malformed compose file and is rejected
+//     with a clear error.
+//
+// The function is pure (no Docker calls, no env mutation) so it can be
+// exercised by unit tests without a live daemon.
+func validateServices(cfg *composetypes.Config) error {
+	if cfg == nil {
+		return nil
+	}
+	for _, svc := range cfg.Services {
+		if svc.Build.Context != "" {
+			return fmt.Errorf("service %s: 'build:' is not supported in standalone mode; pre-build the image and reference it with 'image:' only", svc.Name)
+		}
+		if svc.Image == "" {
+			return fmt.Errorf("service %s: neither 'image:' nor 'build:' is set; an image reference is required", svc.Name)
 		}
 	}
 	return nil

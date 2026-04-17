@@ -635,6 +635,36 @@ First release of the SwirlEvo fork (continues [cuigh/swirl](https://github.com/c
 * `.claude/agents/swirl-expert.md`: comprehensive update covering
   all new subsystems, patterns, and warnings.
 
+### Compose standalone: strict validation of `build:` (Opzione A1)
+
+* **Symptom**: deploying a compose file that used `build.context`
+  (with or without `image:`) produced a confusing
+  `"service X: Error response from daemon: no command specified"`
+  error — a generic daemon message that masked the real problem.
+* **Cause**: the compose parser accepted `build:` (it is in the
+  schema), but the standalone engine never calls `ImageBuild`. The
+  service reached `ContainerCreate` with an empty image reference,
+  and the daemon returned its generic "no command specified" error.
+* **Fix**: new pure function `validateServices(cfg *composetypes.Config) error`
+  in `docker/compose/standalone.go`, invoked by `Deploy` immediately
+  after `Parse` and before any side effect (no pull, no network/volume
+  ensure, no hook). The function fails fast with two rules:
+  1. any service with `svc.Build.Context != ""` is rejected with
+     `service <name>: 'build:' is not supported in standalone mode;
+     pre-build the image and reference it with 'image:' only` —
+     regardless of whether `image:` is also set;
+  2. any service with neither `image:` nor `build:` is rejected with
+     `service <name>: neither 'image:' nor 'build:' is set; an image
+     reference is required`.
+* **Retro-compatibility**: compose files that rely solely on `image:`
+  continue to work unchanged. `ImageBuild` is NOT implemented (that
+  would have been the rejected Opzione B).
+* **Tests**: new file `docker/compose/standalone_test.go` covers
+  image-only (pass), build-only (fail), build+image (fail), neither
+  (fail), fail-fast on first offender, nil config, and empty
+  services. All assertions work without a live Docker daemon —
+  `validateServices` is pure.
+
 ---
 
 ## v1.0.0 (2021-12-15)
