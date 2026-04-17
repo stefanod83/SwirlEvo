@@ -680,7 +680,10 @@ export default {
         "load_more": "加载更多",
         "show_tags": "查看 tag",
         "tags_for": "{repo} 的 tag",
-        "browse": "浏览"
+        "browse": "浏览",
+        "status_ok": "正常",
+        "status_error": "错误",
+        "status_reachable": "Registry 可达并已认证。"
     },
     "vault_secret": {
         "filter_placeholder": "按名称或路径搜索",
@@ -744,7 +747,16 @@ export default {
         "drift_error": "Vault 错误",
         "target_path_required": "目标路径不能为空，且必须为绝对路径（以 '/' 开头）。",
         "env_name_required": "环境变量名不能为空。",
-        "deploy_error_title": "上次部署失败"
+        "deploy_error_title": "上次部署失败",
+        "wizard_title": "添加密钥绑定",
+        "select_secret": "选择一个 Vault 密钥",
+        "pick_fields_hint": "选择要注入到 Stack 容器中的字段。",
+        "no_fields_found": "未找到字段 — 密钥可能尚未在 Vault 中创建。",
+        "configure_bindings": "配置每个字段的注入方式。环境变量名默认为字段名。",
+        "add_n_bindings": "添加 {n} 个绑定",
+        "env_file_title": "环境变量（.env）",
+        "env_file_subtitle": "此处定义的变量在部署时通过 ${VAR} 替换到 compose YAML 中。每行一个 KEY=VALUE。",
+        "env_file_placeholder": "# 每行一个变量\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork)。保留所有权利。",
 }

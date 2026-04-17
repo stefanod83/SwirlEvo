@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cuigh/auxo/app/container"
@@ -249,6 +250,7 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 	if err := engine.Deploy(ctx, stack.Name, stack.Content, compose.DeployOptions{
 		PullImages: pullImages,
 		Hook:       hook,
+		EnvVars:    parseEnvFile(stack.EnvFile),
 	}); err != nil {
 		_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
 		_ = b.di.ComposeStackUpdateError(ctx, id, err.Error())
@@ -565,6 +567,29 @@ func (b *composeStackBiz) hostClient(ctx context.Context, hostID string) (*docke
 		return nil, errors.New("host not found")
 	}
 	return b.d.Hosts.GetClient(host.ID, host.Endpoint)
+}
+
+// parseEnvFile converts a .env-style text block (one KEY=VALUE per line)
+// into a map. Blank lines and lines starting with '#' are skipped.
+func parseEnvFile(content string) map[string]string {
+	if content == "" {
+		return nil
+	}
+	out := map[string]string{}
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			out[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func init() {

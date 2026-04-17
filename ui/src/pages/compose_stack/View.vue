@@ -48,6 +48,14 @@
           <n-descriptions-item :label="t('objects.volume', 2)">{{ detail.volumes.join(', ') || '-' }}</n-descriptions-item>
           <n-descriptions-item v-if="detail.updatedAt" :label="t('fields.updated_at')">{{ detail.updatedAt }}</n-descriptions-item>
         </n-descriptions>
+        <n-alert
+          v-if="lastDeployError"
+          type="error"
+          :title="t('stack_secret.deploy_error_title')"
+          style="margin-top: 12px;"
+        >
+          <pre style="white-space: pre-wrap; margin: 0; font-size: 12px;">{{ lastDeployError }}</pre>
+        </n-alert>
       </n-tab-pane>
 
       <n-tab-pane name="containers" :tab="t('objects.container', 2)">
@@ -70,6 +78,41 @@
           height="70vh"
           :style="{ width: '100%', border: '1px solid #ddd' }"
         />
+
+        <!-- Env vars (read-only) -->
+        <div v-if="envFileContent" style="margin-top: 16px;">
+          <h4 style="margin: 0 0 8px 0; font-size: 13px; opacity: 0.7;">{{ t('stack_secret.env_file_title') }}</h4>
+          <pre class="env-block">{{ envFileContent }}</pre>
+        </div>
+
+        <!-- Secret bindings (read-only) -->
+        <div v-if="bindings.length" style="margin-top: 16px;">
+          <h4 style="margin: 0 0 8px 0; font-size: 13px; opacity: 0.7;">{{ t('stack_secret.title') }}</h4>
+          <n-table size="small" :bordered="true" :single-line="false">
+            <thead>
+              <tr>
+                <th>{{ t('objects.vault_secret') }}</th>
+                <th>{{ t('objects.service') }}</th>
+                <th>{{ t('stack_secret.target_type') }}</th>
+                <th>{{ t('stack_secret.target') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="b of bindings" :key="b.id">
+                <td>{{ b.vaultSecretId }}</td>
+                <td>{{ b.service || t('stack_secret.all_services') }}</td>
+                <td>
+                  <n-tag size="small" :type="b.targetType === 'env' ? 'warning' : 'info'">{{ b.targetType }}</n-tag>
+                </td>
+                <td>
+                  <code v-if="b.targetType === 'file'">{{ b.targetPath }}</code>
+                  <code v-else>${{ b.envName }}</code>
+                </td>
+              </tr>
+            </tbody>
+          </n-table>
+        </div>
+
         <n-space v-if="!detail.managed" style="margin-top:12px">
           <n-checkbox v-model:checked="pullImages">{{ t('fields.pull_images') || 'Pull images' }}</n-checkbox>
           <n-button type="primary" :loading="submitting" @click="doImport(true)">
@@ -94,7 +137,7 @@
 import { h, onMounted, ref } from "vue";
 import {
   NSpace, NButton, NIcon, NDescriptions, NDescriptionsItem, NAlert, NTabs, NTabPane,
-  NTag, NCheckbox, useMessage,
+  NTag, NTable, NCheckbox, useMessage,
 } from "naive-ui";
 import {
   ArrowBackCircleOutline as ArrowBackIcon,
@@ -105,10 +148,13 @@ import XCodeMirror from "@/components/CodeMirror.vue";
 import XContainerTable from "@/components/ContainerTable.vue";
 import composeStackApi from "@/api/compose_stack";
 import containerApi from "@/api/container";
+import composeStackSecretApi from "@/api/compose-stack-secret";
+import type { ComposeStackSecretBinding } from "@/api/compose-stack-secret";
 import type { ComposeStackDetail } from "@/api/compose_stack";
 import type { Container } from "@/api/container";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from 'vue-i18n'
+import { buildZip } from "@/utils/zip";
 
 const { t } = useI18n()
 const route = useRoute()
@@ -120,6 +166,9 @@ const pullImages = ref(false)
 const submitting = ref(false)
 const containers = ref([] as Container[])
 const containersLoading = ref(false)
+const bindings = ref<ComposeStackSecretBinding[]>([])
+const envFileContent = ref('')
+const lastDeployError = ref('')
 
 async function loadContainers() {
   if (!detail.value.hostId || !detail.value.name) return
@@ -150,11 +199,19 @@ async function loadByIdAndResolve(id: string) {
   const r = await composeStackApi.find(id)
   if (!r.data) return
   const s = r.data
+  envFileContent.value = s.envFile || ''
+  lastDeployError.value = s.errorMessage || ''
   const r2 = await composeStackApi.findDetail(s.hostId, s.name)
   if (r2.data) {
     detail.value = r2.data
     editableContent.value = r2.data.content || ''
     await loadContainers()
+    // Load secret bindings (best-effort — the tab only shows if
+    // bindings exist).
+    try {
+      const br = await composeStackSecretApi.list(id)
+      bindings.value = (br.data as any) || []
+    } catch { bindings.value = [] }
   }
 }
 
@@ -167,19 +224,43 @@ async function loadByHostAndName(hostId: string, name: string) {
   }
 }
 
-function downloadCompose() {
+async function downloadCompose() {
   const content = editableContent.value || detail.value.content || ''
   if (!content) return
-  const blob = new Blob([content], { type: 'application/x-yaml' })
+  const name = detail.value.name || 'stack'
+
+  // Build the .env file content
+  const envContent = envFileContent.value || ''
+
+  // Build the .secret file content — only env var names from bindings
+  const secretLines = bindings.value
+    .filter(b => b.targetType === 'env' && b.envName)
+    .map(b => b.envName)
+  const secretContent = secretLines.length
+    ? '# Secret variables injected from Vault at deploy time.\n# This file lists ONLY the variable names — values live in Vault.\n' + secretLines.join('\n') + '\n'
+    : ''
+
+  // Use the JSZip-free approach: build a minimal ZIP in-memory.
+  // For simplicity, download as separate files bundled via a
+  // data-URL trick — or just build a proper ZIP with the tiny
+  // ZIP builder below.
+  const zip = buildZip([
+    { name: 'docker-compose.yml', content },
+    ...(envContent ? [{ name: '.env', content: envContent }] : []),
+    ...(secretContent ? [{ name: '.secret', content: secretContent }] : []),
+  ])
+  const blob = new Blob([zip.buffer as ArrayBuffer], { type: 'application/zip' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${detail.value.name || 'stack'}.yml`
+  a.download = `${name}.zip`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
+
+// buildZip + crc32 extracted to @/utils/zip.ts
 
 async function doImport(redeploy: boolean) {
   if (!detail.value) return
@@ -209,3 +290,15 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.env-block {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  background: var(--n-color-modal, #f5f5f5);
+  padding: 12px;
+  border-radius: 4px;
+  margin: 0;
+}
+</style>

@@ -8,6 +8,7 @@ export interface ComposeStackSecretBinding {
     id: string;
     stackId: string;
     vaultSecretId: string;
+    field?: string;
     service?: string;
     targetType: 'file' | 'env';
     targetPath?: string;

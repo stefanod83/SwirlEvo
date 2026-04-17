@@ -40,9 +40,6 @@
           <n-form-item-gi :label="t('fields.path')" path="path">
             <n-input v-model:value="model.path" :placeholder="t('tips.vault_secret_path')" />
           </n-form-item-gi>
-          <n-form-item-gi :label="t('fields.field')" path="field">
-            <n-input v-model:value="model.field" :placeholder="t('tips.vault_secret_field')" />
-          </n-form-item-gi>
           <n-form-item-gi :label="t('fields.desc')" path="desc">
             <n-input
               v-model:value="model.desc"

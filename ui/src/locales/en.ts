@@ -686,7 +686,10 @@ export default {
         "load_more": "Load more",
         "show_tags": "Show tags",
         "tags_for": "Tags for {repo}",
-        "browse": "Browse"
+        "browse": "Browse",
+        "status_ok": "OK",
+        "status_error": "Error",
+        "status_reachable": "Registry reachable and authenticated."
     },
     "vault_secret": {
         "filter_placeholder": "Search name or path",
@@ -750,7 +753,16 @@ export default {
         "drift_error": "vault error",
         "target_path_required": "Target path is required and must be absolute (start with '/').",
         "env_name_required": "Environment variable name is required.",
-        "deploy_error_title": "Last deploy failed"
+        "deploy_error_title": "Last deploy failed",
+        "wizard_title": "Add secret bindings",
+        "select_secret": "Select a Vault secret",
+        "pick_fields_hint": "Select the fields you want to inject into the stack containers.",
+        "no_fields_found": "No fields found — the secret might not exist in Vault yet.",
+        "configure_bindings": "Configure how each field is injected. The env var name defaults to the field name.",
+        "add_n_bindings": "Add {n} binding(s)",
+        "env_file_title": "Environment variables (.env)",
+        "env_file_subtitle": "Variables defined here are substituted into the compose YAML via ${VAR} at deploy time. One KEY=VALUE per line.",
+        "env_file_placeholder": "# One variable per line\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork). All rights reserved.",
 }

@@ -8,7 +8,8 @@ services:
       - MODE=standalone
       - DB_TYPE=bolt
       - DB_ADDRESS=/data
-      - SWIRL_BACKUP_KEY=${SWIRL_BACKUP_KEY}
+      - SWIRL_BACKUP_KEY=${SWIRL_BACKUP_KEY:-}
+      - TZ=${TZ:-UTC}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - swirl-data:/data

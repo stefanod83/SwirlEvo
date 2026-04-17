@@ -686,7 +686,10 @@ export default {
         "load_more": "Carica altri",
         "show_tags": "Mostra tag",
         "tags_for": "Tag di {repo}",
-        "browse": "Esplora"
+        "browse": "Esplora",
+        "status_ok": "OK",
+        "status_error": "Errore",
+        "status_reachable": "Registry raggiungibile e autenticato."
     },
     "vault_secret": {
         "filter_placeholder": "Cerca per nome o path",
@@ -750,7 +753,16 @@ export default {
         "drift_error": "errore vault",
         "target_path_required": "Il target path è obbligatorio e deve essere assoluto (iniziare con '/').",
         "env_name_required": "Il nome della variabile d'ambiente è obbligatorio.",
-        "deploy_error_title": "L'ultimo deploy è fallito"
+        "deploy_error_title": "L'ultimo deploy è fallito",
+        "wizard_title": "Aggiungi binding dei secret",
+        "select_secret": "Seleziona un Vault secret",
+        "pick_fields_hint": "Seleziona i field che vuoi iniettare nei container dello stack.",
+        "no_fields_found": "Nessun field trovato — il secret potrebbe non esistere ancora in Vault.",
+        "configure_bindings": "Configura come ogni field viene iniettato. Il nome della variabile d'ambiente è per default il nome del field.",
+        "add_n_bindings": "Aggiungi {n} binding",
+        "env_file_title": "Variabili d'ambiente (.env)",
+        "env_file_subtitle": "Le variabili definite qui vengono sostituite nel compose YAML via ${VAR} al momento del deploy. Una coppia CHIAVE=VALORE per riga.",
+        "env_file_placeholder": "# Una variabile per riga\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork). Tutti i diritti riservati.",
 }

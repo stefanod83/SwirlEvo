@@ -6,6 +6,7 @@ export interface ComposeStack {
     hostName?: string;
     name: string;
     content: string;
+    envFile?: string;
     status?: string;
     errorMessage?: string;
     containers?: number;

@@ -52,6 +52,10 @@ export class RegistryApi {
     tags(id: string, repo: string) {
         return ajax.get<string[]>('/registry/tags', { id, repo })
     }
+
+    ping(id: string) {
+        return ajax.get<{ ok: boolean; error?: string }>('/registry/ping', { id })
+    }
 }
 
 export default new RegistryApi

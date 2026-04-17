@@ -12,15 +12,6 @@
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="16">
-    <n-alert
-      v-if="model.errorMessage"
-      type="error"
-      :title="t('stack_secret.deploy_error_title')"
-      closable
-      @close="model.errorMessage = ''"
-    >
-      <pre style="white-space: pre-wrap; margin: 0; font-size: 12px;">{{ model.errorMessage }}</pre>
-    </n-alert>
     <n-form :model="model" ref="form" :rules="rules" label-placement="top">
       <n-grid cols="2" x-gap="16">
         <n-form-item-gi :label="t('objects.host')" path="hostId">
@@ -46,6 +37,22 @@
         <n-checkbox v-model:checked="pullImages">{{ t('fields.pull_images') || 'Pull images' }}</n-checkbox>
       </n-space>
     </n-form>
+
+    <!-- Env file (.env-style variables) — substituted into the compose YAML
+         at deploy time via ${VAR} expansion. Persisted alongside the stack. -->
+    <x-panel
+      :title="t('stack_secret.env_file_title')"
+      :subtitle="t('stack_secret.env_file_subtitle')"
+      divider="bottom"
+    >
+      <n-input
+        type="textarea"
+        v-model:value="model.envFile"
+        :placeholder="t('stack_secret.env_file_placeholder')"
+        :autosize="{ minRows: 3, maxRows: 15 }"
+        style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;"
+      />
+    </x-panel>
 
     <n-space>
       <n-button type="primary" :loading="submitting" @click="deployStack">
@@ -87,7 +94,7 @@
             secondary
             size="small"
             :disabled="!vaultSecrets.length"
-            @click="openBindingModal()"
+            @click="openWizard()"
           >
             <template #icon>
               <n-icon><add-icon /></n-icon>
@@ -110,6 +117,7 @@
         <thead>
           <tr>
             <th>{{ t('objects.vault_secret') }}</th>
+            <th>{{ t('fields.field') }}</th>
             <th>{{ t('objects.service') }}</th>
             <th>{{ t('stack_secret.target_type') }}</th>
             <th>{{ t('stack_secret.target') }}</th>
@@ -122,6 +130,10 @@
           <tr v-for="(b, index) of bindings" :key="b.id">
             <td>
               <code>{{ vaultSecretName(b.vaultSecretId) }}</code>
+            </td>
+            <td>
+              <code v-if="b.field">{{ b.field }}</code>
+              <span v-else class="muted">auto</span>
             </td>
             <td>
               <span v-if="b.service">{{ b.service }}</span>
@@ -180,7 +192,7 @@
             </td>
           </tr>
           <tr v-if="!bindings.length">
-            <td colspan="7" style="text-align: center; padding: 16px;">
+            <td colspan="8" style="text-align: center; padding: 16px;">
               <span class="muted">{{ t('stack_secret.empty') }}</span>
             </td>
           </tr>
@@ -202,6 +214,12 @@
             v-model:value="bindingForm.vaultSecretId"
             :options="vaultSecretOptions"
             :placeholder="t('objects.vault_secret')"
+          />
+        </n-form-item>
+        <n-form-item :label="t('fields.field')" path="field">
+          <n-input
+            v-model:value="bindingForm.field"
+            placeholder="e.g. DB_PASSWORD (leave empty for auto)"
           />
         </n-form-item>
         <n-form-item :label="t('objects.service')" path="service">
@@ -265,6 +283,106 @@
         </n-space>
       </template>
     </n-modal>
+
+    <!--
+      Wizard modal for adding MULTIPLE secret bindings at once.
+      Step 1: pick VaultSecret
+      Step 2: pick fields from the secret (via Preview)
+      Step 3: configure each field (service, env var name, target type)
+    -->
+    <n-modal
+      v-model:show="wizardOpen"
+      preset="card"
+      :title="t('stack_secret.wizard_title')"
+      style="width: 720px;"
+      :mask-closable="false"
+    >
+      <!-- Step 1: select secret -->
+      <div v-if="wizardStep === 1">
+        <n-form-item :label="t('stack_secret.select_secret')">
+          <n-select
+            filterable
+            v-model:value="wizardSecretId"
+            :options="vaultSecretOptions"
+            :placeholder="t('objects.vault_secret')"
+            @update:value="wizardLoadFields"
+          />
+        </n-form-item>
+        <n-spin v-if="wizardLoadingFields" size="small" />
+        <n-alert v-if="wizardFields.length === 0 && wizardSecretId && !wizardLoadingFields" type="warning">
+          {{ t('stack_secret.no_fields_found') }}
+        </n-alert>
+      </div>
+
+      <!-- Step 2: pick fields -->
+      <div v-else-if="wizardStep === 2">
+        <div style="margin-bottom: 12px; opacity: 0.7;">{{ t('stack_secret.pick_fields_hint') }}</div>
+        <n-checkbox-group v-model:value="wizardSelectedFields">
+          <n-space vertical :size="8">
+            <n-checkbox v-for="f of wizardFields" :key="f" :value="f" :label="f" />
+          </n-space>
+        </n-checkbox-group>
+      </div>
+
+      <!-- Step 3: configure each -->
+      <div v-else-if="wizardStep === 3">
+        <div style="margin-bottom: 12px; opacity: 0.7;">{{ t('stack_secret.configure_bindings') }}</div>
+        <n-table size="small" :bordered="true" :single-line="false">
+          <thead>
+            <tr>
+              <th>{{ t('fields.field') }}</th>
+              <th>{{ t('objects.service') }}</th>
+              <th>{{ t('stack_secret.env_name') }}</th>
+              <th>{{ t('stack_secret.target_type') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(cfg, i) of wizardConfig" :key="cfg.field">
+              <td><code>{{ cfg.field }}</code></td>
+              <td>
+                <n-select
+                  size="small"
+                  v-model:value="cfg.service"
+                  :options="serviceOptions"
+                  style="min-width: 140px;"
+                />
+              </td>
+              <td>
+                <n-input size="small" v-model:value="cfg.envName" />
+              </td>
+              <td>
+                <n-radio-group size="small" v-model:value="cfg.targetType">
+                  <n-radio value="env">env</n-radio>
+                  <n-radio value="file">file</n-radio>
+                </n-radio-group>
+              </td>
+            </tr>
+          </tbody>
+        </n-table>
+      </div>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="wizardOpen = false">{{ t('buttons.cancel') }}</n-button>
+          <n-button
+            v-if="wizardStep > 1"
+            @click="wizardStep--"
+          >{{ t('buttons.prev') }}</n-button>
+          <n-button
+            v-if="wizardStep < 3"
+            type="primary"
+            :disabled="!wizardCanNext"
+            @click="wizardNext"
+          >{{ t('buttons.next') }}</n-button>
+          <n-button
+            v-if="wizardStep === 3"
+            type="primary"
+            :loading="wizardSaving"
+            @click="wizardSubmit"
+          >{{ t('stack_secret.add_n_bindings', { n: wizardConfig.length }) }}</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </n-space>
 </template>
 
@@ -272,7 +390,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import {
   NSpace, NButton, NForm, NFormItem, NFormItemGi, NGrid, NInput, NInputNumber,
-  NSelect, NCheckbox, NIcon, NTable, NTag, NPopconfirm, NTime, NTooltip,
+  NSelect, NCheckbox, NCheckboxGroup, NIcon, NTable, NTag, NPopconfirm, NTime, NTooltip, NSpin,
   NModal, NRadio, NRadioGroup, NAlert,
   useMessage,
 } from "naive-ui";
@@ -313,6 +431,7 @@ const model = reactive({
   hostId: '',
   name: '',
   content: '',
+  envFile: '',
   errorMessage: '',
 } as ComposeStack)
 
@@ -431,6 +550,7 @@ function emptyBinding(): Partial<ComposeStackSecretBinding> {
     id: '',
     stackId: model.id,
     vaultSecretId: '',
+    field: '',
     service: '',
     targetType: 'file',
     targetPath: '',
@@ -502,6 +622,127 @@ async function deleteBinding(id: string, index: number) {
   }
 }
 
+// ---- Wizard: multi-field binding creation ----------------------------------
+
+const wizardOpen = ref(false)
+const wizardStep = ref(1)
+const wizardSecretId = ref('')
+const wizardFields = ref<string[]>([])
+const wizardSelectedFields = ref<string[]>([])
+const wizardConfig = ref<{ field: string; service: string; envName: string; targetType: string }[]>([])
+const wizardLoadingFields = ref(false)
+const wizardSaving = ref(false)
+
+// Extract service names from compose YAML via indent-aware parsing.
+// Detects the indent level of the first child under `services:` and
+// only captures names at THAT exact level — deeper keys like
+// `environment:`, `labels:`, `volumes:` are ignored.
+function parseServiceNames(content: string): string[] {
+  const lines = (content || '').split('\n')
+  let inServices = false
+  let serviceIndent = -1
+  const names: string[] = []
+  for (const line of lines) {
+    if (/^services:\s*(#.*)?$/.test(line)) { inServices = true; continue }
+    if (!inServices) continue
+    // A non-indented line after `services:` means we left the block.
+    if (line.length > 0 && /^\S/.test(line)) break
+    // Determine the indent of the first service name dynamically
+    // (works for both 2-space and 4-space conventions).
+    if (serviceIndent < 0) {
+      const m = line.match(/^(\s+)\S/)
+      if (m) serviceIndent = m[1].length
+      else continue
+    }
+    const leading = line.match(/^(\s*)/)
+    if (!leading || leading[1].length !== serviceIndent) continue
+    const m = line.match(/^\s+([a-zA-Z0-9_][a-zA-Z0-9_.-]*):\s*(#.*)?$/)
+    if (m) names.push(m[1])
+  }
+  return names
+}
+
+const serviceOptions = computed(() => {
+  const names = parseServiceNames(model.content)
+  return [
+    { label: t('stack_secret.all_services'), value: '' },
+    ...names.map(n => ({ label: n, value: n })),
+  ]
+})
+
+function openWizard() {
+  wizardStep.value = 1
+  wizardSecretId.value = ''
+  wizardFields.value = []
+  wizardSelectedFields.value = []
+  wizardConfig.value = []
+  wizardSaving.value = false
+  wizardOpen.value = true
+}
+
+async function wizardLoadFields(secretId: string) {
+  wizardFields.value = []
+  wizardSelectedFields.value = []
+  if (!secretId) return
+  wizardLoadingFields.value = true
+  try {
+    const r = await vaultSecretApi.preview(secretId)
+    const data = r.data as any
+    wizardFields.value = data?.fields || []
+  } catch (e: any) {
+    message.error(e?.message || String(e))
+  } finally {
+    wizardLoadingFields.value = false
+  }
+}
+
+const wizardCanNext = computed(() => {
+  if (wizardStep.value === 1) return wizardFields.value.length > 0
+  if (wizardStep.value === 2) return wizardSelectedFields.value.length > 0
+  return true
+})
+
+function wizardNext() {
+  if (wizardStep.value === 1 && wizardFields.value.length > 0) {
+    wizardStep.value = 2
+  } else if (wizardStep.value === 2) {
+    // Build config rows for each selected field
+    wizardConfig.value = wizardSelectedFields.value.map(f => ({
+      field: f,
+      service: '',
+      envName: f, // default: field name as env var
+      targetType: 'env',
+    }))
+    wizardStep.value = 3
+  }
+}
+
+async function wizardSubmit() {
+  wizardSaving.value = true
+  try {
+    for (const cfg of wizardConfig.value) {
+      const binding: Partial<ComposeStackSecretBinding> = {
+        stackId: model.id,
+        vaultSecretId: wizardSecretId.value,
+        field: cfg.field,
+        service: cfg.service,
+        targetType: cfg.targetType as 'file' | 'env',
+        envName: cfg.targetType === 'env' ? cfg.envName : '',
+        targetPath: cfg.targetType === 'file' ? `/run/secrets/${cfg.field}` : '',
+        storageMode: cfg.targetType === 'file' ? 'tmpfs' : undefined,
+      }
+      await composeStackSecretApi.save(binding)
+    }
+    wizardOpen.value = false
+    message.success(t('texts.action_success'))
+    await reloadBindings()
+  } catch (e: any) {
+    message.error(e?.message || String(e))
+  } finally {
+    wizardSaving.value = false
+  }
+}
+
 async function reloadBindings() {
   if (!model.id) return
   bindingsLoading.value = true
@@ -540,6 +781,7 @@ onMounted(async () => {
       model.hostId = s.data.hostId
       model.name = s.data.name
       model.content = s.data.content || ''
+      model.envFile = s.data.envFile || ''
       model.errorMessage = s.data.errorMessage || ''
     }
     await Promise.all([loadVaultSecrets(), reloadBindings()])

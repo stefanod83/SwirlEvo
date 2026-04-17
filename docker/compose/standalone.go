@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -41,6 +42,11 @@ type StackInfo struct {
 // DeployOptions controls deploy behaviour.
 type DeployOptions struct {
 	PullImages bool // pull each service image before creating containers
+	// EnvVars are injected into the process environment BEFORE the
+	// compose YAML is parsed, so `${VAR}` references in the YAML are
+	// expanded. They're cleaned up after parsing to avoid leaking
+	// into subsequent operations in the same process.
+	EnvVars map[string]string
 
 	// Hook, if non-nil, lets an external component (e.g. VaultSecret
 	// materializer) influence the deploy without the engine having to know
@@ -88,6 +94,20 @@ func NewStandaloneEngine(cli *client.Client) *StandaloneEngine {
 // one container per service. Re-invoking Deploy for an existing stack replaces it
 // (stop+remove old containers, recreate). Volumes are preserved across redeploys.
 func (e *StandaloneEngine) Deploy(ctx context.Context, projectName, content string, opts DeployOptions) error {
+	// Inject env vars before parsing so ${VAR} references in the YAML
+	// are expanded by the compose loader. Cleaned up after parsing to
+	// avoid polluting the process for subsequent operations.
+	if len(opts.EnvVars) > 0 {
+		for k, v := range opts.EnvVars {
+			os.Setenv(k, v)
+		}
+		defer func() {
+			for k := range opts.EnvVars {
+				os.Unsetenv(k)
+			}
+		}()
+	}
+
 	cfg, err := Parse(projectName, content)
 	if err != nil {
 		return fmt.Errorf("parse compose: %w", err)

@@ -290,12 +290,11 @@ func (b *vaultSecretBiz) normalize(secret *dao.VaultSecret) error {
 		return errors.New("path must not contain whitespace")
 	}
 
-	// Field is optional in storage; the biz layer treats an empty value as
-	// "return the whole KV object" at resolve time. We still pin a default
-	// for display so the UI can show something consistent.
-	if secret.Field == "" {
-		secret.Field = defaultSecretField
-	}
+	// Field is optional — an empty value means "auto-select": if the KVv2
+	// entry has a single field, use it; otherwise return the full JSON.
+	// Do NOT force a default like "value" here: the KVv2 field name is
+	// user-defined and may be anything (the secret name itself, a
+	// descriptive key, etc.).
 	return nil
 }
 

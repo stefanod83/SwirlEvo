@@ -17,6 +17,7 @@ type RegistryHandler struct {
 	Save   web.HandlerFunc `path:"/save" method:"post" auth:"registry.edit" desc:"create or update registry"`
 	Browse web.HandlerFunc `path:"/browse" auth:"registry.view" desc:"list repositories on a remote registry (v2 API)"`
 	Tags   web.HandlerFunc `path:"/tags" auth:"registry.view" desc:"list tags for a repository on a remote registry"`
+	Ping   web.HandlerFunc `path:"/ping" auth:"registry.view" desc:"check if a registry is reachable and authenticated"`
 }
 
 // NewRegistry creates an instance of RegistryHandler
@@ -28,6 +29,7 @@ func NewRegistry(b biz.RegistryBiz) *RegistryHandler {
 		Save:   registrySave(b),
 		Browse: registryBrowse(b),
 		Tags:   registryTags(b),
+		Ping:   registryPing(b),
 	}
 }
 
@@ -123,5 +125,19 @@ func registryTags(b biz.RegistryBiz) web.HandlerFunc {
 			return err
 		}
 		return success(c, tags)
+	}
+}
+
+func registryPing(b biz.RegistryBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		id := c.Query("id")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		err := b.Ping(ctx, id)
+		out := map[string]interface{}{"ok": err == nil}
+		if err != nil {
+			out["error"] = err.Error()
+		}
+		return success(c, out)
 	}
 }

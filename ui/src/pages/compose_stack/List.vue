@@ -55,9 +55,11 @@ import {
 } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import composeStackApi from "@/api/compose_stack";
+import composeStackSecretApi from "@/api/compose-stack-secret";
 import type { ComposeStackSummary } from "@/api/compose_stack";
 import { useDataTable } from "@/utils/data-table";
 import { renderLink, renderTag } from "@/utils/render";
+import { buildZip } from "@/utils/zip";
 import { useRouter } from "vue-router";
 import { useI18n } from 'vue-i18n'
 
@@ -91,11 +93,28 @@ async function downloadStack(id: string, name: string) {
     const r = await composeStackApi.find(id)
     const content = r.data?.content || ''
     if (!content) { message.warning('No compose content available'); return }
-    const blob = new Blob([content], { type: 'application/x-yaml' })
+    const envContent = r.data?.envFile || ''
+    // Load secret bindings for the .secret file
+    let secretContent = ''
+    try {
+      const br = await composeStackSecretApi.list(id)
+      const lines = ((br.data as any) || [])
+        .filter((b: any) => b.targetType === 'env' && b.envName)
+        .map((b: any) => b.envName)
+      if (lines.length) {
+        secretContent = '# Secret variables injected from Vault at deploy time.\n# This file lists ONLY the variable names — values live in Vault.\n' + lines.join('\n') + '\n'
+      }
+    } catch { /* best-effort */ }
+    const zip = buildZip([
+      { name: 'docker-compose.yml', content },
+      ...(envContent ? [{ name: '.env', content: envContent }] : []),
+      ...(secretContent ? [{ name: '.secret', content: secretContent }] : []),
+    ])
+    const blob = new Blob([zip.buffer as ArrayBuffer], { type: 'application/zip' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${name || 'stack'}.yml`
+    a.download = `${name || 'stack'}.zip`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)

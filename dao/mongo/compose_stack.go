@@ -19,6 +19,7 @@ func (d *Dao) ComposeStackUpdate(ctx context.Context, stack *dao.ComposeStack) e
 			"name":       stack.Name,
 			"host_id":    stack.HostID,
 			"content":    stack.Content,
+			"env_file":   stack.EnvFile,
 			"updated_at": stack.UpdatedAt,
 			"updated_by": stack.UpdatedBy,
 		},

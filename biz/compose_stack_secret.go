@@ -361,9 +361,14 @@ func (b *composeStackSecretBiz) NewHook(ctx context.Context, stackID string) (co
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", rec.Name, err)
 		}
-		value, err := extractSecretValue(data, rec.Field)
+		// The field selector comes from the binding, not the catalog
+		// entry. The catalog entry only points at the KVv2 path — the
+		// binding specifies which field to extract. When bind.Field
+		// is empty, extractSecretValue auto-selects (single-field
+		// entries use the sole value; multi-field returns JSON).
+		value, err := extractSecretValue(data, bind.Field)
 		if err != nil {
-			return nil, fmt.Errorf("resolve %s: %w", rec.Name, err)
+			return nil, fmt.Errorf("resolve %s (field %q): %w", rec.Name, bind.Field, err)
 		}
 		resolved = append(resolved, resolvedBinding{
 			binding: bind,
@@ -442,7 +447,28 @@ func (m *materializer) ApplyToService(ctx context.Context, project, service stri
 		}
 		switch rb.binding.TargetType {
 		case BindingTargetEnv:
-			env = append(env, rb.binding.EnvName+"="+string(rb.value))
+			// If the binding targets a specific field, inject a single
+			// env var: ENVNAME=value. If the field is empty (auto-mode),
+			// expand every KVv2 field as a separate env var so the
+			// container sees DB_HOST=..., DB_PASS=... instead of a
+			// single var with a JSON blob.
+			if rb.binding.Field == "" {
+				var kv map[string]any
+				if json.Unmarshal(rb.value, &kv) == nil && len(kv) > 0 {
+					for k, v := range kv {
+						env = append(env, k+"="+string(toBytes(v)))
+					}
+				} else {
+					// Not JSON or single value — fall back to single var.
+					name := rb.binding.EnvName
+					if name == "" {
+						name = rb.secret.Name
+					}
+					env = append(env, name+"="+string(rb.value))
+				}
+			} else {
+				env = append(env, rb.binding.EnvName+"="+string(rb.value))
+			}
 		case BindingTargetFile:
 			switch rb.binding.StorageMode {
 			case BindingStorageTmpfs:
@@ -635,7 +661,24 @@ func extractSecretValue(kv map[string]any, field string) ([]byte, error) {
 	if field != "" {
 		v, ok := kv[field]
 		if !ok {
-			return nil, fmt.Errorf("field %q not found", field)
+			// Fallback: if the requested field doesn't exist but the
+			// entry has exactly one field, use it. This covers the
+			// common case where the catalog entry's Field was set to
+			// "value" (the old default) but the KVv2 entry uses the
+			// secret name as the field key. Without this fallback,
+			// every deploy would fail with "field not found".
+			if len(kv) == 1 {
+				for _, v := range kv {
+					return toBytes(v), nil
+				}
+			}
+			// List available fields in the error to help the operator
+			// fix the catalog entry or binding.
+			available := make([]string, 0, len(kv))
+			for k := range kv {
+				available = append(available, k)
+			}
+			return nil, fmt.Errorf("field %q not found (available: %v)", field, available)
 		}
 		return toBytes(v), nil
 	}

@@ -41,6 +41,7 @@ func (d *Dao) ComposeStackSecretBindingUpsert(ctx context.Context, binding *dao.
 		"$set": bson.M{
 			"stack_id":        binding.StackID,
 			"vault_secret_id": binding.VaultSecretID,
+			"field":           binding.Field,
 			"service":         binding.Service,
 			"target_type":     binding.TargetType,
 			"target_path":     binding.TargetPath,

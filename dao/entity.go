@@ -284,6 +284,11 @@ type ComposeStack struct {
 	HostID       string   `json:"hostId" bson:"host_id"`
 	Name         string   `json:"name" bson:"name" valid:"required"`
 	Content      string   `json:"content,omitempty" bson:"content"`
+	// EnvFile holds key=value lines (one per line, like a .env file).
+	// Variables are substituted into the compose YAML at deploy time
+	// via os.Setenv so the Docker SDK's built-in variable expansion
+	// picks them up.
+	EnvFile      string   `json:"envFile,omitempty" bson:"env_file,omitempty"`
 	Status       string   `json:"status" bson:"status"` // active, inactive, partial, error
 	ErrorMessage string   `json:"errorMessage,omitempty" bson:"error_message,omitempty"`
 	CreatedAt    Time     `json:"createdAt" bson:"created_at"`
@@ -396,6 +401,11 @@ type ComposeStackSecretBinding struct {
 	ID            string `json:"id" bson:"_id"`
 	StackID       string `json:"stackId" bson:"stack_id" valid:"required"`
 	VaultSecretID string `json:"vaultSecretId" bson:"vault_secret_id" valid:"required"`
+	// Field overrides the VaultSecret catalog entry's Field selector
+	// for this binding. When non-empty, the materializer uses this
+	// instead of rec.Field — allows N bindings from the same catalog
+	// entry to point at different KVv2 fields (e.g. DB_HOST, DB_PASS).
+	Field string `json:"field,omitempty" bson:"field,omitempty"`
 	// Service name inside the compose file this binding applies to.
 	// Empty string means "all services" (useful when a stack has a single
 	// service and the user doesn't want to type the name).

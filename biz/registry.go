@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/dao"
@@ -30,6 +31,8 @@ type RegistryBiz interface {
 	Browse(ctx context.Context, id string, pageSize int, last string) (*RegistryBrowseResult, error)
 	// Tags lists the tag names for a single repository on the registry.
 	Tags(ctx context.Context, id, repo string) ([]string, error)
+	// Ping checks if the registry is reachable and authenticated.
+	Ping(ctx context.Context, id string) error
 }
 
 func NewRegistry(d dao.Interface, eb EventBiz) RegistryBiz {
@@ -136,4 +139,15 @@ func (b *registryBiz) Tags(ctx context.Context, id, repo string) ([]string, erro
 		return nil, nil
 	}
 	return b.rc.TagsList(ctx, r, repo)
+}
+
+func (b *registryBiz) Ping(ctx context.Context, id string) error {
+	r, err := b.d.RegistryGet(ctx, id)
+	if err != nil {
+		return err
+	}
+	if r == nil {
+		return fmt.Errorf("registry not found")
+	}
+	return b.rc.Ping(ctx, r)
 }
