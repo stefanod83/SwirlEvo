@@ -14,82 +14,27 @@
   <n-space class="page-body" vertical :size="12">
     <n-space :size="12">
       <n-input size="small" v-model:value="filter.name" :placeholder="t('fields.name')" clearable />
-      <n-button size="small" type="primary" @click="() => fetchData()">{{ t('buttons.search') }}</n-button>
+      <n-button size="small" type="primary" @click="fetchData">{{ t('buttons.search') }}</n-button>
     </n-space>
-    <n-table size="small" :bordered="true" :single-line="false">
-      <thead>
-        <tr>
-          <th>{{ t('fields.name') }}</th>
-          <th>{{ t('objects.service', {}, 2) }}</th>
-          <th>{{ t('fields.created_at') }}</th>
-          <th>{{ t('fields.updated_at') }}</th>
-          <th>{{ t('fields.actions') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(r, index) of model" :key="r.name">
-          <td>
-            <x-anchor :url="{ name: 'stack_detail', params: { name: r.name } }">{{ r.name }}</x-anchor>
-          </td>
-          <td>
-            <n-space :size="4" v-if="r.services && r.services.length">
-              <n-tag size="small" type="primary" v-for="s in r.services">
-                <x-anchor
-                  :url="{ name: 'service_detail', params: { name: s } }"
-                >{{ s.substring(r.name.length + 1) }}</x-anchor>
-              </n-tag>
-            </n-space>
-          </td>
-          <td>
-            <n-time :time="r.createdAt" format="y-MM-dd HH:mm:ss" />
-          </td>
-          <td>
-            <n-time :time="r.updatedAt" format="y-MM-dd HH:mm:ss" />
-          </td>
-          <td>
-            <n-button
-              size="tiny"
-              quaternary
-              type="warning"
-              @click="$router.push({ name: 'stack_edit', params: { name: r.name } })"
-            >{{ t('buttons.edit') }}</n-button>
-            <n-popconfirm :show-icon="false" @positive-click="deployStack(r)">
-              <template #trigger>
-                <n-button size="tiny" quaternary type="warning">{{ t('buttons.deploy') }}</n-button>
-              </template>
-              {{ t('prompts.deploy') }}
-            </n-popconfirm>
-            <n-popconfirm
-              :show-icon="false"
-              @positive-click="shutdownStack(r)"
-              v-if="r.services && r.services.length"
-            >
-              <template #trigger>
-                <n-button size="tiny" quaternary type="error">{{ t('buttons.shutdown') }}</n-button>
-              </template>
-              {{ t('prompts.shutdown') }}
-            </n-popconfirm>
-            <n-popconfirm :show-icon="false" @positive-click="deleteStack(r.name, index)">
-              <template #trigger>
-                <n-button size="tiny" quaternary type="error">{{ t('buttons.delete') }}</n-button>
-              </template>
-              {{ t('prompts.delete') }}
-            </n-popconfirm>
-          </td>
-        </tr>
-      </tbody>
-    </n-table>
+    <n-data-table
+      :row-key="(row: Stack) => row.name"
+      size="small"
+      :columns="columns"
+      :data="model"
+      :loading="loading"
+      scroll-x="max-content"
+    />
   </n-space>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { h, onMounted, reactive, ref } from "vue";
 import {
   NSpace,
   NButton,
   NIcon,
   NInput,
-  NTable,
+  NDataTable,
   NPopconfirm,
   NTag,
   NTime,
@@ -99,18 +44,21 @@ import XPageHeader from "@/components/PageHeader.vue";
 import XAnchor from "@/components/Anchor.vue";
 import stackApi from "@/api/stack";
 import type { Stack } from "@/api/stack";
+import { useRouter } from "vue-router";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+const router = useRouter()
 const model = ref([] as Stack[]);
+const loading = ref(false)
 const filter = reactive({
   name: "",
   filter: "",
 });
 
-async function deleteStack(name: string, index: number) {
+async function deleteStack(name: string) {
   await stackApi.delete(name);
-  model.value.splice(index, 1)
+  model.value = model.value.filter(s => s.name !== name)
 }
 
 async function shutdownStack(s: Stack) {
@@ -124,9 +72,79 @@ async function deployStack(s: Stack) {
 }
 
 async function fetchData() {
-  let r = await stackApi.search(filter);
-  model.value = r.data || [];
+  loading.value = true
+  try {
+    let r = await stackApi.search(filter);
+    model.value = r.data || [];
+  } finally {
+    loading.value = false
+  }
 }
+
+const columns: any[] = [
+  {
+    title: t('fields.name'),
+    key: 'name',
+    sorter: (a: Stack, b: Stack) => (a.name || '').localeCompare(b.name || ''),
+    render: (r: Stack) => h(XAnchor, { url: { name: 'stack_detail', params: { name: r.name } } }, { default: () => r.name }),
+  },
+  {
+    title: t('objects.service', {}, 2),
+    key: 'services',
+    sorter: (a: Stack, b: Stack) => (a.services?.length || 0) - (b.services?.length || 0),
+    render: (r: Stack) => {
+      if (!r.services || !r.services.length) return null
+      return h(NSpace, { size: 4 }, {
+        default: () => r.services!.map(s => h(NTag, { size: 'small', type: 'primary' }, {
+          default: () => h(XAnchor, { url: { name: 'service_detail', params: { name: s } } }, { default: () => s.substring(r.name.length + 1) }),
+        })),
+      })
+    },
+  },
+  {
+    title: t('fields.created_at'),
+    key: 'createdAt',
+    sorter: (a: Stack, b: Stack) => (a.createdAt || 0) - (b.createdAt || 0),
+    render: (r: Stack) => h(NTime, { time: r.createdAt, format: 'y-MM-dd HH:mm:ss' }),
+  },
+  {
+    title: t('fields.updated_at'),
+    key: 'updatedAt',
+    sorter: (a: Stack, b: Stack) => (a.updatedAt || 0) - (b.updatedAt || 0),
+    render: (r: Stack) => h(NTime, { time: r.updatedAt, format: 'y-MM-dd HH:mm:ss' }),
+  },
+  {
+    title: t('fields.actions'),
+    key: 'actions',
+    render: (r: Stack) => {
+      const children: any[] = [
+        h(NButton, {
+          size: 'tiny', quaternary: true, type: 'warning',
+          onClick: () => { router.push({ name: 'stack_edit', params: { name: r.name } }) }
+        }, { default: () => t('buttons.edit') }),
+        h(NPopconfirm, { showIcon: false, onPositiveClick: () => deployStack(r) }, {
+          default: () => t('prompts.deploy'),
+          trigger: () => h(NButton, { size: 'tiny', quaternary: true, type: 'warning' }, { default: () => t('buttons.deploy') }),
+        }),
+      ]
+      if (r.services && r.services.length) {
+        children.push(
+          h(NPopconfirm, { showIcon: false, onPositiveClick: () => shutdownStack(r) }, {
+            default: () => t('prompts.shutdown'),
+            trigger: () => h(NButton, { size: 'tiny', quaternary: true, type: 'error' }, { default: () => t('buttons.shutdown') }),
+          })
+        )
+      }
+      children.push(
+        h(NPopconfirm, { showIcon: false, onPositiveClick: () => deleteStack(r.name) }, {
+          default: () => t('prompts.delete'),
+          trigger: () => h(NButton, { size: 'tiny', quaternary: true, type: 'error' }, { default: () => t('buttons.delete') }),
+        })
+      )
+      return h(NSpace, { size: 4, inline: true }, { default: () => children })
+    },
+  },
+]
 
 onMounted(fetchData);
 </script>

@@ -9,6 +9,14 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
     </template>
   </x-page-header>
   <div class="page-body">
@@ -169,7 +177,7 @@ import {
   NTabs,
   NTabPane,
 } from "naive-ui";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XAnchor from "@/components/Anchor.vue";
 import XCode from "@/components/Code.vue";
@@ -184,16 +192,22 @@ const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Network);
 const raw = ref('');
+const loading = ref(false);
 
 async function disconnect(container: string) {
   await networkApi.disconnect(model.value.id, model.value.name, container);
 }
 
 async function fetchData() {
-  const name = route.params.name as string;
-  let r = await networkApi.find(name);
-  model.value = r.data?.network as Network;
-  raw.value = r.data?.raw as string;
+  loading.value = true;
+  try {
+    const name = route.params.name as string;
+    let r = await networkApi.find(name);
+    model.value = r.data?.network as Network;
+    raw.value = r.data?.raw as string;
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(fetchData);

@@ -21,6 +21,7 @@ type VaultSecretHandler struct {
 	Preview  web.HandlerFunc `path:"/preview" auth:"vault_secret.view" desc:"preview vault secret field names (never values)"`
 	Write    web.HandlerFunc `path:"/write" method:"post" auth:"vault_secret.edit" desc:"write a new version of the secret value into Vault"`
 	Statuses web.HandlerFunc `path:"/statuses" auth:"vault_secret.view" desc:"batch fetch per-entry metadata from Vault (versions, existence)"`
+	Cleanup  web.HandlerFunc `path:"/cleanup" method:"post" auth:"vault_secret.cleanup" desc:"destroy KVv2 versions older than keepLast (permanent)"`
 }
 
 // NewVaultSecret creates an instance of VaultSecretHandler.
@@ -34,6 +35,7 @@ func NewVaultSecret(b biz.VaultSecretBiz) *VaultSecretHandler {
 		Preview:  vaultSecretPreview(b),
 		Write:    vaultSecretWrite(b),
 		Statuses: vaultSecretStatuses(b),
+		Cleanup:  vaultSecretCleanup(b),
 	}
 }
 
@@ -170,5 +172,25 @@ func vaultSecretStatuses(b biz.VaultSecretBiz) web.HandlerFunc {
 			return err
 		}
 		return success(c, statuses)
+	}
+}
+
+func vaultSecretCleanup(b biz.VaultSecretBiz) web.HandlerFunc {
+	type Args struct {
+		ID       string `json:"id"`
+		KeepLast int    `json:"keepLast"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args); err != nil {
+			return ajax(c, err)
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		destroyed, err := b.CleanupVersions(ctx, args.ID, args.KeepLast, c.User())
+		if err != nil {
+			return ajax(c, err)
+		}
+		return success(c, data.Map{"destroyed": destroyed})
 	}
 }

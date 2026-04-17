@@ -46,6 +46,10 @@ export interface VaultSecretStatus {
     error?: string;
 }
 
+export interface VaultSecretCleanupResult {
+    destroyed: number;
+}
+
 export class VaultSecretApi {
     search(args: VaultSecretSearchArgs) {
         return ajax.get<VaultSecretSearchResult>('/vault-secret/search', args)
@@ -77,6 +81,10 @@ export class VaultSecretApi {
 
     statuses() {
         return ajax.get<Record<string, VaultSecretStatus>>('/vault-secret/statuses')
+    }
+
+    cleanup(id: string, keepLast: number) {
+        return ajax.post<VaultSecretCleanupResult>('/vault-secret/cleanup', { id, keepLast })
     }
 }
 

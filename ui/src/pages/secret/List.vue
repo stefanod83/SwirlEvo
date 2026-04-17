@@ -60,19 +60,23 @@ const columns = [
     title: t('fields.id'),
     key: "id",
     fixed: "left" as const,
+    sorter: (a: Secret, b: Secret) => (a.id || '').localeCompare(b.id || ''),
     render: (c: Secret) => renderLink({ name: 'secret_detail', params: { id: c.id } }, c.id),
   },
   {
     title: t('fields.name'),
     key: "name",
+    sorter: (a: Secret, b: Secret) => (a.name || '').localeCompare(b.name || ''),
   },
   {
     title: t('fields.created_at'),
-    key: "createdAt"
+    key: "createdAt",
+    sorter: (a: Secret, b: Secret) => (a.createdAt || '').localeCompare(b.createdAt || ''),
   },
   {
     title: t('fields.updated_at'),
-    key: "updatedAt"
+    key: "updatedAt",
+    sorter: (a: Secret, b: Secret) => (a.updatedAt || '').localeCompare(b.updatedAt || ''),
   },
   {
     title: t('fields.actions'),

@@ -171,10 +171,12 @@ const columns = [
     key: "id",
     width: 210,
     fixed: "left" as const,
+    sorter: (a: Event, b: Event) => (a.id || '').localeCompare(b.id || ''),
   },
   {
     title: t('fields.type'),
     key: "type",
+    sorter: (a: Event, b: Event) => (a.type || '').localeCompare(b.type || ''),
     render(e: Event) {
       return renderTag(e.type)
     },
@@ -182,6 +184,7 @@ const columns = [
   {
     title: t('fields.action'),
     key: "action",
+    sorter: (a: Event, b: Event) => (a.action || '').localeCompare(b.action || ''),
     render(e: Event) {
       return renderTag(e.action)
     },
@@ -189,6 +192,7 @@ const columns = [
   {
     title: t('fields.object'),
     key: "name",
+    sorter: (a: Event, b: Event) => ((a.args?.name as string) || '').localeCompare((b.args?.name as string) || ''),
     render: renderObject,
   },
   {
@@ -199,11 +203,13 @@ const columns = [
   {
     title: t('fields.operator'),
     key: "name",
+    sorter: (a: Event, b: Event) => (a.username || '').localeCompare(b.username || ''),
     render: (e: Event) => e.userId ? renderLink({ name: 'user_detail', params: { id: e.userId } }, e.username) : null,
   },
   {
     title: t('fields.time'),
     key: "time",
+    sorter: (a: Event, b: Event) => (a.time || 0) - (b.time || 0),
     render: (e: Event) => renderTime(e.time),
   },
 ];

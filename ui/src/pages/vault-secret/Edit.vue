@@ -82,17 +82,31 @@
       divider="bottom"
     >
       <template #action>
-        <n-button
-          secondary
-          size="small"
-          :loading="statusLoading"
-          @click="refreshStatus"
-        >
-          <template #icon>
-            <n-icon><refresh-icon /></n-icon>
-          </template>
-          {{ t('vault_secret.status_refresh') }}
-        </n-button>
+        <n-space :size="8">
+          <n-button
+            v-if="canCleanup && (statusInfo?.totalVersions || 0) > 1"
+            secondary
+            size="small"
+            type="warning"
+            @click="openCleanup"
+          >
+            <template #icon>
+              <n-icon><cleanup-icon /></n-icon>
+            </template>
+            {{ t('buttons.cleanup_versions') }}
+          </n-button>
+          <n-button
+            secondary
+            size="small"
+            :loading="statusLoading"
+            @click="refreshStatus"
+          >
+            <template #icon>
+              <n-icon><refresh-icon /></n-icon>
+            </template>
+            {{ t('vault_secret.status_refresh') }}
+          </n-button>
+        </n-space>
       </template>
 
       <n-grid cols="1 640:2" :x-gap="24" :y-gap="8">
@@ -213,19 +227,62 @@
           : t('vault_secret.write_confirm_append') }}
     </div>
   </n-modal>
+
+  <!-- Cleanup versions modal — permanent destroy of old KVv2 versions. -->
+  <n-modal
+    v-model:show="cleanupOpen"
+    preset="dialog"
+    :title="t('titles.vault_version_cleanup')"
+    :positive-text="cleanupButtonLabel"
+    :negative-text="t('buttons.cancel')"
+    :positive-button-props="{ type: 'error', disabled: cleanupEligible === 0 || cleanupBusy, loading: cleanupBusy }"
+    @positive-click="doCleanup"
+  >
+    <n-space vertical :size="12">
+      <div>
+        <strong>{{ model.name }}</strong>
+        <span class="muted"> — <code class="mono">{{ model.path }}</code></span>
+      </div>
+      <div class="muted">
+        {{ t('vault_secret.status_version') }}:
+        <strong>{{ statusInfo?.currentVersion || 0 }}</strong>
+        &nbsp;/&nbsp;
+        {{ t('vault_secret.versions_col') }}:
+        <strong>{{ statusInfo?.totalVersions || 0 }}</strong>
+      </div>
+      <div>
+        <div style="margin-bottom: 4px;">
+          {{ t('fields.keep_last_versions') }}: <strong>{{ keepLast }}</strong>
+        </div>
+        <n-slider
+          v-model:value="keepLast"
+          :min="1"
+          :max="cleanupMax"
+          :step="1"
+          :marks="cleanupMarks"
+        />
+      </div>
+      <n-alert type="warning" :show-icon="false">
+        {{ t('messages.vault_cleanup_warning', { n: cleanupEligible }) }}
+      </n-alert>
+    </n-space>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import {
   NButton, NSpace, NInput, NIcon, NForm, NGrid, NGi, NFormItem, NFormItemGi,
-  NDynamicInput, NAlert, NTag, NRadio, NRadioGroup, NModal,
+  NDynamicInput, NAlert, NTag, NRadio, NRadioGroup, NModal, NSlider,
 } from "naive-ui";
 import {
   ArrowBackCircleOutline as BackIcon,
   SaveOutline as SaveIcon,
   RefreshOutline as RefreshIcon,
+  // Cleanup (layers) icon — distinct from Delete to avoid confusion.
+  LayersOutline as CleanupIcon,
 } from "@vicons/ionicons5";
+import { store } from "@/store"
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import VersionBadge from "@/components/VersionBadge.vue";
@@ -386,6 +443,58 @@ async function fetchData() {
   } else {
     catalogCollapsed.value = false
     model.value = { name: '', path: '', field: '' } as any
+  }
+}
+
+// ---- Cleanup versions ---------------------------------------------------
+// Gated by `vault_secret.cleanup` in the role. Backend also enforces.
+const canCleanup = computed(() => store.getters.allow('vault_secret.cleanup'))
+
+const cleanupOpen = ref(false)
+const cleanupBusy = ref(false)
+const keepLast = ref(1)
+
+const cleanupMax = computed(() => {
+  const total = statusInfo.value?.totalVersions || 0
+  if (total <= 1) return 1
+  return Math.min(total - 1, 20)
+})
+const cleanupEligible = computed(() => {
+  const total = statusInfo.value?.totalVersions || 0
+  const kept = Math.min(keepLast.value, total)
+  return Math.max(0, total - kept)
+})
+const cleanupButtonLabel = computed(() =>
+  `${t('buttons.cleanup_versions')} (${cleanupEligible.value})`
+)
+const cleanupMarks = computed<Record<number, string>>(() => {
+  const max = cleanupMax.value
+  if (max <= 1) return { 1: '1' }
+  return { 1: '1', [max]: String(max) }
+})
+
+function openCleanup() {
+  if (!model.value.id) return
+  keepLast.value = 1
+  cleanupOpen.value = true
+}
+
+async function doCleanup() {
+  if (!model.value.id) return false
+  cleanupBusy.value = true
+  try {
+    const r = await vaultSecretApi.cleanup(model.value.id, keepLast.value)
+    const n = r.data?.destroyed || 0
+    window.message?.success?.(t('messages.vault_cleanup_success', { n }))
+    cleanupOpen.value = false
+    // Pull fresh metadata so the badge + "current/total" line update.
+    await refreshStatus()
+    return true
+  } catch (e: any) {
+    window.message?.error?.(e?.message || String(e))
+    return false
+  } finally {
+    cleanupBusy.value = false
   }
 }
 

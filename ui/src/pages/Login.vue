@@ -1,8 +1,14 @@
 <template>
-  <div :class="['container', isMobile ? '' : 'pc']">
-    <img src="../assets/login.jpg" height="300" style="border-radius: 5px 0 0 5px" v-if="!isMobile" />
-    <div class="form">
-      <h1 class="title">Swirl</h1>
+  <!-- NOTE: the legacy asset `src/assets/login.jpg` is deprecated as of the
+       "Swirl Evo" redesign and is no longer referenced from this component.
+       The file is kept on disk for now and will be removed in a future release. -->
+  <div class="login-wrapper">
+    <n-card class="login-card" :bordered="false">
+      <div class="brand">
+        <img src="/favicon-source.svg" alt="Swirl Evo" class="logo" />
+        <h1 class="title">Swirl Evo</h1>
+        <p class="tagline">{{ t('texts.login_tagline') }}</p>
+      </div>
       <n-form
         :model="model"
         ref="form"
@@ -49,21 +55,20 @@
           </n-button>
         </template>
       </n-form>
-    </div>
+    </n-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import { NForm, NFormItem, NInput, NButton, NIcon, NDivider } from "naive-ui";
+import { NForm, NFormItem, NInput, NButton, NIcon, NDivider, NCard } from "naive-ui";
 import { PersonOutline, LockClosedOutline } from "@vicons/ionicons5";
 import userApi from "@/api/user";
 import type { AuthUser } from "@/api/user";
 import systemApi from "@/api/system";
 import type { LoginArgs } from "@/api/user";
 import { useStore } from "vuex";
-import { useIsMobile } from "@/utils";
 import { Mutations } from "@/store/mutations";
 import { useForm, requiredRule } from "@/utils/form";
 import { useI18n } from 'vue-i18n'
@@ -72,7 +77,6 @@ const { t } = useI18n()
 const router = useRouter();
 const route = useRoute();
 const store = useStore();
-const isMobile = useIsMobile()
 const form = ref();
 const model = reactive({} as LoginArgs);
 const rules = {
@@ -110,23 +114,108 @@ onMounted(() => { checkState(); loadProviders() });
 </script>
 
 <style lang="scss" scoped>
-.container {
-  border-radius: 5px;
-  box-shadow: 1px 1px 10px #ddd;
+.login-wrapper {
+  min-height: 100vh;
+  width: 100%;
   display: flex;
-  justify-content: center;
   align-items: center;
-  .form {
-    flex: 60%;
-    padding: 20px;
-    .title {
-      margin-top: -10px;
-      text-align: center;
-    }
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  // Business-neutral gradient: uses Naive UI theme vars so it adapts to
+  // both light and dark modes without hardcoded colors.
+  background:
+    radial-gradient(
+      circle at 15% 20%,
+      var(--n-color-primary) -40%,
+      transparent 45%
+    ),
+    radial-gradient(
+      circle at 85% 85%,
+      var(--n-color-primary) -60%,
+      transparent 50%
+    ),
+    linear-gradient(
+      160deg,
+      var(--n-body-color) 0%,
+      var(--n-card-color) 100%
+    );
+}
+
+.login-card {
+  width: 100%;
+  max-width: 440px;
+  border-radius: 12px;
+  box-shadow:
+    0 10px 30px -12px rgba(0, 0, 0, 0.25),
+    0 4px 10px -4px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--n-border-color);
+  // Naive UI <n-card> already uses var(--n-card-color) for background.
+  :deep(.n-card__content) {
+    padding: 36px 32px;
   }
 }
-.pc {
-  width: 500px;
-  margin: 100px auto;
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 28px;
+
+  .logo {
+    width: 64px;
+    height: 64px;
+    display: block;
+    // SVG uses #000 strokes — make it follow theme text color in dark mode
+    // by applying a color-aware filter only when explicitly dark.
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.15));
+  }
+
+  .title {
+    margin: 14px 0 4px;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: var(--n-text-color);
+    text-align: center;
+  }
+
+  .tagline {
+    margin: 0;
+    font-size: 13px;
+    color: var(--n-text-color-3, var(--n-text-color));
+    opacity: 0.75;
+    text-align: center;
+  }
+}
+
+.divider-text {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+@media (max-width: 640px) {
+  .login-wrapper {
+    padding: 12px;
+    align-items: flex-start;
+    padding-top: 48px;
+  }
+  .login-card {
+    max-width: 100%;
+    border-radius: 10px;
+    :deep(.n-card__content) {
+      padding: 28px 20px;
+    }
+  }
+  .brand {
+    margin-bottom: 22px;
+    .logo {
+      width: 56px;
+      height: 56px;
+    }
+    .title {
+      font-size: 22px;
+    }
+  }
 }
 </style>

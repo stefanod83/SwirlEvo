@@ -65,30 +65,36 @@ const columns = [
     title: t('fields.id'),
     key: "id",
     fixed: "left" as const,
+    sorter: (a: Task, b: Task) => (a.id || '').localeCompare(b.id || ''),
     render: (s: Task) => renderLink({ name: 'task_detail', params: { id: s.id } }, s.id),
   },
   {
     title: t('fields.service_id'),
     key: "service",
+    sorter: (a: Task, b: Task) => (a.serviceId || '').localeCompare(b.serviceId || ''),
     render: (s: Task) => renderLink({ name: 'service_detail', params: { name: s.serviceId } }, s.serviceId),
   },
   {
     title: t('objects.image'),
     key: "image",
+    sorter: (a: Task, b: Task) => (a.image || '').localeCompare(b.image || ''),
   },
   {
     title: t('fields.node_id'),
     key: "image",
+    sorter: (a: Task, b: Task) => (a.nodeName || '').localeCompare(b.nodeName || ''),
     render: (s: Task) => renderLink({ name: 'node_detail', params: { id: s.nodeId } }, s.nodeName),
   },
   {
     title: t('fields.state'),
     key: "mode",
+    sorter: (a: Task, b: Task) => (a.state || '').localeCompare(b.state || ''),
     render: (t: Task) => renderTag(t.state, t.state === 'running' || t.state === 'starting' ? "success" : "default"),
   },
   {
     title: t('fields.created_at'),
-    key: "createdAt"
+    key: "createdAt",
+    sorter: (a: Task, b: Task) => (a.createdAt || '').localeCompare(b.createdAt || ''),
   },
 ];
 const { state, pagination, fetchData, changePageSize } = useDataTable(taskApi.search, filter)

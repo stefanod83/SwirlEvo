@@ -90,11 +90,13 @@ const columns = [
     title: t('fields.title'),
     key: "title",
     fixed: "left" as const,
+    sorter: (a: Chart, b: Chart) => (a.title || '').localeCompare(b.title || ''),
     render: (c: Chart) => renderLink({ name: 'chart_detail', params: { id: c.id } }, c.title),
   },
   {
     title: t('fields.type'),
     key: "type",
+    sorter: (a: Chart, b: Chart) => (a.type || '').localeCompare(b.type || ''),
     render: (c: Chart) => {
       switch (c.type) {
         case 'line':
@@ -113,19 +115,23 @@ const columns = [
   {
     title: t('fields.dashboard'),
     key: "dashboard",
+    sorter: (a: Chart, b: Chart) => (a.dashboard || '').localeCompare(b.dashboard || ''),
     render: (c: Chart) => renderTag(toTitle(c.dashboard || 'any')),
   },
   {
     title: t('fields.width'),
     key: "width",
+    sorter: (a: Chart, b: Chart) => (a.width || 0) - (b.width || 0),
   },
   {
     title: t('fields.height'),
     key: "height",
+    sorter: (a: Chart, b: Chart) => (a.height || 0) - (b.height || 0),
   },
   {
     title: t('fields.updated_at'),
     key: "updatedAt",
+    sorter: (a: Chart, b: Chart) => (a.updatedAt || 0) - (b.updatedAt || 0),
     render: (c: Chart) => renderTime(c.updatedAt),
   },
   {

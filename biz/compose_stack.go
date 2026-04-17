@@ -50,6 +50,13 @@ type ComposeStackBiz interface {
 	StartExternal(ctx context.Context, hostID, name string, user web.User) error
 	StopExternal(ctx context.Context, hostID, name string, user web.User) error
 	RemoveExternal(ctx context.Context, hostID, name string, removeVolumes, force bool, user web.User) error
+	// Migrate moves a managed, stopped stack to another host. The stack
+	// record is updated in place (same ID, new HostID). Container
+	// lifecycle: containers on the source host are torn down, then
+	// (if redeploy=true) created fresh on the target. Volumes stay on
+	// the source host — the operator is responsible for any data
+	// transfer.
+	Migrate(ctx context.Context, id, targetHostID string, redeploy bool, user web.User) error
 }
 
 // VolumesContainDataError wraps a list of project volumes that contain data,
@@ -754,6 +761,125 @@ func parseEnvFile(content string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// Migrate moves a managed, stopped compose stack from its current host to
+// `targetHostID`. Validation rules (all failing with a misc.Coded error so
+// the UI can render a specific message):
+//
+//  1. Stack must exist and be managed (persisted).
+//  2. Stack.Status must be "inactive" — prevents migrating a running stack
+//     out from under itself. The UI stops it first, then migrates.
+//  3. Source and target host must differ.
+//  4. Target host must exist and be reachable.
+//  5. Target host must not already have a stack with the same name
+//     (neither managed nor external — that's a hard conflict).
+//
+// On success:
+//   - containers on the SOURCE host are removed (volumes preserved there;
+//     the operator is warned in the UI and handles data transfer manually);
+//   - the DAO record is updated with the new HostID;
+//   - an audit event is emitted with action "migrate";
+//   - if redeploy=true, Deploy() is called on the updated record and
+//     containers are created fresh on the target host.
+func (b *composeStackBiz) Migrate(ctx context.Context, id, targetHostID string, redeploy bool, user web.User) error {
+	stack, err := b.di.ComposeStackGet(ctx, id)
+	if err != nil {
+		return err
+	}
+	if stack == nil {
+		return errors.New("stack not found")
+	}
+
+	// 1. Guard: only stopped stacks can be migrated. A running stack would
+	//    leave orphan containers on the source host after the DAO pointer flip.
+	if stack.Status != "inactive" {
+		return misc.Error(misc.ErrMigrateRequiresStopped,
+			errors.New("stack must be stopped before migration"))
+	}
+
+	// 2. Guard: same-host migrate is a no-op and almost certainly a UI bug.
+	if stack.HostID == targetHostID {
+		return errors.New("cannot migrate to the same host")
+	}
+
+	// 3. Verify target host exists and is reachable (we need a client for
+	//    the Remove step on the source, and for the later name-conflict
+	//    probe on the target).
+	targetHost, err := b.hb.Find(ctx, targetHostID)
+	if err != nil {
+		return err
+	}
+	if targetHost == nil {
+		return errors.New("target host not found")
+	}
+
+	// 4. Name-conflict check — cover both managed (our DB) and external
+	//    (live on the daemon). Managed first: cheap DAO read.
+	if existing, gErr := b.di.ComposeStackGetByName(ctx, targetHostID, stack.Name); gErr != nil {
+		return gErr
+	} else if existing != nil {
+		return misc.Error(misc.ErrStackNameConflict,
+			fmt.Errorf("a stack named %q already exists on the target host", stack.Name))
+	}
+	// External: check the live project list on the target. If the host is
+	// unreachable we fall through — the subsequent Deploy would surface
+	// the connectivity error anyway, and blocking a migration because
+	// Swirl can't probe the target is worse UX than trying and failing.
+	if targetHost.Status == "connected" {
+		if tCli, cErr := b.d.Hosts.GetClient(targetHost.ID, targetHost.Endpoint); cErr == nil {
+			tEngine := compose.NewStandaloneEngine(tCli)
+			if infos, lErr := tEngine.List(ctx); lErr == nil {
+				for i := range infos {
+					if infos[i].Name == stack.Name {
+						return misc.Error(misc.ErrStackNameConflict,
+							fmt.Errorf("a stack named %q already exists on the target host", stack.Name))
+					}
+				}
+			}
+		}
+	}
+
+	// 5. Remove containers on the source host. removeVolumes=false — we do
+	//    NOT copy volumes in v1, so we also do NOT delete them: data stays
+	//    safe on the source and the operator can rsync/snapshot it later.
+	//    Cleanup hook drops only helper containers + secret volumes, never
+	//    project data volumes.
+	if cli, cErr := b.clientForStack(ctx, stack); cErr == nil {
+		engine := compose.NewStandaloneEngine(cli)
+		// Best-effort: if the source host is unreachable the DAO pointer
+		// still flips. Operator is warned via the UI checklist.
+		_ = engine.Remove(ctx, stack.Name, false, b.sec.NewCleanupHook())
+	}
+
+	// 6. Flip the DAO record: same ID + same content, new HostID. Status
+	//    resets to "inactive" because containers no longer exist anywhere.
+	sourceHostID := stack.HostID
+	stack.HostID = targetHostID
+	stack.Status = "inactive"
+	stack.ErrorMessage = ""
+	stack.UpdatedAt = now()
+	stack.UpdatedBy = newOperator(user)
+	if err := b.di.ComposeStackUpdate(ctx, stack); err != nil {
+		// Roll back — the source-side containers are already gone but
+		// the DB still points at the source host. The stack shows up
+		// as "inactive" on the source, operator can redeploy there.
+		stack.HostID = sourceHostID
+		return err
+	}
+
+	// 7. Audit trail — node is recorded as the TARGET host ID, matching
+	//    the new ownership and letting operators filter by destination.
+	b.eb.CreateStack(EventActionMigrate, targetHostID, stack.Name, user)
+
+	// 8. Optional: deploy on the target. The stack struct has been
+	//    updated in step 6 so Deploy() will use the new HostID.
+	if redeploy {
+		if _, dErr := b.Deploy(ctx, stack, false, user); dErr != nil {
+			return dErr
+		}
+	}
+	return nil
 }
 
 func init() {

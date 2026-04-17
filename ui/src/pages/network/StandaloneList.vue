@@ -107,6 +107,7 @@ const columns: any[] = [
   {
     title: t('fields.name'),
     key: 'name',
+    sorter: (a: Network, b: Network) => (a.name || '').localeCompare(b.name || ''),
     render: (r: Network) => h(NSpace, { size: 6, inline: true, align: 'center' }, {
       default: () => [
         r.name,
@@ -114,15 +115,21 @@ const columns: any[] = [
       ],
     }),
   },
-  { title: t('fields.id'), key: 'id' },
+  {
+    title: t('fields.id'),
+    key: 'id',
+    sorter: (a: Network, b: Network) => (a.id || '').localeCompare(b.id || ''),
+  },
   {
     title: t('fields.scope'),
     key: 'scope',
+    sorter: (a: Network, b: Network) => (a.scope || '').localeCompare(b.scope || ''),
     render: (r: Network) => renderTag(r.scope, r.scope === 'swarm' ? 'success' : 'default' as any),
   },
   {
     title: t('fields.driver'),
     key: 'driver',
+    sorter: (a: Network, b: Network) => (a.driver || '').localeCompare(b.driver || ''),
     render: (r: Network) => renderTag(r.driver, r.driver === 'overlay' ? 'success' : 'default' as any),
   },
   {

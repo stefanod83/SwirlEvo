@@ -9,6 +9,14 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
       <n-button
         secondary
         size="small"
@@ -106,7 +114,7 @@ import {
   NTabPane,
   NTag,
 } from "naive-ui";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XCode from "@/components/Code.vue";
 import XPanel from "@/components/Panel.vue";
@@ -120,12 +128,18 @@ const { t } = useI18n()
 const route = useRoute();
 const model = ref({ driver: {}, templating: {} } as Secret);
 const raw = ref('');
+const loading = ref(false);
 
 async function fetchData() {
-  const id = route.params.id as string;
-  let r = await secretApi.find(id);
-  model.value = r.data?.secret as Secret;
-  raw.value = r.data?.raw as string;
+  loading.value = true;
+  try {
+    const id = route.params.id as string;
+    let r = await secretApi.find(id);
+    model.value = r.data?.secret as Secret;
+    raw.value = r.data?.raw as string;
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(fetchData);

@@ -77,28 +77,34 @@ const columns = [
   {
     title: t('fields.id'),
     key: "id",
+    sorter: (a: User, b: User) => (a.id || '').localeCompare(b.id || ''),
     render: (row: User) => renderLink({ name: 'user_detail', params: { id: row.id } }, row.id),
   },
   {
     title: t('fields.name'),
     key: "name",
+    sorter: (a: User, b: User) => (a.name || '').localeCompare(b.name || ''),
   },
   {
     title: t('fields.login_name'),
     key: "loginName",
+    sorter: (a: User, b: User) => (a.loginName || '').localeCompare(b.loginName || ''),
   },
   {
     title: t('fields.email'),
     key: "email",
+    sorter: (a: User, b: User) => (a.email || '').localeCompare(b.email || ''),
   },
   {
     title: t('fields.admin'),
     key: "admin",
+    sorter: (a: User, b: User) => (a.admin ? 1 : 0) - (b.admin ? 1 : 0),
     render: (row: User) => t(row.admin ? 'enums.yes' : 'enums.no'),
   },
   {
     title: t('fields.status'),
     key: "status",
+    sorter: (a: User, b: User) => (a.status || 0) - (b.status || 0),
     render: (row: User) => renderTag(
       row.status ? t('enums.normal') : t('enums.blocked'),
       row.status ? "success" : "warning"
@@ -107,6 +113,7 @@ const columns = [
   {
     title: t('fields.updated_at'),
     key: "updatedAt",
+    sorter: (a: User, b: User) => (a.updatedAt || 0) - (b.updatedAt || 0),
     render: (row: User) => renderTime(row.updatedAt),
   },
   {

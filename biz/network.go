@@ -351,11 +351,31 @@ func (b *networkBiz) Topology(ctx context.Context, node string, all bool) (*Netw
 			edgeKey := hostNodeID + "|" + ctrID
 			if !seenEdges[edgeKey] {
 				seenEdges[edgeKey] = true
-				topo.Edges = append(topo.Edges, NetworkTopologyEdge{
+				edge := NetworkTopologyEdge{
 					Source: hostNodeID,
 					Target: ctrID,
 					Type:   "host-container",
 					Label:  c.HostConfig.NetworkMode,
+				}
+				if data.exposedPublic {
+					edge.Flags = append(edge.Flags, "exposed")
+				}
+				topo.Edges = append(topo.Edges, edge)
+			}
+		} else if data.exposedPublic {
+			// Container is publicly exposed AND already attached to one or
+			// more networks. Add an extra host↔container edge flagged
+			// "exposed" so the UI can draw a red security-visibility line
+			// directly from the host to the container — independent of the
+			// existing network-container edges.
+			edgeKey := hostNodeID + "|" + ctrID + "|exposed"
+			if !seenEdges[edgeKey] {
+				seenEdges[edgeKey] = true
+				topo.Edges = append(topo.Edges, NetworkTopologyEdge{
+					Source: hostNodeID,
+					Target: ctrID,
+					Type:   "host-container",
+					Flags:  []string{"exposed"},
 				})
 			}
 		}
@@ -573,9 +593,13 @@ type NetworkTopologyNode struct {
 }
 
 // NetworkTopologyEdge links two nodes. Type carries the semantic.
+// Flags is an optional set of classifiers (e.g. "exposed") used by the UI to
+// style the edge — notably to draw a red line from the host to a container
+// that publishes ports on a public IP.
 type NetworkTopologyEdge struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Type   string `json:"type"`
-	Label  string `json:"label,omitempty"`
+	Source string   `json:"source"`
+	Target string   `json:"target"`
+	Type   string   `json:"type"`
+	Label  string   `json:"label,omitempty"`
+	Flags  []string `json:"flags,omitempty"`
 }

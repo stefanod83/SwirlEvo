@@ -9,6 +9,14 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
       <n-button
         secondary
         size="small"
@@ -126,7 +134,7 @@ import {
   NTabs,
   NTabPane,
 } from "naive-ui";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import XAnchor from "@/components/Anchor.vue";
@@ -144,17 +152,23 @@ const route = useRoute();
 const node = ref({} as Node)
 const tasks = ref([] as Task[])
 const raw = ref('')
+const loading = ref(false)
 
 async function fetchData() {
-  const id = route.params.id as string
-  let results = await Promise.all([
-    nodeApi.find(id),
-    taskApi.search({ node: id, pageIndex: 1, pageSize: 100 }),
-  ])
+  loading.value = true
+  try {
+    const id = route.params.id as string
+    let results = await Promise.all([
+      nodeApi.find(id),
+      taskApi.search({ node: id, pageIndex: 1, pageSize: 100 }),
+    ])
 
-  node.value = results[0].data?.node as Node;
-  raw.value = results[0].data?.raw as string;
-  tasks.value = results[1].data?.items as Task[];
+    node.value = results[0].data?.node as Node;
+    raw.value = results[0].data?.raw as string;
+    tasks.value = results[1].data?.items as Task[];
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(fetchData);

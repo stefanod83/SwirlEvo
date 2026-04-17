@@ -9,6 +9,14 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
       <n-button
         secondary
         size="small"
@@ -101,7 +109,7 @@ import {
   NTable,
   NTime,
 } from "naive-ui";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPairTag from "@/components/PairTag.vue";
 import XPanel from "@/components/Panel.vue";
@@ -115,11 +123,17 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Chart);
+const loading = ref(false);
 
 async function fetchData() {
-  const id = route.params.id as string;
-  let r = await chartApi.find(id);
-  model.value = r.data as Chart;
+  loading.value = true;
+  try {
+    const id = route.params.id as string;
+    let r = await chartApi.find(id);
+    model.value = r.data as Chart;
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(fetchData);

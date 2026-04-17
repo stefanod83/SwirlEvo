@@ -18,59 +18,23 @@
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
-    <n-table size="small" :bordered="true" :single-line="false">
-      <thead>
-        <tr>
-          <th>{{ t('fields.name') }}</th>
-          <th>Endpoint</th>
-          <th>{{ t('fields.status') }}</th>
-          <th>Engine</th>
-          <th>OS/Arch</th>
-          <th>{{ t('fields.updated_at') }}</th>
-          <th>{{ t('fields.actions') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(h, index) of model" :key="h.id">
-          <td>
-            <x-anchor :url="{ name: 'host_detail', params: { id: h.id } }">{{ h.name }}</x-anchor>
-          </td>
-          <td><code>{{ h.endpoint }}</code></td>
-          <td>
-            <n-tag :type="statusType(h.status)" size="small">{{ h.status }}</n-tag>
-          </td>
-          <td>{{ h.engineVersion || '-' }}</td>
-          <td>{{ h.os && h.arch ? h.os + '/' + h.arch : '-' }}</td>
-          <td>
-            <n-time :time="h.updatedAt" format="y-MM-dd HH:mm:ss" />
-          </td>
-          <td>
-            <n-button size="tiny" quaternary type="info" @click="syncHost(h.id)">Sync</n-button>
-            <n-button
-              size="tiny"
-              quaternary
-              type="warning"
-              @click="$router.push({ name: 'host_edit', params: { id: h.id } })"
-            >{{ t('buttons.edit') }}</n-button>
-            <n-popconfirm :show-icon="false" @positive-click="deleteHost(h.id, h.name, index)">
-              <template #trigger>
-                <n-button size="tiny" quaternary type="error">{{ t('buttons.delete') }}</n-button>
-              </template>
-              {{ t('prompts.delete') }}
-            </n-popconfirm>
-          </td>
-        </tr>
-      </tbody>
-    </n-table>
+    <n-data-table
+      :row-key="(row: Host) => row.id"
+      size="small"
+      :columns="columns"
+      :data="model"
+      :loading="loading"
+      scroll-x="max-content"
+    />
   </n-space>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { h, onMounted, ref } from "vue";
 import {
   NSpace,
   NButton,
-  NTable,
+  NDataTable,
   NPopconfirm,
   NIcon,
   NTime,
@@ -82,14 +46,17 @@ import XAnchor from "@/components/Anchor.vue";
 import * as hostApi from "@/api/host";
 import type { Host } from "@/api/host";
 import { useStore } from "vuex";
+import { useRouter } from "vue-router";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const store = useStore();
+const router = useRouter();
 const model = ref([] as Host[]);
 const total = ref(0);
+const loading = ref(false);
 
-function statusType(status: string) {
+function statusType(status: string): 'default' | 'error' | 'info' | 'success' | 'warning' {
   switch (status) {
     case 'connected': return 'success'
     case 'error': return 'error'
@@ -97,9 +64,9 @@ function statusType(status: string) {
   }
 }
 
-async function deleteHost(id: string, name: string, index: number) {
+async function deleteHost(id: string, name: string) {
   await hostApi.remove(id, name);
-  model.value.splice(index, 1)
+  model.value = model.value.filter(h => h.id !== id)
   total.value--
   await store.dispatch('reloadHosts')
 }
@@ -110,11 +77,74 @@ async function syncHost(id: string) {
 }
 
 async function fetchData() {
-  let r = await hostApi.search();
-  const data = r.data as any;
-  model.value = data?.items || [];
-  total.value = data?.total || 0;
+  loading.value = true
+  try {
+    let r = await hostApi.search();
+    const data = r.data as any;
+    model.value = data?.items || [];
+    total.value = data?.total || 0;
+  } finally {
+    loading.value = false
+  }
 }
+
+const columns: any[] = [
+  {
+    title: t('fields.name'),
+    key: 'name',
+    sorter: (a: Host, b: Host) => (a.name || '').localeCompare(b.name || ''),
+    render: (r: Host) => h(XAnchor, { url: { name: 'host_detail', params: { id: r.id } } }, { default: () => r.name }),
+  },
+  {
+    title: 'Endpoint',
+    key: 'endpoint',
+    sorter: (a: Host, b: Host) => (a.endpoint || '').localeCompare(b.endpoint || ''),
+    render: (r: Host) => h('code', null, r.endpoint),
+  },
+  {
+    title: t('fields.status'),
+    key: 'status',
+    sorter: (a: Host, b: Host) => (a.status || '').localeCompare(b.status || ''),
+    render: (r: Host) => h(NTag, { type: statusType(r.status), size: 'small' }, { default: () => r.status }),
+  },
+  {
+    title: 'Engine',
+    key: 'engineVersion',
+    sorter: (a: Host, b: Host) => (a.engineVersion || '').localeCompare(b.engineVersion || ''),
+    render: (r: Host) => r.engineVersion || '-',
+  },
+  {
+    title: 'OS/Arch',
+    key: 'os',
+    render: (r: Host) => r.os && r.arch ? r.os + '/' + r.arch : '-',
+  },
+  {
+    title: t('fields.updated_at'),
+    key: 'updatedAt',
+    sorter: (a: Host, b: Host) => (a.updatedAt || 0) - (b.updatedAt || 0),
+    render: (r: Host) => h(NTime, { time: r.updatedAt, format: 'y-MM-dd HH:mm:ss' }),
+  },
+  {
+    title: t('fields.actions'),
+    key: 'actions',
+    render: (r: Host) => h(NSpace, { size: 4, inline: true }, {
+      default: () => [
+        h(NButton, {
+          size: 'tiny', quaternary: true, type: 'info',
+          onClick: () => syncHost(r.id),
+        }, { default: () => 'Sync' }),
+        h(NButton, {
+          size: 'tiny', quaternary: true, type: 'warning',
+          onClick: () => router.push({ name: 'host_edit', params: { id: r.id } }),
+        }, { default: () => t('buttons.edit') }),
+        h(NPopconfirm, { showIcon: false, onPositiveClick: () => deleteHost(r.id, r.name) }, {
+          default: () => t('prompts.delete'),
+          trigger: () => h(NButton, { size: 'tiny', quaternary: true, type: 'error' }, { default: () => t('buttons.delete') }),
+        }),
+      ],
+    }),
+  },
+]
 
 onMounted(fetchData);
 </script>

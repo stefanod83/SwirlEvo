@@ -123,6 +123,10 @@ export class ComposeStackApi {
     remove(ref: ActionRef) {
         return ajax.post<RemoveResponse>('/compose-stack/remove', ref)
     }
+
+    migrate(id: string, targetHostId: string, redeploy: boolean) {
+        return ajax.post<Result<Object>>('/compose-stack/migrate', { id, targetHostId, redeploy })
+    }
 }
 
 export default new ComposeStackApi

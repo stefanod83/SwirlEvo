@@ -61,6 +61,11 @@ var Actions = map[string]uint64{
 	"recover": 1 << 13,
 	// push: add new tags + push images to a registry.
 	"push": 1 << 14,
+	// cleanup: destroy old KVv2 versions of a Vault secret (keep last N).
+	// Separate from `delete` (removes the catalog entry entirely) — cleanup
+	// only reaches into Vault's version history and is irreversible per
+	// version destroyed.
+	"cleanup": 1 << 15,
 }
 
 var Perms = map[string][]string{
@@ -85,7 +90,7 @@ var Perms = map[string][]string{
 	"backup":    {"view", "edit", "delete", "restore", "download", "recover"},
 	// vault.admin guards Vault connection settings + test endpoint.
 	"vault":        {"admin"},
-	"vault_secret": {"view", "edit", "delete"},
+	"vault_secret": {"view", "edit", "delete", "cleanup"},
 }
 
 type Authorizer struct {

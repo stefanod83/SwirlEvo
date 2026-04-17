@@ -1,13 +1,21 @@
 <template>
   <x-page-header :subtitle="model.name">
     <template #action>
-      <n-button size="small" @click="$router.push({ name: 'volume_list' })">
+      <n-button secondary size="small" @click="$router.push({ name: 'volume_list' })">
         <template #icon>
           <n-icon>
             <back-icon />
           </n-icon>
         </template>
         {{ t('buttons.return') }}
+      </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
       </n-button>
     </template>
   </x-page-header>
@@ -83,7 +91,7 @@ import {
   NTabs,
   NTabPane,
 } from "naive-ui";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import XCode from "@/components/Code.vue";
@@ -97,13 +105,19 @@ const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Volume);
 const raw = ref('');
+const loading = ref(false);
 const node = route.params.node as string || '';
 
 async function fetchData() {
-  const name = route.params.name as string;
-  let r = await volumeApi.find(node, name);
-  model.value = r.data?.volume as Volume;
-  raw.value = r.data?.raw as string;
+  loading.value = true;
+  try {
+    const name = route.params.name as string;
+    let r = await volumeApi.find(node, name);
+    model.value = r.data?.volume as Volume;
+    raw.value = r.data?.raw as string;
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(fetchData);

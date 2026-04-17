@@ -7,6 +7,12 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon><refresh-icon /></n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
       <n-button
         secondary
         size="small"
@@ -139,6 +145,7 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const route = useRoute()
 const model = ref({} as Registry)
+const loading = ref(false)
 
 const repos = ref<string[]>([])
 const next = ref('')
@@ -192,9 +199,14 @@ async function openTags(repo: string) {
 }
 
 async function fetchData() {
-  const r = await registryApi.find(route.params.id as string)
-  model.value = r.data as Registry
-  loadRepos(true)
+  loading.value = true
+  try {
+    const r = await registryApi.find(route.params.id as string)
+    model.value = r.data as Registry
+    loadRepos(true)
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(fetchData)

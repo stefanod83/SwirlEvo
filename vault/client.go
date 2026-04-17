@@ -231,6 +231,35 @@ func (c *Client) DeleteKVv2(ctx context.Context, path string) error {
 	return err
 }
 
+// DestroyVersionsKVv2 PERMANENTLY destroys the listed KVv2 versions of a
+// secret. This is NOT a soft-delete: the underlying ciphertext is removed
+// from the storage backend and the versions are gone forever. Used by the
+// "cleanup old versions" workflow, gated by `vault_secret.cleanup`.
+//
+// The caller's token needs `update` on `<mount>/destroy/<path>`.
+//
+// Vault responds 204 No Content on success; doAuthed treats any 2xx as
+// success and returns an empty payload, so the natural return-on-nil-err
+// flow is the right one.
+func (c *Client) DestroyVersionsKVv2(ctx context.Context, path string, versions []int) error {
+	if len(versions) == 0 {
+		return nil
+	}
+	s := c.settingLoader()
+	if s == nil || !s.Vault.Enabled {
+		return ErrDisabled
+	}
+	mount := strings.Trim(s.Vault.KVMount, "/ ")
+	if mount == "" {
+		mount = defaultKVMount
+	}
+	clean := strings.TrimLeft(path, "/")
+	apiPath := fmt.Sprintf("v1/%s/destroy/%s", mount, clean)
+	payload := map[string]any{"versions": versions}
+	_, err := c.doAuthed(ctx, http.MethodPost, apiPath, "", payload)
+	return err
+}
+
 // KVv2Metadata describes the version history of a KVv2 secret, returned
 // by ReadMetadataKVv2. Enough for version-count badges + a stale check.
 type KVv2Metadata struct {
@@ -296,6 +325,31 @@ func (c *Client) ReadMetadataSummary(ctx context.Context, path string) (currentV
 		return 0, 0, false, nil
 	}
 	return meta.CurrentVersion, len(meta.Versions), true, nil
+}
+
+// ReadMetadataVersions is a primitive-typed projection of ReadMetadataKVv2
+// that returns the per-version destroyed flag alongside the current
+// version. Kept as a separate method so the biz layer can consume it
+// without exporting `KVv2Metadata` through the `vaultReader` interface
+// (biz can't import the vault package).
+//
+// The returned map is keyed by version number as a string (matching the
+// upstream Vault API) and the value is `true` when that version has
+// already been destroyed. `exists=false` + `err=nil` means the KV entry
+// is absent (404).
+func (c *Client) ReadMetadataVersions(ctx context.Context, path string) (currentVersion int, versions map[string]bool, exists bool, err error) {
+	meta, err := c.ReadMetadataKVv2(ctx, path)
+	if err != nil {
+		return 0, nil, false, err
+	}
+	if meta == nil {
+		return 0, nil, false, nil
+	}
+	out := make(map[string]bool, len(meta.Versions))
+	for k, v := range meta.Versions {
+		out[k] = v.Destroyed
+	}
+	return meta.CurrentVersion, out, true, nil
 }
 
 // ResolvePrefixed joins the configured prefix with a secret name and returns

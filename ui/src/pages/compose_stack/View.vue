@@ -8,6 +8,12 @@
           </template>
           {{ t('buttons.return') }}
         </n-button>
+        <n-button secondary size="small" @click="fetchData" :loading="loading">
+          <template #icon>
+            <n-icon><refresh-outline /></n-icon>
+          </template>
+          {{ t('buttons.refresh') }}
+        </n-button>
         <n-button secondary size="small" :disabled="!detail.content" @click="downloadCompose">
           <template #icon>
             <n-icon><download-outline /></n-icon>
@@ -21,10 +27,79 @@
             </template>
             {{ t('buttons.edit') }}
           </n-button>
+          <n-tooltip v-if="canShowMigrate" trigger="hover" placement="bottom" :disabled="canMigrate">
+            <template #trigger>
+              <!--
+                n-button does not forward click when disabled, so we wrap
+                it in a <span> to keep the tooltip reachable even when the
+                button is greyed out (stack active/deploying/error).
+              -->
+              <span>
+                <n-button
+                  secondary
+                  size="small"
+                  :disabled="!canMigrate"
+                  @click="openMigrate"
+                >
+                  <template #icon>
+                    <n-icon><swap-horizontal-icon /></n-icon>
+                  </template>
+                  {{ t('buttons.migrate') }}
+                </n-button>
+              </span>
+            </template>
+            {{ t('messages.migrate_requires_stopped') }}
+          </n-tooltip>
         </template>
       </n-space>
     </template>
   </x-page-header>
+
+  <n-modal
+    v-model:show="migrateOpen"
+    preset="card"
+    :title="t('titles.stack_migrate')"
+    style="width: 560px; max-width: 90vw;"
+    :mask-closable="false"
+  >
+    <n-space vertical :size="12">
+      <n-alert type="warning" :show-icon="true">
+        <ul style="margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6;">
+          <li>{{ t('messages.migrate_requires_stopped') }}</li>
+          <li>{{ t('messages.migrate_volumes_warning') }}</li>
+          <li>{{ t('messages.migrate_name_exists_warning') }}</li>
+        </ul>
+      </n-alert>
+
+      <n-form-item :label="t('fields.target_host')" label-placement="left" :show-feedback="false">
+        <n-select
+          v-model:value="migrateTargetHostId"
+          :options="migrateHostOptions"
+          :placeholder="t('fields.target_host')"
+        />
+      </n-form-item>
+
+      <n-checkbox v-model:checked="migrateRedeploy">
+        {{ t('buttons.deploy') }} &rarr; {{ t('fields.target_host').toLowerCase() }}
+      </n-checkbox>
+
+      <n-checkbox v-model:checked="migrateAck">
+        {{ t('messages.migrate_confirm_checklist') }}
+      </n-checkbox>
+
+      <n-space justify="end">
+        <n-button @click="migrateOpen = false">{{ t('buttons.cancel') }}</n-button>
+        <n-button
+          type="primary"
+          :disabled="!migrateTargetHostId || !migrateAck"
+          :loading="migrateSubmitting"
+          @click="doMigrate"
+        >
+          {{ t('buttons.migrate') }}
+        </n-button>
+      </n-space>
+    </n-space>
+  </n-modal>
   <n-space class="page-body" vertical :size="12" v-if="detail.name">
     <n-alert v-if="!detail.managed" type="warning" :show-icon="true">
       {{ t('texts.external_stack_warning') || 'This stack was created outside Swirl. Review the reconstructed compose file below, then click Import to have Swirl manage it.' }}
@@ -144,15 +219,18 @@
 </template>
 
 <script setup lang="ts">
-import { h, onMounted, ref } from "vue";
+import { computed, h, onMounted, ref } from "vue";
 import {
   NSpace, NButton, NIcon, NDescriptions, NDescriptionsItem, NAlert, NTabs, NTabPane,
-  NTag, NTable, NCheckbox, useMessage,
+  NTag, NTable, NCheckbox, NModal, NSelect, NFormItem, NTooltip, useMessage,
 } from "naive-ui";
 import {
   ArrowBackCircleOutline as ArrowBackIcon,
-  CreateOutline, RocketOutline, DownloadOutline,
+  CreateOutline, RocketOutline, DownloadOutline, RefreshOutline,
+  SwapHorizontalOutline as SwapHorizontalIcon,
 } from "@vicons/ionicons5";
+import { useStore } from "vuex";
+import type { State } from "@/store";
 import XPageHeader from "@/components/PageHeader.vue";
 import XCodeMirror from "@/components/CodeMirror.vue";
 import XContainerTable from "@/components/ContainerTable.vue";
@@ -170,6 +248,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const store = useStore<State>()
 const detail = ref({ services: [], networks: [], volumes: [], containers: [] } as any as ComposeStackDetail)
 const editableContent = ref('')
 const pullImages = ref(false)
@@ -180,6 +259,70 @@ const bindings = ref<ComposeStackSecretBinding[]>([])
 const envFileContent = ref('')
 const lastDeployError = ref('')
 const lastDeployWarnings = ref<string[]>([])
+const loading = ref(false)
+
+// --- Migration state ---------------------------------------------------
+// The button is shown only for managed stacks on standalone mode with at
+// least 2 hosts configured. A disabled tooltip explains why migration is
+// refused when the stack isn't stopped.
+const migrateOpen = ref(false)
+const migrateTargetHostId = ref<string | null>(null)
+const migrateRedeploy = ref(true)
+const migrateAck = ref(false)
+const migrateSubmitting = ref(false)
+
+const canShowMigrate = computed(() =>
+  detail.value.managed &&
+  !!detail.value.id &&
+  store.state.hosts.length > 1
+)
+
+const canMigrate = computed(() => detail.value.status === 'inactive')
+
+const migrateHostOptions = computed(() =>
+  store.state.hosts
+    .filter(h => h.id !== detail.value.hostId)
+    .map(h => ({ label: h.name, value: h.id }))
+)
+
+function openMigrate() {
+  // Reset wizard state every time so a prior cancelled attempt never
+  // leaks stale selection/ack into a fresh one.
+  migrateTargetHostId.value = null
+  migrateRedeploy.value = true
+  migrateAck.value = false
+  migrateOpen.value = true
+}
+
+async function doMigrate() {
+  if (!detail.value.id || !migrateTargetHostId.value) return
+  migrateSubmitting.value = true
+  try {
+    await composeStackApi.migrate(
+      detail.value.id,
+      migrateTargetHostId.value,
+      migrateRedeploy.value,
+    )
+    message.success(t('messages.migrate_success'))
+    migrateOpen.value = false
+    // Refresh host-id-dependent UI (containers list, detail banner) by
+    // re-fetching from scratch. The stack id stays the same, so the
+    // route does not need to change.
+    await fetchData()
+  } catch (e: any) {
+    // Map known biz error codes to localised strings.
+    const code = e?.response?.data?.code || e?.code
+    if (code === 1009) {
+      message.error(t('messages.migrate_requires_stopped'))
+    } else if (code === 1010) {
+      message.error(t('messages.migrate_name_conflict'))
+    } else {
+      message.error(e?.message || String(e))
+    }
+  } finally {
+    migrateSubmitting.value = false
+  }
+}
 
 async function loadContainers() {
   if (!detail.value.hostId || !detail.value.name) return
@@ -294,13 +437,20 @@ async function doImport(redeploy: boolean) {
   }
 }
 
-onMounted(async () => {
-  if (route.name === 'std_stack_external_detail') {
-    await loadByHostAndName(route.params.hostId as string, route.params.name as string)
-  } else if (route.params.id) {
-    await loadByIdAndResolve(route.params.id as string)
+async function fetchData() {
+  loading.value = true
+  try {
+    if (route.name === 'std_stack_external_detail') {
+      await loadByHostAndName(route.params.hostId as string, route.params.name as string)
+    } else if (route.params.id) {
+      await loadByIdAndResolve(route.params.id as string)
+    }
+  } finally {
+    loading.value = false
   }
-})
+}
+
+onMounted(fetchData)
 </script>
 
 <style scoped>

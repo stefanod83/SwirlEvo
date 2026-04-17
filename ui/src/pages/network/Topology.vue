@@ -2,6 +2,10 @@
   <n-space vertical :size="12">
     <n-alert type="info">
       {{ t('tips.topology') }}
+      <template v-if="hasExposedEdge">
+        <br />
+        <span style="color: #dc2626">{{ t('texts.topology_red_edge_hint') }}</span>
+      </template>
     </n-alert>
 
     <n-space justify="space-between" align="center" wrap>
@@ -22,9 +26,24 @@
           <template #icon><n-icon><alert-circle-outline /></n-icon></template>
           {{ t('fields.exposed') }}
         </n-tag>
+        <n-tag
+          :bordered="false"
+          :color="{ color: 'transparent', textColor: '#dc2626', borderColor: '#dc2626' }"
+        >
+          <template #icon><n-icon :color="'#dc2626'"><flash-outline /></n-icon></template>
+          {{ t('texts.topology_legend_exposed') }}
+        </n-tag>
       </n-space>
 
       <n-space :size="14" align="center">
+        <n-select
+          v-model:value="stackFilter"
+          :options="stackOptions"
+          clearable
+          :placeholder="t('fields.stack')"
+          size="small"
+          style="width: 220px"
+        />
         <n-select
           v-model:value="viewMode"
           :options="viewOptions"
@@ -141,6 +160,12 @@
         </template>
 
         <template v-else-if="selected.type === 'container'">
+          <n-space v-if="selectedContainerExposed" :size="6">
+            <n-tag type="error" size="small" :bordered="false">
+              <template #icon><n-icon><alert-circle-outline /></n-icon></template>
+              {{ t('texts.topology_exposed_warning') }}
+            </n-tag>
+          </n-space>
           <n-descriptions :column="selected.meta?.stack ? 4 : 3" size="small" label-placement="top">
             <n-descriptions-item :label="t('fields.name')">
               <strong>{{ selected.meta?.name || selected.label }}</strong>
@@ -211,10 +236,13 @@ import {
   RefreshOutline, CloseOutline, DownloadOutline,
   AddOutline, RemoveOutline,
   ServerOutline, GlobeOutline, CubeOutline, AlertCircleOutline,
+  FlashOutline,
 } from "@vicons/ionicons5";
 import { useResizeObserver } from "@vueuse/core";
 import networkApi from "@/api/network";
 import type { NetworkTopology, NetworkTopologyNode, NetworkTopologyEdge } from "@/api/network";
+import composeStackApi from "@/api/compose_stack";
+import stackApi from "@/api/stack";
 import { useStore } from "vuex";
 import { useI18n } from "vue-i18n";
 
@@ -229,6 +257,8 @@ const loading = ref(false);
 const selected = ref<NetworkTopologyNode | null>(null);
 const showInactive = ref(false);
 const showUnused = ref(false);
+const stackFilter = ref<string | null>(null);
+const stackOptions = ref<{ label: string; value: string }[]>([]);
 
 // Only two graph layouts + Sankey for dependency flow. Circular is the
 // default — it's the most readable starting point and the force simulation
@@ -401,16 +431,97 @@ function labelFor(n: NetworkTopologyNode): string {
 }
 
 function applyFilter(topo: NetworkTopology): NetworkTopology {
-  if (showUnused.value) return topo;
-  const drop = new Set(
-    topo.nodes.filter(n => n.flags?.includes("unused")).map(n => n.id),
-  );
-  if (!drop.size) return topo;
-  return {
-    hostId: topo.hostId,
-    nodes: topo.nodes.filter(n => !drop.has(n.id)),
-    edges: topo.edges.filter(e => !drop.has(e.source) && !drop.has(e.target)),
-  };
+  // Step 1: stack scoping. When a stack is selected we keep only the
+  // containers of that stack, the networks they attach to, and any
+  // "neighbour" containers sharing those networks (so the user can see
+  // who else is on the same wire).
+  let nodes = topo.nodes;
+  let edges = topo.edges;
+  if (stackFilter.value) {
+    const stack = stackFilter.value;
+    const stackContainerIds = new Set(
+      nodes
+        .filter(n => n.type === "container" && n.meta?.stack === stack)
+        .map(n => n.id),
+    );
+    const keepNetworkIds = new Set<string>();
+    for (const e of edges) {
+      if (e.type === "network-container" && stackContainerIds.has(e.target)) {
+        keepNetworkIds.add(e.source);
+      }
+    }
+    // Neighbour containers: any container attached to a network we kept.
+    const keepContainerIds = new Set(stackContainerIds);
+    for (const e of edges) {
+      if (e.type === "network-container" && keepNetworkIds.has(e.source)) {
+        keepContainerIds.add(e.target);
+      }
+    }
+    nodes = nodes.filter(n => {
+      if (n.type === "host") return true;
+      if (n.type === "network") return keepNetworkIds.has(n.id);
+      if (n.type === "container") return keepContainerIds.has(n.id);
+      return true;
+    });
+    const kept = new Set(nodes.map(n => n.id));
+    edges = edges.filter(e => kept.has(e.source) && kept.has(e.target));
+  }
+  // Step 2: hide "unused" networks unless the toggle is on.
+  if (!showUnused.value) {
+    const drop = new Set(
+      nodes.filter(n => n.flags?.includes("unused")).map(n => n.id),
+    );
+    if (drop.size) {
+      nodes = nodes.filter(n => !drop.has(n.id));
+      edges = edges.filter(e => !drop.has(e.source) && !drop.has(e.target));
+    }
+  }
+  return { hostId: topo.hostId, nodes, edges };
+}
+
+const selectedContainerExposed = computed<boolean>(() => {
+  const s = selected.value;
+  if (!s || s.type !== "container") return false;
+  return !!s.flags?.includes("exposed-public");
+});
+
+const hasExposedEdge = computed<boolean>(() => {
+  if (!lastTopology) return false;
+  const filtered = applyFilter(lastTopology);
+  return filtered.edges.some(e => e.flags?.includes("exposed"));
+});
+
+async function loadStackOptions() {
+  if (!props.hostId) {
+    stackOptions.value = [];
+    return;
+  }
+  const seen = new Set<string>();
+  const opts: { label: string; value: string }[] = [];
+  try {
+    const r = await composeStackApi.search({ hostId: props.hostId, pageIndex: 1, pageSize: 500 });
+    for (const s of r.data?.items || []) {
+      if (s.name && !seen.has(s.name)) {
+        seen.add(s.name);
+        opts.push({ label: s.name, value: s.name });
+      }
+    }
+  } catch {
+    // Standalone hosts without any stacks return empty — ignore.
+  }
+  try {
+    const r = await stackApi.search({});
+    for (const s of r.data || []) {
+      if (s.name && !seen.has(s.name)) {
+        seen.add(s.name);
+        opts.push({ label: s.name, value: s.name });
+      }
+    }
+  } catch {
+    // Swarm stack API is 404 in standalone mode — ignore.
+  }
+  opts.sort((a, b) => a.label.localeCompare(b.label));
+  stackOptions.value = opts;
 }
 
 // --- Graph (force / circular) ---------------------------------------------
@@ -534,21 +645,28 @@ function buildGraphOption(topo: NetworkTopology, mode: "force" | "circular"): ec
 
   const links = topo.edges.map((e: NetworkTopologyEdge) => {
     const touchesInactive = inactiveSet.has(e.source) || inactiveSet.has(e.target);
+    const exposed = e.flags?.includes("exposed") ?? false;
+    const lineStyle: any = {
+      type: e.type === "host-network" ? "dashed" : "solid",
+      width: exposed ? 3 : (e.type === "network-container" ? 1.2 : 1),
+      opacity: touchesInactive ? 0.3 : (exposed ? 0.95 : 0.7),
+      color: exposed ? "#dc2626" : (touchesInactive ? "#9ca3af" : undefined),
+    };
     return {
       source: e.source,
       target: e.target,
-      lineStyle: {
-        type: e.type === "host-network" ? "dashed" : "solid",
-        width: e.type === "network-container" ? 1.2 : 1,
-        opacity: touchesInactive ? 0.3 : 0.7,
-        color: touchesInactive ? "#9ca3af" : undefined,
-      },
+      lineStyle,
+      // Draw an arrowhead on exposed edges so the "host → container"
+      // direction reads visually like an incoming-traffic path.
+      symbol: exposed ? ["none", "arrow"] : undefined,
+      symbolSize: exposed ? 10 : undefined,
       label: e.label ? { show: true, formatter: e.label, fontSize: 10 } : undefined,
       value: {
         edgeType: e.type,
         sourceName: nameById[e.source] || e.source,
         targetName: nameById[e.target] || e.target,
         edgeLabel: e.label || "",
+        exposed,
       },
     };
   });
@@ -605,18 +723,24 @@ function buildSankeyOption(topo: NetworkTopology): echarts.EChartsOption {
       value: { meta: n.meta, type: n.type, flags: n.flags || [], label: labelFor(n), rawLabel: n.label, id: n.id },
     };
   });
-  const sankeyLinks = topo.edges.map(e => ({
-    source: e.source,
-    target: e.target,
-    value: 1,
-    lineStyle: { color: "gradient", opacity: 0.35 },
-    value2: {
-      edgeType: e.type,
-      sourceName: nodes.find(n => n.id === e.source)?.label || e.source,
-      targetName: nodes.find(n => n.id === e.target)?.label || e.target,
-      edgeLabel: e.label || "",
-    },
-  }));
+  const sankeyLinks = topo.edges.map(e => {
+    const exposed = e.flags?.includes("exposed") ?? false;
+    return {
+      source: e.source,
+      target: e.target,
+      value: 1,
+      lineStyle: exposed
+        ? { color: "#dc2626", opacity: 0.85 }
+        : { color: "gradient", opacity: 0.35 },
+      value2: {
+        edgeType: e.type,
+        sourceName: nodes.find(n => n.id === e.source)?.label || e.source,
+        targetName: nodes.find(n => n.id === e.target)?.label || e.target,
+        edgeLabel: e.label || "",
+        exposed,
+      },
+    };
+  });
   return {
     tooltip: {
       trigger: "item",
@@ -747,6 +871,7 @@ function render() {
 
 watch(showUnused, () => render());
 watch(viewMode, () => render());
+watch(stackFilter, () => render());
 
 async function fetchData() {
   if (!props.hostId) {
@@ -817,12 +942,14 @@ useResizeObserver(chartEl, () => {
 watch(() => props.hostId, () => {
   selected.value = null;
   lastTopology = null;
+  stackFilter.value = null;
+  loadStackOptions();
   fetchData();
 });
 
 onMounted(async () => {
   initChart();
-  await fetchData();
+  await Promise.all([loadStackOptions(), fetchData()]);
 });
 
 onBeforeUnmount(() => {

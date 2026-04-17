@@ -59,19 +59,23 @@ const columns = [
     title: t('fields.id'),
     key: "id",
     fixed: "left" as const,
+    sorter: (a: Config, b: Config) => (a.id || '').localeCompare(b.id || ''),
     render: (c: Config) => renderLink({ name: 'config_detail', params: { id: c.id } }, c.id),
   },
   {
     title: t('fields.name'),
     key: "name",
+    sorter: (a: Config, b: Config) => (a.name || '').localeCompare(b.name || ''),
   },
   {
     title: t('fields.created_at'),
-    key: "createdAt"
+    key: "createdAt",
+    sorter: (a: Config, b: Config) => (a.createdAt || '').localeCompare(b.createdAt || ''),
   },
   {
     title: t('fields.updated_at'),
-    key: "updatedAt"
+    key: "updatedAt",
+    sorter: (a: Config, b: Config) => (a.updatedAt || '').localeCompare(b.updatedAt || ''),
   },
   {
     title: t('fields.actions'),

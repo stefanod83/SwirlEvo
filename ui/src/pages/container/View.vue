@@ -9,6 +9,14 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
     </template>
   </x-page-header>
   <div class="page-body">
@@ -80,7 +88,7 @@ import {
   NTabPane,
   NAlert,
 } from "naive-ui";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import { useStore } from "vuex";
 import XPageHeader from "@/components/PageHeader.vue";
 import XCode from "@/components/Code.vue";
@@ -98,13 +106,19 @@ const route = useRoute();
 const store = useStore();
 const model = ref({} as Container);
 const raw = ref('');
+const loading = ref(false);
 const node = route.params.node as string || '';
 
 async function fetchData() {
-  const id = route.params.id as string;
-  let r = await containerApi.find(node, id);
-  model.value = r.data?.container as Container;
-  raw.value = r.data?.raw as string;
+  loading.value = true;
+  try {
+    const id = route.params.id as string;
+    let r = await containerApi.find(node, id);
+    model.value = r.data?.container as Container;
+    raw.value = r.data?.raw as string;
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(fetchData);

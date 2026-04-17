@@ -23,6 +23,12 @@ const (
 	// includes the list of volumes so the UI can ask for a second
 	// confirmation with force=true.
 	ErrVolumesContainData = 1008
+	// ErrMigrateRequiresStopped is raised when a stack migration is
+	// attempted on a stack that is not in the "inactive" state.
+	ErrMigrateRequiresStopped = 1009
+	// ErrStackNameConflict is raised when a stack migration is attempted
+	// but a stack with the same name already exists on the target host.
+	ErrStackNameConflict = 1010
 )
 
 func Error(code int32, err error) error {

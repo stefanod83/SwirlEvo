@@ -55,6 +55,7 @@ export interface NetworkTopologyEdge {
     target: string;
     type: 'host-network' | 'network-container' | 'host-container';
     label?: string;
+    flags?: string[];
 }
 
 export interface NetworkTopology {

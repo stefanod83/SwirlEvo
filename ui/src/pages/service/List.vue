@@ -75,20 +75,24 @@ const columns = [
     title: t('fields.name'),
     key: "name",
     fixed: "left" as const,
+    sorter: (a: Service, b: Service) => (a.name || '').localeCompare(b.name || ''),
     render: (s: Service) => renderLink({ name: 'service_detail', params: { name: s.name } }, s.name),
   },
   {
     title: t('objects.image'),
     key: "image",
+    sorter: (a: Service, b: Service) => (a.image || '').localeCompare(b.image || ''),
   },
   {
     title: t('fields.mode'),
     key: "mode",
+    sorter: (a: Service, b: Service) => (a.mode || '').localeCompare(b.mode || ''),
     render: (s: Service) => renderTag(s.mode, s.mode === 'replicated' || s.mode === 'replicated-job' ? "info" : "error"),
   },
   {
     title: t('fields.task'),
     key: "tasks",
+    sorter: (a: Service, b: Service) => (a.runningTasks || 0) - (b.runningTasks || 0),
     render: (s: Service) => {
       const type = s.desiredTasks === 0 ? 'warning' : (s.runningTasks === s.desiredTasks ? "success" : "error")
       return renderTag(`${s.runningTasks}/${s.desiredTasks}`, type)
@@ -96,7 +100,8 @@ const columns = [
   },
   {
     title: t('fields.updated_at'),
-    key: "updatedAt"
+    key: "updatedAt",
+    sorter: (a: Service, b: Service) => (a.updatedAt || '').localeCompare(b.updatedAt || ''),
   },
   {
     title: t('fields.actions'),

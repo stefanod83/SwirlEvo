@@ -148,13 +148,13 @@ import XPageHeader from "@/components/PageHeader.vue";
 import imageApi from "@/api/image";
 import type { Image } from "@/api/image";
 import nodeApi from "@/api/node";
-import registryApi from "@/api/registry";
 import { useStore } from "vuex";
 import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
 import { computed, watch } from "vue";
 import { useDataTable } from "@/utils/data-table";
 import { formatSize, renderLink, renderTags } from "@/utils/render";
 import { useI18n } from 'vue-i18n'
+import { useImageActions } from "./useImageActions";
 
 const { t } = useI18n()
 const dialog = useDialog()
@@ -213,6 +213,7 @@ const columns = [
     title: t('fields.id'),
     key: "id",
     fixed: "left" as const,
+    sorter: (a: Image, b: Image) => (a.id || '').localeCompare(b.id || ''),
     render: (i: Image) => {
       const idShort = i.id.substring(7, 19)
       const link = renderLink({ name: 'image_detail', params: { node: filter.node || '-', id: i.id } }, idShort)
@@ -225,6 +226,7 @@ const columns = [
   {
     title: t('fields.tags'),
     key: "tags",
+    sorter: (a: Image, b: Image) => ((a.tags?.[0]) || '').localeCompare((b.tags?.[0]) || ''),
     render(i: Image) {
       if (i.tags) {
         return renderTags(i.tags?.map(t => {
@@ -236,13 +238,15 @@ const columns = [
   {
     title: t('fields.size'),
     key: "size",
+    sorter: (a: Image, b: Image) => (a.size || 0) - (b.size || 0),
     render(i: Image) {
       return formatSize(i.size)
     }
   },
   {
     title: t('fields.created_at'),
-    key: "created"
+    key: "created",
+    sorter: (a: Image, b: Image) => (a.created || '').localeCompare(b.created || ''),
   },
   {
     title: t('fields.actions'),
@@ -312,91 +316,16 @@ watch(selectedHostId, (v) => {
   }
 })
 
-// ------- Tag dialog -------
-const tagDialog = reactive({
-  show: false,
-  loading: false,
-  source: '',
-  target: '',
-})
-function openTagDialog(i: Image) {
-  tagDialog.source = (i.tags && i.tags[0]) || i.id
-  tagDialog.target = ''
-  tagDialog.loading = false
-  tagDialog.show = true
-}
-async function doTag() {
-  if (!tagDialog.target.trim()) {
-    message.error(t('image.tag_target_required'))
-    return false
-  }
-  tagDialog.loading = true
-  try {
-    await imageApi.tag(filter.node, tagDialog.source, tagDialog.target.trim())
-    message.success(t('texts.action_success'))
-    tagDialog.show = false
-    fetchData()
-    return true
-  } catch (e: any) {
-    message.error(e?.message || String(e))
-    return false
-  } finally {
-    tagDialog.loading = false
-  }
-}
-
-// ------- Push dialog -------
-const registryOptions = ref<{ label: string; value: string; url: string }[]>([])
-const pushDialog = reactive<{
-  show: boolean
-  loading: boolean
-  ref: string
-  refOptions: { label: string; value: string }[]
-  registryId: string
-}>({
-  show: false,
-  loading: false,
-  ref: '',
-  refOptions: [],
-  registryId: '',
-})
-async function ensureRegistries() {
-  if (registryOptions.value.length) return
-  try {
-    const r = await registryApi.search()
-    registryOptions.value = (r.data || []).map((x: any) => ({
-      label: `${x.name} (${x.url})`,
-      value: x.id,
-      url: x.url,
-    }))
-  } catch { /* leave empty; user can still push anonymously */ }
-}
-async function openPushDialog(i: Image) {
-  await ensureRegistries()
-  pushDialog.refOptions = (i.tags || []).map(t => ({ label: t, value: t }))
-  pushDialog.ref = pushDialog.refOptions[0]?.value || ''
-  pushDialog.registryId = ''
-  pushDialog.loading = false
-  pushDialog.show = true
-}
-async function doPush() {
-  if (!pushDialog.ref.trim()) {
-    message.error(t('image.push_ref_required'))
-    return false
-  }
-  pushDialog.loading = true
-  try {
-    await imageApi.push(filter.node, pushDialog.ref.trim(), pushDialog.registryId)
-    message.success(t('image.push_done'))
-    pushDialog.show = false
-    return true
-  } catch (e: any) {
-    message.error(e?.message || String(e))
-    return false
-  } finally {
-    pushDialog.loading = false
-  }
-}
+// ------- Tag / Push dialogs (shared with View.vue via composable) -------
+const {
+  tagDialog,
+  pushDialog,
+  registryOptions,
+  openTagDialog,
+  openPushDialog,
+  doTag,
+  doPush,
+} = useImageActions(() => filter.node, () => fetchData())
 
 onMounted(async () => {
   if (isStandalone.value) {

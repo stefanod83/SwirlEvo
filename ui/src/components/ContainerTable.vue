@@ -111,6 +111,7 @@ const columns = computed(() => {
       key: "state",
       fixed: "left" as const,
       width: 90,
+      sorter: (a: Container, b: Container) => (a.state || '').localeCompare(b.state || ''),
       render(c: Container) {
         const type = c.state === 'running' ? 'success' : (c.state === 'paused' ? 'warning' : 'error')
         return renderTag(c.state, type as any)
@@ -119,6 +120,7 @@ const columns = computed(() => {
     {
       title: t('fields.name'),
       key: "name",
+      sorter: (a: Container, b: Container) => (a.name || '').localeCompare(b.name || ''),
       render: (c: Container) => {
         const node = c.labels?.find(l => l.name === 'com.docker.swarm.node.id')
         const name = c.name.length > 32 ? c.name.substring(0, 32) + '...' : c.name
@@ -128,12 +130,14 @@ const columns = computed(() => {
     {
       title: t('objects.image'),
       key: "image",
+      sorter: (a: Container, b: Container) => (a.image || '').localeCompare(b.image || ''),
     },
   ]
   if (props.showStackColumn) {
     base.push({
       title: t('objects.stack'),
       key: "stack",
+      sorter: (a: Container, b: Container) => projectOf(a).localeCompare(projectOf(b)),
       render: (c: Container) => {
         const project = projectOf(c)
         if (!project) return ''
@@ -145,10 +149,12 @@ const columns = computed(() => {
     {
       title: t('fields.status'),
       key: "status",
+      sorter: (a: Container, b: Container) => (a.status || '').localeCompare(b.status || ''),
     },
     {
       title: t('fields.created_at'),
       key: "createdAt",
+      sorter: (a: Container, b: Container) => (a.createdAt || '').localeCompare(b.createdAt || ''),
     },
     {
       title: t('fields.actions'),

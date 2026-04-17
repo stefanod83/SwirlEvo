@@ -57,6 +57,8 @@ const (
 	EventActionImport     EventAction = "Import"
 	EventActionRestore    EventAction = "Restore"
 	EventActionDownload   EventAction = "Download"
+	EventActionMigrate    EventAction = "Migrate"
+	EventActionCleanup    EventAction = "Cleanup"
 )
 
 type EventBiz interface {

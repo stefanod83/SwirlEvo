@@ -154,6 +154,18 @@
                 type="warning"
                 @click="$router.push({ name: 'vault_secret_edit', params: { id: s.id } })"
               >{{ t('buttons.edit') }}</n-button>
+              <n-button
+                v-if="canCleanup && versionCountFor(s) > 1"
+                size="tiny"
+                quaternary
+                type="warning"
+                @click="openCleanup(s)"
+              >
+                <template #icon>
+                  <n-icon><cleanup-icon /></n-icon>
+                </template>
+                {{ t('buttons.cleanup') }}
+              </n-button>
               <n-popconfirm :show-icon="false" @positive-click="deleteItem(s.id)">
                 <template #trigger>
                   <n-button size="tiny" quaternary type="error">{{ t('buttons.delete') }}</n-button>
@@ -171,6 +183,48 @@
       </tbody>
     </n-table>
   </n-space>
+
+  <!-- Cleanup versions modal — permanent destroy of old KVv2 versions.
+       Gated by the `vault_secret.cleanup` permission (hidden above if the
+       current role doesn't have it; the backend also enforces it). -->
+  <n-modal
+    v-model:show="cleanupOpen"
+    preset="dialog"
+    :title="t('titles.vault_version_cleanup')"
+    :positive-text="cleanupButtonLabel"
+    :negative-text="t('buttons.cancel')"
+    :positive-button-props="{ type: 'error', disabled: cleanupEligible === 0 || cleanupBusy, loading: cleanupBusy }"
+    @positive-click="doCleanup"
+  >
+    <n-space vertical :size="12" v-if="cleanupTarget">
+      <div>
+        <strong>{{ cleanupTarget.name }}</strong>
+        <span class="muted"> — <code class="mono">{{ cleanupTarget.path }}</code></span>
+      </div>
+      <div class="muted">
+        {{ t('vault_secret.status_version') }}:
+        <strong>{{ cleanupCurrent }}</strong>
+        &nbsp;/&nbsp;
+        {{ t('vault_secret.versions_col') }}:
+        <strong>{{ cleanupTotal }}</strong>
+      </div>
+      <div>
+        <div style="margin-bottom: 4px;">
+          {{ t('fields.keep_last_versions') }}: <strong>{{ keepLast }}</strong>
+        </div>
+        <n-slider
+          v-model:value="keepLast"
+          :min="1"
+          :max="cleanupMax"
+          :step="1"
+          :marks="cleanupMarks"
+        />
+      </div>
+      <n-alert type="warning" :show-icon="false">
+        {{ t('messages.vault_cleanup_warning', { n: cleanupEligible }) }}
+      </n-alert>
+    </n-space>
+  </n-modal>
 
   <!-- Preview drawer — unchanged from before, shows field names only. -->
   <n-drawer v-model:show="previewOpen" :width="420" placement="right">
@@ -221,14 +275,22 @@ import { computed, onMounted, reactive, ref } from "vue";
 import {
   NSpace, NButton, NTable, NPopconfirm, NIcon, NTime, NInput, NAlert, NTag,
   NDrawer, NDrawerContent, NSpin, NSelect, NCheckbox, NEmpty,
+  NModal, NSlider,
 } from "naive-ui";
-import { AddOutline as AddIcon, RefreshOutline as RefreshIcon } from "@vicons/ionicons5";
+import {
+  AddOutline as AddIcon,
+  RefreshOutline as RefreshIcon,
+  // Dedicated icon for the cleanup action — distinct from Delete to make
+  // it visually obvious this is version-level pruning, not catalog removal.
+  LayersOutline as CleanupIcon,
+} from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XAnchor from "@/components/Anchor.vue";
 import VersionBadge from "@/components/VersionBadge.vue";
 import vaultSecretApi from "@/api/vault-secret";
 import type { VaultSecret, VaultSecretPreview, VaultSecretStatus } from "@/api/vault-secret";
 import { useI18n } from 'vue-i18n'
+import { store } from "@/store"
 
 const { t } = useI18n()
 
@@ -366,6 +428,76 @@ async function deleteBulk() {
   model.value = model.value.filter(s => !ids.includes(s.id))
   for (const id of ids) delete statusMap.value[id]
   checked.value = []
+}
+
+// ---- Cleanup versions ----------------------------------------------------
+// Gated by `vault_secret.cleanup`. We ALSO need the backend auth tag to
+// enforce — this flag only hides the button in the UI.
+const canCleanup = computed(() => store.getters.allow('vault_secret.cleanup'))
+
+const cleanupOpen = ref(false)
+const cleanupBusy = ref(false)
+const cleanupTarget = ref<VaultSecret | null>(null)
+const keepLast = ref(1)
+
+function versionCountFor(s: VaultSecret): number {
+  return statusMap.value[s.id]?.totalVersions || 0
+}
+const cleanupTotal = computed(() =>
+  cleanupTarget.value ? versionCountFor(cleanupTarget.value) : 0
+)
+const cleanupCurrent = computed(() =>
+  cleanupTarget.value ? (statusMap.value[cleanupTarget.value.id]?.currentVersion || 0) : 0
+)
+// Max slider is total-1: keeping 0 makes no sense, keeping >= total is a
+// no-op. We cap the upper bound at 20 as the task asks while still
+// bounding at the actual total when lower.
+const cleanupMax = computed(() => {
+  const total = cleanupTotal.value
+  if (total <= 1) return 1
+  return Math.min(total - 1, 20)
+})
+// Eligible = number of versions that would actually be destroyed. Clamped
+// at 0 so the badge reads sensibly while the user drags the slider.
+const cleanupEligible = computed(() => {
+  const total = cleanupTotal.value
+  const kept = Math.min(keepLast.value, total)
+  return Math.max(0, total - kept)
+})
+const cleanupButtonLabel = computed(() =>
+  `${t('buttons.cleanup_versions')} (${cleanupEligible.value})`
+)
+const cleanupMarks = computed<Record<number, string>>(() => {
+  const max = cleanupMax.value
+  if (max <= 1) return { 1: '1' }
+  return { 1: '1', [max]: String(max) }
+})
+
+function openCleanup(s: VaultSecret) {
+  cleanupTarget.value = s
+  // Sensible default — keep the current version only (most aggressive).
+  // User can slide up to see eligible count drop in real time.
+  keepLast.value = 1
+  cleanupOpen.value = true
+}
+
+async function doCleanup() {
+  if (!cleanupTarget.value) return false
+  cleanupBusy.value = true
+  try {
+    const r = await vaultSecretApi.cleanup(cleanupTarget.value.id, keepLast.value)
+    const n = r.data?.destroyed || 0
+    window.message?.success?.(t('messages.vault_cleanup_success', { n }))
+    cleanupOpen.value = false
+    // Refresh the status map so the badge reflects the new total.
+    fetchStatuses()
+    return true
+  } catch (e: any) {
+    window.message?.error?.(e?.message || String(e))
+    return false
+  } finally {
+    cleanupBusy.value = false
+  }
 }
 
 async function openPreview(s: VaultSecret) {

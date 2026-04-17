@@ -1,6 +1,22 @@
 <template>
   <x-page-header>
     <template #action>
+      <n-button secondary size="small" @click="$router.push({ name: 'host_list' })">
+        <template #icon>
+          <n-icon>
+            <back-icon />
+          </n-icon>
+        </template>
+        {{ t('buttons.return') }}
+      </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
       <n-button secondary size="small" @click="$router.push({ name: 'host_edit', params: { id: model.id } })">
         {{ t('buttons.edit') }}
       </n-button>
@@ -40,9 +56,11 @@ import { useRoute } from "vue-router";
 import {
   NSpace,
   NButton,
+  NIcon,
   NTag,
   NTime,
 } from "naive-ui";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XDescription from "@/components/description/Description.vue";
 import XDescriptionItem from "@/components/description/DescriptionItem.vue";
@@ -53,6 +71,7 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Partial<Host> & { id?: string });
+const loading = ref(false);
 
 function statusType(status: string) {
   switch (status) {
@@ -73,9 +92,14 @@ async function syncHost() {
 }
 
 async function fetchData() {
-  const id = route.params.id as string;
-  const r = await hostApi.find(id);
-  if (r.data) model.value = r.data as any;
+  loading.value = true;
+  try {
+    const id = route.params.id as string;
+    const r = await hostApi.find(id);
+    if (r.data) model.value = r.data as any;
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(fetchData);

@@ -9,6 +9,14 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
       <n-button
         secondary
         size="small"
@@ -494,7 +502,7 @@ import {
   NInputNumber,
   NAlert,
 } from "naive-ui";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import { useStore } from "vuex";
 import XPageHeader from "@/components/PageHeader.vue";
 import XAnchor from "@/components/Anchor.vue";
@@ -530,6 +538,7 @@ const service = ref({
 } as Service);
 const tasks = ref([] as Task[]);
 const raw = ref('')
+const loading = ref(false);
 const showCli = ref(false);
 const cli = ref('')
 const hasUpdatePolicy = computed(() => {
@@ -698,16 +707,21 @@ function generateCli(s: Service) {
 }
 
 async function fetchData() {
-  const name = route.params.name as string
-  let results = await Promise.all([
-    serviceApi.find(name, true),
-    taskApi.search({ service: name, pageIndex: 1, pageSize: 100 }),
-  ])
+  loading.value = true
+  try {
+    const name = route.params.name as string
+    let results = await Promise.all([
+      serviceApi.find(name, true),
+      taskApi.search({ service: name, pageIndex: 1, pageSize: 100 }),
+    ])
 
-  service.value = results[0].data?.service as Service
-  raw.value = results[0].data?.raw as string;
-  tasks.value = results[1].data?.items as Task[];
-  cli.value = generateCli(service.value)
+    service.value = results[0].data?.service as Service
+    raw.value = results[0].data?.raw as string;
+    tasks.value = results[1].data?.items as Task[];
+    cli.value = generateCli(service.value)
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(fetchData);

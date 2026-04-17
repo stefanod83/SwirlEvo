@@ -9,6 +9,14 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
       <n-button
         secondary
         size="small"
@@ -61,7 +69,7 @@ import {
   NTime,
 } from "naive-ui";
 import { useRoute } from "vue-router";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import XPairTag from "@/components/PairTag.vue";
@@ -75,6 +83,7 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Role);
+const loading = ref(false);
 const ps = computed(() => {
   const set = new Set(model.value.perms)
   const arr: any = []
@@ -86,8 +95,13 @@ const ps = computed(() => {
 })
 
 async function fetchData() {
-  let r = await roleApi.find(route.params.id as string);
-  model.value = r.data as Role;
+  loading.value = true;
+  try {
+    let r = await roleApi.find(route.params.id as string);
+    model.value = r.data as Role;
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(fetchData);

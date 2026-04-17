@@ -31,9 +31,16 @@ type vaultReader interface {
 	ReadKVv2(ctx context.Context, path string) (map[string]any, error)
 	WriteKVv2(ctx context.Context, path string, data map[string]any) error
 	DeleteKVv2(ctx context.Context, path string) error
+	// DestroyVersionsKVv2 permanently destroys the listed versions. Used
+	// by CleanupVersions — this is NOT a soft-delete.
+	DestroyVersionsKVv2(ctx context.Context, path string, versions []int) error
 	// ReadMetadataSummary returns (currentVersion, totalVersions, exists, err).
 	// `exists=false` + `err=nil` means the KV entry is absent (404).
 	ReadMetadataSummary(ctx context.Context, path string) (int, int, bool, error)
+	// ReadMetadataVersions returns (currentVersion, versions, exists, err)
+	// where `versions` maps version-number (as string) → destroyed flag.
+	// Used by CleanupVersions to skip versions already destroyed.
+	ReadMetadataVersions(ctx context.Context, path string) (int, map[string]bool, bool, error)
 }
 
 // errVaultDisabled is returned by Preview when Vault is not configured.
@@ -77,6 +84,13 @@ type VaultSecretBiz interface {
 	// per-entry errors are surfaced as Error in the status, not as a
 	// top-level failure.
 	GetStatuses(ctx context.Context) (map[string]*VaultSecretStatus, error)
+	// CleanupVersions permanently destroys KVv2 versions older than
+	// `currentVersion - keepLast`. `keepLast` must be ≥ 1; passing 0 is
+	// rejected to guarantee at least the current version survives. The
+	// return value is the count of versions actually destroyed (already
+	// destroyed versions are not counted a second time). Gated in the API
+	// layer by the `vault_secret.cleanup` permission.
+	CleanupVersions(ctx context.Context, id string, keepLast int, user web.User) (destroyed int, err error)
 }
 
 // NewVaultSecret wires the biz. The Vault client is resolved lazily via the
@@ -427,6 +441,84 @@ func (b *vaultSecretBiz) GetStatuses(ctx context.Context) (map[string]*VaultSecr
 	}
 	wg.Wait()
 	return out, nil
+}
+
+func (b *vaultSecretBiz) CleanupVersions(ctx context.Context, id string, keepLast int, user web.User) (int, error) {
+	if keepLast <= 0 {
+		// Guard rail: keeping zero versions would leave the entry empty
+		// and is never what the operator means — force at least 1.
+		return 0, errors.New("keepLast must be at least 1")
+	}
+	vc, err := lookupVaultClient()
+	if err != nil {
+		return 0, err
+	}
+	if !vc.IsEnabled() {
+		return 0, errVaultDisabled
+	}
+	rec, err := b.di.VaultSecretGet(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	if rec == nil {
+		return 0, errors.New("vault secret not found")
+	}
+	s := b.loader()
+	if s == nil {
+		return 0, errors.New("settings are not loaded")
+	}
+	logicalPath := rec.Path
+	if logicalPath == "" {
+		logicalPath = rec.Name
+	}
+	full := resolvePrefixed(s, logicalPath)
+
+	current, versions, exists, err := vc.ReadMetadataVersions(ctx, full)
+	if err != nil {
+		return 0, err
+	}
+	if !exists {
+		// Nothing to clean up — the catalog points at a non-existent
+		// Vault entry. Not an error.
+		return 0, nil
+	}
+	threshold := current - keepLast
+	if threshold < 1 {
+		// keepLast ≥ current — nothing is eligible. No-op success.
+		return 0, nil
+	}
+
+	toDestroy := make([]int, 0, len(versions))
+	for vstr, destroyed := range versions {
+		if destroyed {
+			continue
+		}
+		// Versions come as string keys; parse defensively, skip anything
+		// that isn't a positive integer.
+		var v int
+		if _, perr := fmt.Sscanf(vstr, "%d", &v); perr != nil || v <= 0 {
+			continue
+		}
+		if v <= threshold {
+			toDestroy = append(toDestroy, v)
+		}
+	}
+	if len(toDestroy) == 0 {
+		return 0, nil
+	}
+	sort.Ints(toDestroy)
+
+	if err := vc.DestroyVersionsKVv2(ctx, full, toDestroy); err != nil {
+		return 0, err
+	}
+
+	// Audit: record how many versions were destroyed + the range, never
+	// any value. Mirrors the WriteValue audit format (field-name level).
+	detail := fmt.Sprintf("cleanup:%s destroyed=%d keep=%d current=%d",
+		rec.Name, len(toDestroy), keepLast, current)
+	b.eb.CreateVaultSecret(EventActionCleanup, rec.ID, detail, user)
+
+	return len(toDestroy), nil
 }
 
 func init() {

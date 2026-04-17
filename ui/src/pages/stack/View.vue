@@ -9,6 +9,14 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
       <n-button
         secondary
         size="small"
@@ -54,7 +62,7 @@ import {
   NIcon,
   NTime,
 } from "naive-ui";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XCode from "@/components/Code.vue";
 import XPanel from "@/components/Panel.vue";
@@ -68,11 +76,17 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Stack);
+const loading = ref(false);
 
 async function fetchData() {
-  const name = route.params.name as string;
-  let r = await stackApi.find(name);
-  model.value = r.data as Stack;
+  loading.value = true;
+  try {
+    const name = route.params.name as string;
+    let r = await stackApi.find(name);
+    model.value = r.data as Stack;
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(fetchData);

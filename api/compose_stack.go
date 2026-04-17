@@ -19,6 +19,7 @@ type ComposeStackHandler struct {
 	Start      web.HandlerFunc `path:"/start" method:"post" auth:"stack.deploy" desc:"start compose stack"`
 	Stop       web.HandlerFunc `path:"/stop" method:"post" auth:"stack.shutdown" desc:"stop compose stack"`
 	Remove     web.HandlerFunc `path:"/remove" method:"post" auth:"stack.delete" desc:"remove compose stack"`
+	Migrate    web.HandlerFunc `path:"/migrate" method:"post" auth:"stack.edit" desc:"migrate stack to another host"`
 }
 
 // NewComposeStack is registered in api.init.
@@ -33,6 +34,7 @@ func NewComposeStack(b biz.ComposeStackBiz) *ComposeStackHandler {
 		Start:      composeStackStart(b),
 		Stop:       composeStackStop(b),
 		Remove:     composeStackRemove(b),
+		Migrate:    composeStackMigrate(b),
 	}
 }
 
@@ -190,6 +192,25 @@ func composeStackFindDetail(b biz.ComposeStackBiz) web.HandlerFunc {
 			return err
 		}
 		return success(c, detail)
+	}
+}
+
+func composeStackMigrate(b biz.ComposeStackBiz) web.HandlerFunc {
+	type Args struct {
+		ID           string `json:"id"`
+		TargetHostID string `json:"targetHostId"`
+		Redeploy     bool   `json:"redeploy"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		// Migration may redeploy on the target host, which can include
+		// image pulls — reuse the deploy timeout envelope.
+		ctx, cancel := misc.Context(5 * defaultTimeout)
+		defer cancel()
+		return ajax(c, b.Migrate(ctx, args.ID, args.TargetHostID, args.Redeploy, c.User()))
 	}
 }
 

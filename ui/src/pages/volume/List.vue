@@ -107,6 +107,7 @@ const columns: any[] = [
     title: t('fields.name'),
     key: "name",
     fixed: "left" as const,
+    sorter: (a: Volume, b: Volume) => (a.name || '').localeCompare(b.name || ''),
     render: (v: Volume) => {
       const link = renderLink({ name: 'volume_detail', params: { node: filter.node || '-', name: v.name } }, v.name)
       const unused = !v.refCount || v.refCount <= 0
@@ -118,6 +119,7 @@ const columns: any[] = [
   {
     title: t('fields.driver'),
     key: "driver",
+    sorter: (a: Volume, b: Volume) => (a.driver || '').localeCompare(b.driver || ''),
     render(v: Volume) {
       return renderTag(v.driver)
     }
@@ -125,17 +127,20 @@ const columns: any[] = [
   {
     title: t('fields.scope'),
     key: "scope",
+    sorter: (a: Volume, b: Volume) => (a.scope || '').localeCompare(b.scope || ''),
     render(v: Volume) {
       return renderTag(v.scope)
     }
   },
   {
     title: t('fields.mount_point'),
-    key: "mountPoint"
+    key: "mountPoint",
+    sorter: (a: Volume, b: Volume) => (a.mountPoint || '').localeCompare(b.mountPoint || ''),
   },
   {
     title: t('fields.created_at'),
-    key: "createdAt"
+    key: "createdAt",
+    sorter: (a: Volume, b: Volume) => (a.createdAt || '').localeCompare(b.createdAt || ''),
   },
   {
     title: t('fields.actions'),

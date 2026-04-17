@@ -9,6 +9,14 @@
         </template>
         {{ t('buttons.return') }}
       </n-button>
+      <n-button secondary size="small" @click="fetchData" :loading="loading">
+        <template #icon>
+          <n-icon>
+            <refresh-outline />
+          </n-icon>
+        </template>
+        {{ t('buttons.refresh') }}
+      </n-button>
       <n-button
         secondary
         size="small"
@@ -80,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, watch } from "vue";
+import { onMounted, reactive, ref, watch } from "vue";
 import {
   NButton,
   NTag,
@@ -89,7 +97,7 @@ import {
   NTime,
 } from "naive-ui";
 import { useRoute } from "vue-router";
-import { ArrowBackCircleOutline as BackIcon } from "@vicons/ionicons5";
+import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XAnchor from "@/components/Anchor.vue";
 import { XDescription, XDescriptionItem } from "@/components/description";
@@ -104,12 +112,18 @@ const model = reactive({
   user: {} as User,
   roles: new Map<string, string>(),
 });
+const loading = ref(false);
 
 async function fetchData() {
-  let user = await userApi.find(route.params.id as string);
-  let roles = await roleApi.search()
-  model.user = user.data as User
-  roles.data?.forEach(r => model.roles.set(r.id, r.name))
+  loading.value = true;
+  try {
+    let user = await userApi.find(route.params.id as string);
+    let roles = await roleApi.search()
+    model.user = user.data as User
+    roles.data?.forEach(r => model.roles.set(r.id, r.name))
+  } finally {
+    loading.value = false;
+  }
 }
 
 watch(() => route.params.id, fetchData)

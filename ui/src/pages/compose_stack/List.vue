@@ -179,6 +179,7 @@ const columns = [
     title: t('fields.status'),
     key: "status",
     width: 90,
+    sorter: (a: ComposeStackSummary, b: ComposeStackSummary) => (a.status || '').localeCompare(b.status || ''),
     render: (s: ComposeStackSummary) => {
       const type = s.status === 'active' ? 'success' : (s.status === 'partial' ? 'warning' : 'default')
       return renderTag(s.status || '-', type as any)
@@ -187,6 +188,7 @@ const columns = [
   {
     title: t('fields.name'),
     key: "name",
+    sorter: (a: ComposeStackSummary, b: ComposeStackSummary) => (a.name || '').localeCompare(b.name || ''),
     render: (s: ComposeStackSummary) => {
       if (!s.id) {
         const link = renderLink({ name: 'std_stack_external_detail', params: { hostId: s.hostId, name: s.name } }, s.name)
@@ -199,10 +201,12 @@ const columns = [
   {
     title: t('fields.services') || 'Services',
     key: "services",
+    sorter: (a: ComposeStackSummary, b: ComposeStackSummary) => (a.services || 0) - (b.services || 0),
   },
   {
     title: t('fields.running') || 'Running',
     key: "running",
+    sorter: (a: ComposeStackSummary, b: ComposeStackSummary) => (a.running || 0) - (b.running || 0),
     render: (s: ComposeStackSummary) => `${s.running}/${s.containers}`,
   },
   {
