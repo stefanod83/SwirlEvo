@@ -471,18 +471,131 @@ First release of the SwirlEvo fork (continues [cuigh/swirl](https://github.com/c
   "Push" modal with a registry picker populated from
   `/registry/search` and the current image's existing tags.
 
+### Container listing & bulk actions
+
+* Status filter (All / Running / Exited / Created / Paused) in the
+  container list. Backend already supported the `status` query param;
+  frontend now surfaces it as a dropdown.
+* Bulk actions: checkbox selection column in `ContainerTable.vue`
+  (`selectable` prop) + toolbar buttons Start(N) / Stop(N) /
+  Restart(N) / Delete(N) with confirmation dialog for destructive
+  operations. Aggregated error reporting.
+
+### Deploy error persistence
+
+* `dao.ComposeStack.ErrorMessage` field (persisted, `omitempty`).
+  New DAO method `ComposeStackUpdateError`.
+* `biz.Deploy`: saves `err.Error()` on failure, clears on success.
+* View page Overview tab: `<n-alert>` shown when `errorMessage` is
+  non-empty — persistent, survives page reload, disappears after
+  successful redeploy.
+
+### Binding wizard (multi-field, service picker, env name mapping)
+
+* New multi-step wizard modal in the stack editor:
+  Step 1 — select VaultSecret; Step 2 — pick fields from Preview
+  (checkboxes); Step 3 — configure each selected field (service
+  picker from compose YAML, env var name editable, target type).
+* `parseServiceNames()` extracts service names from compose YAML
+  via indent-aware regex (no external YAML parser dependency).
+* `dao.ComposeStackSecretBinding.Field` — per-binding field override
+  so the materializer knows which KVv2 field to extract (catalog
+  entry's Field is no longer forced to `"value"` default).
+* Materializer auto-expand: if `bind.Field` is empty and the KVv2
+  entry has multiple fields, each is injected as a separate env var
+  (no more JSON blobs as env values).
+
+### Environment variables (.env) for stacks
+
+* `dao.ComposeStack.EnvFile` field — key=value lines, persisted.
+* `docker/compose/standalone.go::Deploy`: `DeployOptions.EnvVars`
+  injected via `os.Setenv` before compose Parse so `${VAR}`
+  references in the YAML are expanded.
+* UI: textarea panel "Environment variables (.env)" in the stack
+  editor between YAML and secret bindings. Read-only display in the
+  View page under the compose tab.
+* Stack download: ZIP file with `docker-compose.yml` + `.env` +
+  `.secret` (variable names only, never values). Shared `buildZip`
+  utility in `ui/src/utils/zip.ts`.
+
+### Registry v2 browse: token-based auth fix
+
+* Full Docker Registry v2 Token Authentication flow: 401 + Bearer
+  challenge → fetch token from realm → retry with Bearer header.
+  Fixes "Request failed with status code 500" on Docker Hub, Harbor,
+  GitLab, and other hosted registries.
+* Registry status badge: `GET /api/registry/ping` endpoint + status
+  column in the registry list (OK/Error with tooltip showing the
+  exact error message).
+
+### Keycloak OIDC login (complete rewrite of auth flow)
+
+* **Routing fix**: tag paths in `AuthHandler` were absolute (e.g.
+  `/auth/keycloak/login`) but the framework prepends the Handle
+  prefix `/auth` from the container name `api.auth` — resulting in
+  double `/auth/auth/keycloak/login`. Changed to relative paths
+  (`/keycloak/login`, `/keycloak/callback`, `/keycloak/logout-url`).
+  The login was broken since the original implementation.
+* **Nil pointer fixes**: `biz.newOperator(nil)` and
+  `eventBiz.create(nil user)` now handle nil `web.User` — covers
+  all system-initiated operations (Keycloak auto-create/update,
+  scheduler, etc.) that don't have an authenticated web context.
+* **OIDC HTTP client**: `oauth2`/`oidc` libraries now use a custom
+  `http.Client` with `DisableKeepAlives: true` (injected via
+  `oauth2.HTTPClient` context key) to avoid "Misdirected Request"
+  from reverse proxies.
+* **Group slash mismatch**: Keycloak sends `/appFoo` (full path);
+  code stripped the `/` prefix but the mapping used it.
+  `resolveRoles` now tries match with and without `/`.
+* **Role mapping by name**: `resolveRoles` supports both role IDs
+  (old format) and role names (new format that survives
+  backup/restore). If the value isn't a valid role ID, it's looked
+  up by name.
+* **Import from OpenID Configuration**: paste the URL or JSON from
+  Keycloak's "OpenID Endpoint Configuration" page to auto-populate
+  `issuer_url`, `redirect_uri`, and defaults for scopes/claims.
+* **Diagnostic test**: `GET /api/setting/keycloak-test` runs 4
+  checks (config completeness, OIDC discovery, redirect_uri,
+  auth URL generation) and returns structured OK/FAIL per check.
+* **OAuth race condition**: 100ms delay in `OAuthComplete.vue`
+  before navigating to the final redirect, so the Vuex store
+  propagates the token before the target page fires API calls.
+
+### Permissions UI completeness
+
+* `ui/src/utils/perm.ts` was missing several resources and actions
+  that were added to `security/perm.go` over time: `host` (view /
+  edit / delete), `backup` (view / edit / delete / restore /
+  download / recover), `image.edit`, `image.push`, `container.edit`.
+  Without these entries, the Role editor couldn't display or set
+  the corresponding checkboxes → any role assigned to a Keycloak
+  user was missing host/backup/image permissions.
+* Added `perms.recover` and `perms.push` i18n labels in en/it/zh.
+
+### VaultSecret catalog: Field handling
+
+* Removed the forced `Field = "value"` default from the VaultSecret
+  normalizer — empty Field now means "auto-select" (single-field
+  entries use the sole value; multi-field returns JSON).
+* `extractSecretValue` fallback: if the requested field isn't found
+  but the entry has exactly one field, use it. Error message now
+  lists available fields to help the operator fix the mismatch.
+* Field column added to the binding table + edit modal in the stack
+  editor so the original Vault field name is always visible.
+* Field input removed from the VaultSecret catalog editor (the
+  catalog now only stores path, not field — field selection belongs
+  to the binding).
+
 ### Documentation refresh
 
-* `docs/vault.md`, `docs/backup.md`: new sections for KVv2 write
-  (UI CRUD), KVv2 backup storage, TLS options per registry, and
-  the revised policy snippets. Post-mortem pass to reflect the
-  final state of every subsystem.
-* `README.md` Features list extended with the new capabilities;
-  `docs/` links in the Documentation section.
-* `.claude/agents/swirl-expert.md`: new sections for WriteKVv2,
-  backup Vault storage abstraction, secret field masking pattern,
-  Registry v2 client, and Image push flow. New file-reference
-  entries.
+* `docs/vault.md`, `docs/backup.md`: updated for KVv2 write, backup
+  Vault storage, registry self-signed TLS, VaultSecret field
+  changes, env file support, and revised policy snippets.
+* `README.md` Features list extended with container bulk actions,
+  deploy error persistence, env file support, Keycloak login,
+  registry browse with token auth.
+* `.claude/agents/swirl-expert.md`: comprehensive update covering
+  all new subsystems, patterns, and warnings.
 
 ---
 

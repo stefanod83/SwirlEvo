@@ -26,6 +26,10 @@ Repository: <https://github.com/stefanod83/SwirlEvo>
 * **Registry management**: configured remote registries with browse + tag-list via Docker Registry v2 API (self-signed TLS opt-in), plus local image **tag + push** to a selected registry from the image list.
 * **Settings secret masking**: Vault token, AppRole secret_id, and Keycloak client_secret are never round-tripped in cleartext through the UI — the backend sanitizes on GET and preserves on Save unless a new value is typed.
 * **User types**: Internal / LDAP / Keycloak, all editable from the user form with type-aware password handling.
+* **Keycloak OIDC login**: OpenID Connect flow with auto-create, group→role mapping (by name, portable across backup/restore), import from OpenID Configuration URL, diagnostic test, slash-tolerant group matching.
+* **Container management**: status filter (All/Running/Exited/Created/Paused), bulk actions (Start/Stop/Restart/Delete with checkbox selection).
+* **Stack env file (.env)**: define KEY=VALUE variables substituted into the compose YAML via `${VAR}` at deploy time. Included in the stack download ZIP alongside `docker-compose.yml` and `.secret`.
+* **Deploy error persistence**: last deploy failure message stored on the stack and shown in the Overview tab — survives page reload, clears on successful redeploy.
 * LDAP and Keycloak (OIDC) authentication.
 * Full permission control based on RBAC.
 * i18n: English, Italian, Chinese.
