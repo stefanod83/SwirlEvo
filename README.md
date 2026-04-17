@@ -253,7 +253,8 @@ docker service create \
 The standalone engine accepts a subset of `docker-compose.yml` v3 and deploys it to a single host:
 
 - **Supported** keys: `services` (image, command, entrypoint, environment, ports, volumes bind/named/tmpfs, networks, restart, labels, user, working_dir, privileged, read_only, cap_add/cap_drop, dns, dns_search, hostname, tty, stdin_open), `networks`, `volumes`.
-- **Not supported**: `build`, `healthcheck`, `secrets`, `configs`, `deploy`, `depends_on` ordering.
+- **Parsed, ordering not enforced**: `depends_on` — both the short form (list of service names) and the long form (map keyed by service name with `condition` / `restart` / `required` sub-keys) are accepted by the parser. Only the service names are retained; `condition`, `restart` and `required` are **discarded silently** because the standalone engine does not enforce readiness between services (containers are created and started without a dependency-aware order).
+- **Not supported**: `build`, `healthcheck`, `secrets`, `configs`, `deploy`.
 
 Containers are labelled with the standard `com.docker.compose.project=<stack-name>`, `com.docker.compose.service=<service>` and `com.swirl.compose.managed=true`. This means stacks created with the plain `docker compose` CLI appear in the Swirl Stacks list as **read-only, unmanaged** (you can see status, but can't Start/Stop/Remove without importing them first).
 

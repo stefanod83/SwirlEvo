@@ -586,6 +586,40 @@ First release of the SwirlEvo fork (continues [cuigh/swirl](https://github.com/c
   catalog now only stores path, not field — field selection belongs
   to the binding).
 
+### Compose parser: `depends_on` long form
+
+* New type `composetypes.DependsOnList []string` replaces the previous
+  `[]string` alias on `ServiceConfig.DependsOn`. Registered in
+  `createTransformHook` via the new `transformDependsOnList`.
+* The parser now accepts **both** compose v3 forms:
+  ```yaml
+  depends_on:
+    - serviceA
+    - serviceB
+  ```
+  and
+  ```yaml
+  depends_on:
+    serviceA:
+      condition: service_healthy
+    serviceB:
+      condition: service_started
+      restart: true
+      required: true
+  ```
+  Previously only the short form parsed successfully; the long form
+  triggered a type-mismatch error and aborted the deploy.
+* **Semantics unchanged**: only the service names are retained. The
+  `condition`, `restart` and `required` sub-keys are parsed and
+  **silently discarded** — the standalone engine does not enforce
+  readiness ordering between services. Values from the compose v2
+  ecosystem (`service_healthy`, `service_started`,
+  `service_completed_successfully`) are accepted syntactically but
+  have no runtime effect.
+* Map keys are sorted for a deterministic `DependsOn` slice.
+* Covered by 4 new tests in `docker/compose/parse_test.go`, including
+  `TestParseDependsOnUserRegression`.
+
 ### Documentation refresh
 
 * `docs/vault.md`, `docs/backup.md`: updated for KVv2 write, backup
@@ -594,6 +628,10 @@ First release of the SwirlEvo fork (continues [cuigh/swirl](https://github.com/c
 * `README.md` Features list extended with container bulk actions,
   deploy error persistence, env file support, Keycloak login,
   registry browse with token auth.
+* `README.md` "Compose stacks in standalone mode" section revised
+  to reflect the new `depends_on` long-form support (parsed but
+  ordering not enforced); `depends_on` removed from the "Not
+  supported" bullet.
 * `.claude/agents/swirl-expert.md`: comprehensive update covering
   all new subsystems, patterns, and warnings.
 
