@@ -63,6 +63,8 @@ export default {
         "execute": "Esegui",
         "restore": "Ripristina",
         "download": "Scarica",
+        "recover": "Recupera",
+        "push": "Push",
         "admin": "Amministra",
     },
     "fields": {
@@ -517,6 +519,7 @@ export default {
         "kc_enable_logout_kc": "Keycloak: Clients → <il tuo client> → Advanced → abilita 'Front Channel Logout' se usi il flusso di logout via redirect browser.",
         "kc_group_role_map_swirl": "Associa un nome di gruppo Keycloak a un ruolo Swirl. Al login, Swirl applica il primo gruppo che fa match. Nessun match e auto-create ON → utente senza permessi (un admin deve promuoverlo manualmente).",
         "kc_group_role_map_kc": "Keycloak: definisci i gruppi (es. 'admins', 'developers') e assegna gli utenti. Assicurati che lo scope 'groups' sia attivo sul client.",
+        "kc_import_placeholder": "Incolla l'URL dell'OpenID Endpoint Configuration da Keycloak (o il JSON stesso)",
         "topology": "Grafo interattivo di network, container e relativa connettività sull'host selezionato. Gli highlight rossi indicano una porta pubblicata su un indirizzo pubblico; il bordo blu indica un network isolato (internal).",
         "exposed_public": "Porta pubblicata su 0.0.0.0 / ::",
         "local_only_ports": "Porte legate solo a 127.0.0.1 / ::1",

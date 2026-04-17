@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,20 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// oidcHTTPClient is a shared HTTP client for OIDC/OAuth2 calls (discovery,
+// token exchange, JWKS fetch). DisableKeepAlives avoids "Misdirected
+// Request" issues from reverse proxies that close idle connections.
+var oidcHTTPClient = &http.Client{
+	Transport: &http.Transport{DisableKeepAlives: true},
+	Timeout:   30 * time.Second,
+}
+
+// oidcCtx injects the custom HTTP client into the context so the oauth2
+// and oidc libraries use it instead of http.DefaultClient.
+func oidcCtx(ctx context.Context) context.Context {
+	return context.WithValue(ctx, oauth2.HTTPClient, oidcHTTPClient)
+}
+
 // KeycloakClient is a lazy-initialised OIDC helper. The provider is cached for
 // 1 hour; on config change (issuer / client id / secret) it is rebuilt on
 // next access. NOT thread-safe on config mutation — that's fine because
@@ -23,6 +38,7 @@ import (
 type KeycloakClient struct {
 	settingLoader func() *misc.Setting
 	ub            biz.UserBiz
+	rb            biz.RoleBiz
 
 	mu          sync.Mutex
 	provider    *oidc.Provider
@@ -36,8 +52,8 @@ type KeycloakClient struct {
 	logger      log.Logger
 }
 
-func NewKeycloakClient(loader func() *misc.Setting, ub biz.UserBiz) *KeycloakClient {
-	return &KeycloakClient{settingLoader: loader, ub: ub, logger: log.Get(PkgName)}
+func NewKeycloakClient(loader func() *misc.Setting, ub biz.UserBiz, rb biz.RoleBiz) *KeycloakClient {
+	return &KeycloakClient{settingLoader: loader, ub: ub, rb: rb, logger: log.Get(PkgName)}
 }
 
 // IsEnabled tells whether Keycloak authentication is active.
@@ -64,7 +80,7 @@ func (k *KeycloakClient) ensure(ctx context.Context) error {
 		return nil
 	}
 
-	p, err := oidc.NewProvider(ctx, s.Keycloak.IssuerURL)
+	p, err := oidc.NewProvider(oidcCtx(ctx), s.Keycloak.IssuerURL)
 	if err != nil {
 		return fmt.Errorf("oidc provider: %w", err)
 	}
@@ -87,6 +103,84 @@ func (k *KeycloakClient) ensure(ctx context.Context) error {
 	k.builtSecret = s.Keycloak.ClientSecret
 	k.builtScopes = s.Keycloak.Scopes
 	return nil
+}
+
+// Diagnose runs a series of checks on the Keycloak OIDC configuration
+// and returns structured results so the Settings UI can tell the operator
+// exactly what's wrong. Each check is independent: a failure in one
+// does not abort the rest.
+func (k *KeycloakClient) Diagnose(ctx context.Context) map[string]interface{} {
+	result := map[string]interface{}{}
+	s := k.settingLoader()
+	if s == nil {
+		result["config"] = map[string]interface{}{"ok": false, "error": "settings not loaded"}
+		return result
+	}
+
+	// Check 1: config completeness
+	configOK := s.Keycloak.Enabled && s.Keycloak.IssuerURL != "" && s.Keycloak.ClientID != ""
+	configResult := map[string]interface{}{
+		"ok":        configOK,
+		"enabled":   s.Keycloak.Enabled,
+		"issuerUrl": s.Keycloak.IssuerURL,
+		"clientId":  s.Keycloak.ClientID,
+		"secretSet": s.Keycloak.ClientSecret != "",
+	}
+	if !configOK {
+		configResult["error"] = "enabled, issuer_url, and client_id are all required"
+	}
+	result["config"] = configResult
+
+	// Check 2: OIDC discovery
+	discoveryResult := map[string]interface{}{"ok": false}
+	if s.Keycloak.IssuerURL != "" {
+		p, err := oidc.NewProvider(oidcCtx(ctx), s.Keycloak.IssuerURL)
+		if err != nil {
+			discoveryResult["error"] = err.Error()
+		} else {
+			ep := p.Endpoint()
+			discoveryResult["ok"] = true
+			discoveryResult["authEndpoint"] = ep.AuthURL
+			discoveryResult["tokenEndpoint"] = ep.TokenURL
+		}
+	} else {
+		discoveryResult["error"] = "issuer_url is empty"
+	}
+	result["discovery"] = discoveryResult
+
+	// Check 3: redirect_uri
+	redirectResult := map[string]interface{}{
+		"configured": s.Keycloak.RedirectURI,
+	}
+	if s.Keycloak.RedirectURI == "" {
+		redirectResult["ok"] = false
+		redirectResult["error"] = "redirect_uri is empty — it should be <your-origin>/api/auth/keycloak/callback"
+	} else {
+		redirectResult["ok"] = true
+		redirectResult["hint"] = "make sure this EXACT URL is in Keycloak's 'Valid Redirect URIs' for this client"
+	}
+	result["redirect_uri"] = redirectResult
+
+	// Check 4: try building an auth URL (validates the full pipeline)
+	authURLResult := map[string]interface{}{"ok": false}
+	if configOK {
+		if err := k.ensure(ctx); err != nil {
+			authURLResult["error"] = err.Error()
+		} else {
+			authURL, err := k.AuthCodeURL(ctx, "test-state")
+			if err != nil {
+				authURLResult["error"] = err.Error()
+			} else {
+				authURLResult["ok"] = true
+				authURLResult["authUrl"] = authURL
+			}
+		}
+	} else {
+		authURLResult["error"] = "config incomplete — fix config check first"
+	}
+	result["auth_url"] = authURLResult
+
+	return result
 }
 
 // AuthCodeURL returns the redirect URL for the initial login step.
@@ -113,7 +207,7 @@ func (k *KeycloakClient) Exchange(ctx context.Context, code string) (*KeycloakCl
 	if err := k.ensure(ctx); err != nil {
 		return nil, err
 	}
-	tok, err := k.cfg.Exchange(ctx, code)
+	tok, err := k.cfg.Exchange(oidcCtx(ctx), code)
 	if err != nil {
 		return nil, fmt.Errorf("code exchange: %w", err)
 	}
@@ -121,7 +215,7 @@ func (k *KeycloakClient) Exchange(ctx context.Context, code string) (*KeycloakCl
 	if !ok || rawID == "" {
 		return nil, errors.New("id_token missing from token response")
 	}
-	idToken, err := k.verifier.Verify(ctx, rawID)
+	idToken, err := k.verifier.Verify(oidcCtx(ctx), rawID)
 	if err != nil {
 		return nil, fmt.Errorf("verify id_token: %w", err)
 	}
@@ -200,7 +294,8 @@ func (k *KeycloakClient) ResolveUser(ctx context.Context, claims *KeycloakClaims
 	if err != nil {
 		return "", err
 	}
-	roles := mapGroupsToRoles(claims.Groups, s.Keycloak.GroupRoleMap)
+	roles := k.resolveRoles(ctx, claims.Groups, s.Keycloak.GroupRoleMap)
+	k.logger.Infof("keycloak resolve: user=%s groups=%d matched_roles=%v", claims.Username, len(claims.Groups), roles)
 
 	if existing != nil {
 		if existing.Type != biz.UserTypeKeycloak {
@@ -230,18 +325,56 @@ func (k *KeycloakClient) ResolveUser(ctx context.Context, claims *KeycloakClaims
 	return k.ub.Create(ctx, user, nil)
 }
 
-func mapGroupsToRoles(groups []string, mapping map[string]string) []string {
+// resolveRoles maps Keycloak group names to Swirl role IDs. The mapping
+// value can be either a role ID (old format) or a role NAME (new format
+// that survives backup/restore across instances). If the value is not a
+// valid role ID, it's looked up by name. This makes the mapping portable.
+func (k *KeycloakClient) resolveRoles(ctx context.Context, groups []string, mapping map[string]string) []string {
 	if len(mapping) == 0 || len(groups) == 0 {
 		return nil
 	}
+	// Cache roles by name for this resolution pass (avoid N DB hits).
+	var allRoles []*dao.Role
+	rolesLoaded := false
+
 	seen := map[string]struct{}{}
 	var out []string
 	for _, g := range groups {
-		if id, ok := mapping[g]; ok && id != "" {
-			if _, dup := seen[id]; !dup {
-				out = append(out, id)
-				seen[id] = struct{}{}
+		// Try both "/group" and "group" formats — Keycloak sends
+		// "/appFoo" (Full group path ON) but TrimPrefix strips the
+		// slash when parsing claims. The UI mapping may have either.
+		val, ok := mapping[g]
+		if !ok {
+			val, ok = mapping["/"+g]
+		}
+		if !ok {
+			val, ok = mapping[strings.TrimPrefix(g, "/")]
+		}
+		if !ok || val == "" {
+			continue
+		}
+		roleID := val
+		// Try to find the role by ID first. If not found, treat val
+		// as a role name and look up the ID.
+		if k.rb != nil {
+			role, _ := k.rb.Find(ctx, val)
+			if role == nil {
+				// Not found by ID — try by name
+				if !rolesLoaded {
+					allRoles, _ = k.rb.Search(ctx, "")
+					rolesLoaded = true
+				}
+				for _, r := range allRoles {
+					if strings.EqualFold(r.Name, val) {
+						roleID = r.ID
+						break
+					}
+				}
 			}
+		}
+		if _, dup := seen[roleID]; !dup {
+			out = append(out, roleID)
+			seen[roleID] = struct{}{}
 		}
 	}
 	return out

@@ -6,19 +6,22 @@ import (
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/biz"
 	"github.com/cuigh/swirl/misc"
+	"github.com/cuigh/swirl/security"
 )
 
 // SettingHandler encapsulates setting related handlers.
 type SettingHandler struct {
-	Load web.HandlerFunc `path:"/load" auth:"setting.view" desc:"load setting"`
-	Save web.HandlerFunc `path:"/save" method:"post" auth:"setting.edit" desc:"save setting"`
+	Load         web.HandlerFunc `path:"/load" auth:"setting.view" desc:"load setting"`
+	Save         web.HandlerFunc `path:"/save" method:"post" auth:"setting.edit" desc:"save setting"`
+	KeycloakTest web.HandlerFunc `path:"/keycloak-test" auth:"setting.edit" desc:"diagnose Keycloak OIDC configuration"`
 }
 
 // NewSetting creates an instance of SettingHandler
-func NewSetting(b biz.SettingBiz) *SettingHandler {
+func NewSetting(b biz.SettingBiz, kc *security.KeycloakClient) *SettingHandler {
 	return &SettingHandler{
-		Load: settingLoad(b),
-		Save: settingSave(b),
+		Load:         settingLoad(b),
+		Save:         settingSave(b),
+		KeycloakTest: settingKeycloakTest(kc),
 	}
 }
 
@@ -51,5 +54,13 @@ func settingSave(b biz.SettingBiz) web.HandlerFunc {
 			err = b.Save(ctx, args.ID, args.Options, c.User())
 		}
 		return ajax(c, err)
+	}
+}
+
+func settingKeycloakTest(kc *security.KeycloakClient) web.HandlerFunc {
+	return func(c web.Context) error {
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return success(c, kc.Diagnose(ctx))
 	}
 }

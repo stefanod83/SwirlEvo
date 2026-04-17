@@ -16,7 +16,7 @@ const router = useRouter()
 const store = useStore()
 const message = ref(t('texts.signing_in') || 'Signing in…')
 
-onMounted(() => {
+onMounted(async () => {
   // Parse hash fragment: #token=...&name=...&perms=p1,p2&redirect=/x&idToken=...
   const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash
   const params = new URLSearchParams(hash)
@@ -39,6 +39,11 @@ onMounted(() => {
   }
   // Clean hash before navigation so the token isn't left in browser history.
   history.replaceState(null, '', window.location.pathname)
+  // Small delay to let the Vuex store + axios interceptor pick up the
+  // new token before the target page fires its first API call. Without
+  // this, the initial request can race ahead without the auth header
+  // and trigger a 403 redirect.
+  await new Promise(r => setTimeout(r, 100))
   router.replace({ path: redirect })
 })
 </script>

@@ -108,6 +108,9 @@ func now() dao.Time {
 }
 
 func newOperator(user web.User) dao.Operator {
+	if user == nil {
+		return dao.Operator{}
+	}
 	return dao.Operator{ID: user.ID(), Name: user.Name()}
 }
 

@@ -120,6 +120,25 @@
       <n-alert type="info" style="margin: 4px 0 12px 0">
         {{ t('tips.keycloak_setup') }}
       </n-alert>
+
+      <!-- Import from OpenID Configuration -->
+      <n-space vertical :size="8" style="margin-bottom: 16px;">
+        <n-input-group>
+          <n-input
+            v-model:value="kcImportInput"
+            :placeholder="t('tips.kc_import_placeholder')"
+            clearable
+            style="flex: 1;"
+          />
+          <n-button type="primary" :loading="kcImporting" @click="importKeycloakConfig">
+            {{ t('buttons.import') }}
+          </n-button>
+        </n-input-group>
+        <n-alert v-if="kcImportMsg" :type="kcImportType" :show-icon="true" style="font-size: 12px;">
+          {{ kcImportMsg }}
+        </n-alert>
+      </n-space>
+
       <n-form
         :model="setting"
         ref="formKeycloak"
@@ -243,7 +262,35 @@
           <div><strong>Keycloak:</strong> {{ t('tips.kc_group_role_map_kc') }}</div>
         </div>
 
-        <n-button type="primary" @click="saveKeycloak">{{ t('buttons.save') }}</n-button>
+        <n-space>
+          <n-button type="primary" @click="saveKeycloak">{{ t('buttons.save') }}</n-button>
+          <n-button :loading="kcTesting" @click="testKeycloak">{{ t('buttons.test_connection') }}</n-button>
+        </n-space>
+        <n-alert
+          v-if="kcTestResult"
+          :type="kcTestAllOk ? 'success' : 'error'"
+          style="margin-top: 12px;"
+          :title="kcTestAllOk ? 'Keycloak OK' : 'Keycloak diagnostic'"
+        >
+          <div v-for="(check, key) of kcTestResult" :key="key" style="margin-bottom: 8px;">
+            <strong>{{ key }}:</strong>
+            <n-tag size="small" :type="check.ok ? 'success' : 'error'" style="margin-left: 4px;">
+              {{ check.ok ? 'OK' : 'FAIL' }}
+            </n-tag>
+            <div v-if="check.error" style="margin-top: 2px; font-size: 12px; opacity: 0.8;">
+              <code>{{ check.error }}</code>
+            </div>
+            <div v-if="check.authEndpoint" style="font-size: 12px; opacity: 0.7;">
+              Auth: <code>{{ check.authEndpoint }}</code>
+            </div>
+            <div v-if="check.configured" style="font-size: 12px; opacity: 0.7;">
+              Redirect URI: <code>{{ check.configured }}</code>
+            </div>
+            <div v-if="check.hint" style="font-size: 12px; opacity: 0.7;">
+              {{ check.hint }}
+            </div>
+          </div>
+        </n-alert>
       </n-form>
     </x-panel>
     <x-panel
@@ -479,6 +526,7 @@ import {
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import settingApi from "@/api/setting";
+import { store } from "@/store";
 import type { Setting } from "@/api/setting";
 import vaultApi from "@/api/vault";
 import roleApi from "@/api/role";
@@ -534,6 +582,16 @@ const roleOptions = ref<{ label: string; value: string }[]>([])
 const groupRolePairs = ref<{ group: string; role: string }[]>([])
 const vaultTesting = ref(false)
 const vaultTestMsg = ref('')
+const kcTesting = ref(false)
+const kcTestResult = ref<Record<string, any> | null>(null)
+const kcTestAllOk = computed(() => {
+  if (!kcTestResult.value) return false
+  return Object.values(kcTestResult.value).every((c: any) => c.ok)
+})
+const kcImportInput = ref('')
+const kcImporting = ref(false)
+const kcImportMsg = ref('')
+const kcImportType = ref<'success' | 'error' | 'info'>('info')
 const vaultTestType = ref<'success' | 'error' | 'warning' | 'info'>('info')
 
 const computedRedirectURI = computed(() => {
@@ -600,6 +658,91 @@ async function testVault() {
   }
 }
 
+async function importKeycloakConfig() {
+  const input = kcImportInput.value.trim()
+  if (!input) return
+  kcImporting.value = true
+  kcImportMsg.value = ''
+  try {
+    let config: any = null
+
+    // Try 1: is it a URL? Fetch the OpenID Configuration JSON
+    if (input.startsWith('http://') || input.startsWith('https://')) {
+      let url = input
+      // If it doesn't end with well-known, append it
+      if (!url.includes('.well-known/openid-configuration')) {
+        url = url.replace(/\/+$/, '') + '/.well-known/openid-configuration'
+      }
+      const resp = await fetch(url)
+      if (!resp.ok) throw new Error(`Fetch failed: HTTP ${resp.status}`)
+      config = await resp.json()
+    } else {
+      // Try 2: is it a JSON blob pasted directly?
+      config = JSON.parse(input)
+    }
+
+    if (!config || !config.issuer) {
+      throw new Error('No "issuer" field found in the OpenID Configuration. Make sure you copied the OpenID Endpoint Configuration URL or JSON.')
+    }
+
+    // Auto-populate fields from the discovered config
+    setting.value.keycloak.issuer_url = config.issuer
+    setting.value.keycloak.enabled = true
+    if (!setting.value.keycloak.scopes) {
+      setting.value.keycloak.scopes = 'openid profile email'
+    }
+    if (!setting.value.keycloak.username_claim) {
+      setting.value.keycloak.username_claim = 'preferred_username'
+    }
+    if (!setting.value.keycloak.email_claim) {
+      setting.value.keycloak.email_claim = 'email'
+    }
+    if (!setting.value.keycloak.groups_claim) {
+      setting.value.keycloak.groups_claim = 'groups'
+    }
+    // Compute redirect_uri from current origin
+    setting.value.keycloak.redirect_uri = window.location.origin + '/api/auth/keycloak/callback'
+
+    kcImportType.value = 'success'
+    kcImportMsg.value = `Imported from ${config.issuer}. ` +
+      `Auth: ${config.authorization_endpoint ? 'OK' : 'missing'}. ` +
+      `Token: ${config.token_endpoint ? 'OK' : 'missing'}. ` +
+      `You still need to set Client ID and Client Secret manually, then Save.`
+  } catch (e: any) {
+    kcImportType.value = 'error'
+    kcImportMsg.value = e?.message || String(e)
+  } finally {
+    kcImporting.value = false
+  }
+}
+
+async function testKeycloak() {
+  kcTesting.value = true
+  kcTestResult.value = null
+  try {
+    await settingApi.save('keycloak', setting.value.keycloak)
+    // Use native fetch to bypass the global AJAX interceptor that
+    // redirects ALL 404s to /404 — the test endpoint may legitimately
+    // return 404 if the binary hasn't been rebuilt yet, and we want
+    // to show an error message, not a page redirect.
+    const headers: Record<string, string> = {}
+    if (store.state.user?.token) {
+      headers['Authorization'] = 'Bearer ' + store.state.user.token
+    }
+    const resp = await fetch('/api/setting/keycloak-test', { headers })
+    if (!resp.ok) {
+      kcTestResult.value = { endpoint: { ok: false, error: `HTTP ${resp.status}: ${resp.statusText}. Rebuild the binary if you just added this feature.` } }
+      return
+    }
+    const body = await resp.json()
+    kcTestResult.value = body.data || body || {}
+  } catch (e: any) {
+    kcTestResult.value = { error: { ok: false, error: e?.message || String(e) } }
+  } finally {
+    kcTesting.value = false
+  }
+}
+
 async function fetchData() {
   let r = (await settingApi.load()).data as Setting;
   setting.value = Object.assign(setting.value, r)
@@ -652,7 +795,7 @@ async function fetchData() {
   // load roles for the dropdown
   try {
     const rr = await roleApi.search()
-    roleOptions.value = (rr.data || []).map(r => ({ label: r.name, value: r.id }))
+    roleOptions.value = (rr.data || []).map(r => ({ label: r.name, value: r.name }))
   } catch { /* swallow — page still usable */ }
 }
 

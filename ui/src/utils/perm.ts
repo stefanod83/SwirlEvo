@@ -33,11 +33,11 @@ export const perms = [
     },
     {
         key: 'image',
-        actions: ['view', 'delete'],
+        actions: ['view', 'edit', 'delete', 'push'],
     },
     {
         key: 'container',
-        actions: ['view', 'delete', 'logs', 'execute'],
+        actions: ['view', 'edit', 'delete', 'logs', 'execute'],
     },
     {
         key: 'volume',
@@ -66,6 +66,14 @@ export const perms = [
     {
         key: 'setting',
         actions: ['view', 'edit'],
+    },
+    {
+        key: 'host',
+        actions: ['view', 'edit', 'delete'],
+    },
+    {
+        key: 'backup',
+        actions: ['view', 'edit', 'delete', 'restore', 'download', 'recover'],
     },
     {
         key: 'vault',

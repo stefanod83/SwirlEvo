@@ -98,13 +98,18 @@ func (b *eventBiz) Prune(ctx context.Context, days int32) (err error) {
 }
 
 func (b *eventBiz) create(et EventType, ea EventAction, args data.Map, user web.User) {
+	var uid, uname string
+	if user != nil {
+		uid = user.ID()
+		uname = user.Name()
+	}
 	event := &dao.Event{
 		ID:       primitive.NewObjectID(),
 		Type:     string(et),
 		Action:   string(ea),
 		Args:     args,
-		UserID:   user.ID(),
-		Username: user.Name(),
+		UserID:   uid,
+		Username: uname,
 		Time:     now(),
 	}
 	err := b.d.EventCreate(context.TODO(), event)
