@@ -92,8 +92,8 @@
           @click="togglePanel('password')"
         >{{ panel === 'password' ? t('buttons.collapse') : t('buttons.expand') }}</n-button>
       </template>
-      <div style="padding: 4px 0 0 12px" v-if="profile.type === 'ldap'">
-        <n-alert type="info">{{ t('texts.password_notice') }}</n-alert>
+      <div style="padding: 4px 0 0 12px" v-if="profile.type !== 'internal'">
+        <n-alert type="info">{{ profile.type === 'keycloak' ? t('texts.keycloak_password_notice') : t('texts.password_notice') }}</n-alert>
       </div>
       <div style="padding: 4px 0 0 12px" v-else>
         <n-form :model="password" ref="passwordForm" :rules="passwordRules">

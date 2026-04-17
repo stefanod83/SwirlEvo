@@ -15,7 +15,7 @@ import (
 type ContainerBiz interface {
 	Search(ctx context.Context, node, name, status, project string, pageIndex, pageSize int) ([]*Container, int, error)
 	Find(ctx context.Context, node, id string) (ctr *Container, raw string, err error)
-	Delete(ctx context.Context, node, id, name string, user web.User) (err error)
+	Delete(ctx context.Context, node, id, name string, removeAnonymousVolumes bool, user web.User) (err error)
 	FetchLogs(ctx context.Context, node, id string, lines int, timestamps bool) (stdout, stderr string, err error)
 	ExecCreate(ctx context.Context, node, id string, cmd string) (resp container.ExecCreateResponse, err error)
 	ExecAttach(ctx context.Context, node, id string) (resp types.HijackedResponse, err error)
@@ -73,8 +73,8 @@ func (b *containerBiz) Search(ctx context.Context, node, name, status, project s
 	return containers, total, nil
 }
 
-func (b *containerBiz) Delete(ctx context.Context, node, id, name string, user web.User) (err error) {
-	err = b.d.ContainerRemove(ctx, node, id)
+func (b *containerBiz) Delete(ctx context.Context, node, id, name string, removeAnonymousVolumes bool, user web.User) (err error) {
+	err = b.d.ContainerRemove(ctx, node, id, removeAnonymousVolumes)
 	if err == nil {
 		b.eb.CreateContainer(EventActionDelete, node, id, name, user)
 	}

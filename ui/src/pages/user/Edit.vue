@@ -124,7 +124,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import {
   NButton,
   NSpace,
@@ -164,6 +164,16 @@ import { returnTo } from "@/utils/nav";
 const { t } = useI18n()
 const route = useRoute();
 const user = ref({ type: 'internal', admin: false } as User)
+
+// When the operator switches a new user away from 'internal', wipe any
+// dangling password fields so we never submit a hash-ready password that
+// is ignored by the backend for external identity providers.
+watch(() => user.value.type, (newType) => {
+  if (newType !== 'internal') {
+    user.value.password = ''
+    user.value.passwordConfirm = ''
+  }
+})
 
 function onReturn() {
   const id = route.params.id as string

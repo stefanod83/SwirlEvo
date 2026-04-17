@@ -41,6 +41,15 @@ func (d *Dao) ComposeStackUpdateError(ctx context.Context, id, errorMessage stri
 	})
 }
 
+func (d *Dao) ComposeStackUpdateWarnings(ctx context.Context, id string, warnings []string) error {
+	old := &dao.ComposeStack{}
+	return d.update(ComposeStack, id, old, func() interface{} {
+		// Always replace — passing nil clears them.
+		old.LastWarnings = warnings
+		return old
+	})
+}
+
 func (d *Dao) ComposeStackGet(ctx context.Context, id string) (*dao.ComposeStack, error) {
 	s := &dao.ComposeStack{}
 	err := d.get(ComposeStack, id, s)

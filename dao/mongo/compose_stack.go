@@ -38,6 +38,17 @@ func (d *Dao) ComposeStackUpdateError(ctx context.Context, id, errorMessage stri
 	return d.update(ctx, ComposeStack, id, bson.M{"$set": bson.M{"error_message": errorMessage}})
 }
 
+func (d *Dao) ComposeStackUpdateWarnings(ctx context.Context, id string, warnings []string) error {
+	// Normalise nil to an empty slice so $set actually writes an empty
+	// array (otherwise BSON emits `null` and the Go side reads back a nil
+	// slice — still fine, but the UI's "no warnings" rendering depends on
+	// the field being missing or []-shaped, not null).
+	if warnings == nil {
+		warnings = []string{}
+	}
+	return d.update(ctx, ComposeStack, id, bson.M{"$set": bson.M{"last_warnings": warnings}})
+}
+
 func (d *Dao) ComposeStackGet(ctx context.Context, id string) (*dao.ComposeStack, error) {
 	s := &dao.ComposeStack{}
 	found, err := d.find(ctx, ComposeStack, id, s)

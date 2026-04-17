@@ -291,6 +291,11 @@ type ComposeStack struct {
 	EnvFile      string   `json:"envFile,omitempty" bson:"env_file,omitempty"`
 	Status       string   `json:"status" bson:"status"` // active, inactive, partial, error
 	ErrorMessage string   `json:"errorMessage,omitempty" bson:"error_message,omitempty"`
+	// LastWarnings captures non-fatal observations from the most recent
+	// deploy attempt (e.g. compose fields that were silently ignored
+	// because they only make sense in Swarm mode). Cleared on a clean
+	// deploy, overwritten on every redeploy. Never surfaces as an error.
+	LastWarnings []string `json:"lastWarnings,omitempty" bson:"last_warnings,omitempty"`
 	CreatedAt    Time     `json:"createdAt" bson:"created_at"`
 	UpdatedAt    Time     `json:"updatedAt" bson:"updated_at"`
 	CreatedBy    Operator `json:"createdBy" bson:"created_by"`

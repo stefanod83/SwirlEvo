@@ -13,6 +13,9 @@ import (
 	"github.com/cuigh/swirl/dao"
 	"github.com/cuigh/swirl/docker"
 	"github.com/cuigh/swirl/docker/compose"
+	"github.com/cuigh/swirl/misc"
+	dockercontainer "github.com/docker/docker/api/types/container"
+	dockerfilters "github.com/docker/docker/api/types/filters"
 	dockerclient "github.com/docker/docker/client"
 )
 
@@ -24,7 +27,12 @@ type ComposeStackBiz interface {
 	FindDetail(ctx context.Context, hostID, name string) (*ComposeStackDetail, error)
 	// Save persists the compose stack without deploying. Pass an empty ID to create a new one.
 	Save(ctx context.Context, stack *dao.ComposeStack, user web.User) (string, error)
-	// Deploy parses + applies the compose file. If the stack does not exist yet it is persisted first.
+	// Deploy is async: it persists the stack, performs self-protection
+	// checks synchronously, then spawns a goroutine that runs the actual
+	// engine deploy against a background context (so it survives the
+	// HTTP response). The returned id is the persisted stack id; the
+	// stack's Status field moves from "deploying" to "active" or "error"
+	// as the deploy progresses.
 	Deploy(ctx context.Context, stack *dao.ComposeStack, pullImages bool, user web.User) (string, error)
 	// Import promotes an external stack to managed. If stack.Content is empty,
 	// the engine reconstructs a YAML from running containers. If redeploy is
@@ -32,11 +40,27 @@ type ComposeStackBiz interface {
 	Import(ctx context.Context, stack *dao.ComposeStack, redeploy, pullImages bool, user web.User) (string, error)
 	Start(ctx context.Context, id string, user web.User) error
 	Stop(ctx context.Context, id string, user web.User) error
-	Remove(ctx context.Context, id string, removeVolumes bool, user web.User) error
+	// Remove deletes the stack. When removeVolumes is true the project's
+	// managed named volumes are deleted too — unless any of them carries
+	// data, in which case a VolumesContainData error with the list of
+	// affected volumes is returned. Pass force=true to override the
+	// guard (second-confirmation path).
+	Remove(ctx context.Context, id string, removeVolumes, force bool, user web.User) error
 	// External actions — act directly on a discovered stack by (hostID, name).
 	StartExternal(ctx context.Context, hostID, name string, user web.User) error
 	StopExternal(ctx context.Context, hostID, name string, user web.User) error
-	RemoveExternal(ctx context.Context, hostID, name string, removeVolumes bool, user web.User) error
+	RemoveExternal(ctx context.Context, hostID, name string, removeVolumes, force bool, user web.User) error
+}
+
+// VolumesContainDataError wraps a list of project volumes that contain data,
+// surfaced by Remove when removeVolumes=true && force=false. The API layer
+// unwraps this into a structured JSON response.
+type VolumesContainDataError struct {
+	Volumes []string
+}
+
+func (e *VolumesContainDataError) Error() string {
+	return fmt.Sprintf("project volumes contain data: %s", strings.Join(e.Volumes, ", "))
 }
 
 // ComposeStackDetail is the enriched detail returned for a single stack.
@@ -221,6 +245,8 @@ func (b *composeStackBiz) Save(ctx context.Context, stack *dao.ComposeStack, use
 }
 
 func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, pullImages bool, user web.User) (string, error) {
+	// 1. Persist the stack synchronously so the caller has an id and the
+	//    record exists before any async work starts.
 	id, err := b.Save(ctx, stack, user)
 	if err != nil {
 		return "", err
@@ -237,9 +263,32 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 	if err != nil {
 		return "", err
 	}
-	engine := compose.NewStandaloneEngine(cli)
-	// Build a deploy hook that materializes VaultSecret bindings (if any).
-	// A nil hook is perfectly valid — the engine skips over it.
+
+	// 2. Self-protection: if the compose file would deploy a container
+	//    that turns out to be the Swirl instance itself, refuse up-front.
+	//    We'd rather the operator move Swirl out of the stack than have
+	//    the API disappear mid-deploy.
+	//
+	//    The check is best-effort: if SelfContainerID() returns !ok
+	//    (running natively during dev, or unusual container runtime) we
+	//    skip it entirely and the deploy proceeds as before.
+	if selfID, ok := misc.SelfContainerID(); ok {
+		if err := b.checkSelfDeploy(ctx, cli, stack.Name, stack.Content, selfID); err != nil {
+			_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
+			_ = b.di.ComposeStackUpdateError(ctx, id, err.Error())
+			return id, err
+		}
+	}
+
+	// 3. Flip status to "deploying" synchronously so the UI reflects the
+	//    in-flight state immediately when the 202 comes back.
+	_ = b.di.ComposeStackUpdateStatus(ctx, id, "deploying")
+	_ = b.di.ComposeStackUpdateError(ctx, id, "")
+
+	// 4. Build the deploy hook on the caller ctx (Vault tokens live in
+	//    closures — building it inside the goroutine with a background
+	//    ctx would defer the Vault call beyond the request timeout for
+	//    no real benefit).
 	hook, err := b.sec.NewHook(ctx, id)
 	if err != nil {
 		errMsg := fmt.Sprintf("prepare secrets: %v", err)
@@ -247,19 +296,104 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 		_ = b.di.ComposeStackUpdateError(ctx, id, errMsg)
 		return id, fmt.Errorf("%s", errMsg)
 	}
-	if err := engine.Deploy(ctx, stack.Name, stack.Content, compose.DeployOptions{
+
+	// 5. Fire the actual deploy on a detached context. The goroutine
+	//    closes over local values only; no shared mutable state.
+	stackName := stack.Name
+	stackContent := stack.Content
+	envFile := stack.EnvFile
+	hostID := stack.HostID
+	go b.runDeploy(cli, id, hostID, stackName, stackContent, envFile, pullImages, hook, user)
+
+	return id, nil
+}
+
+// runDeploy is the goroutine entry point spawned by Deploy. It MUST use
+// context.Background() rather than the HTTP ctx — the latter is cancelled
+// when the API response is written. A deploy taking more than a few
+// seconds (image pulls, long BeforeDeploy hooks) would otherwise abort
+// mid-flight.
+func (b *composeStackBiz) runDeploy(cli *dockerclient.Client, id, hostID, name, content, envFile string, pullImages bool, hook compose.DeployHook, user web.User) {
+	// Allow up to 10 minutes for a single deploy — matches the push
+	// timeout used elsewhere in the codebase for similarly heavy ops.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	engine := compose.NewStandaloneEngine(cli)
+	res, err := engine.DeployWithResult(ctx, name, content, compose.DeployOptions{
 		PullImages: pullImages,
 		Hook:       hook,
-		EnvVars:    parseEnvFile(stack.EnvFile),
-	}); err != nil {
+		EnvVars:    parseEnvFile(envFile),
+	})
+
+	// Persist warnings regardless of outcome — they describe the YAML,
+	// not the deploy result. An empty slice clears any previous warnings.
+	if res != nil {
+		_ = b.di.ComposeStackUpdateWarnings(ctx, id, res.Warnings)
+	} else {
+		_ = b.di.ComposeStackUpdateWarnings(ctx, id, nil)
+	}
+
+	if err != nil {
 		_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
 		_ = b.di.ComposeStackUpdateError(ctx, id, err.Error())
-		return id, err
+		return
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "active")
-	_ = b.di.ComposeStackUpdateError(ctx, id, "") // clear previous error on success
-	b.eb.CreateStack(EventActionDeploy, stack.HostID, stack.Name, user)
-	return id, nil
+	_ = b.di.ComposeStackUpdateError(ctx, id, "")
+	b.eb.CreateStack(EventActionDeploy, hostID, name, user)
+}
+
+// checkSelfDeploy inspects the compose content and the live containers on
+// the target host to decide whether the deploy would replace the current
+// Swirl container. The heuristic:
+//
+//  1. parse the compose to get the service list;
+//  2. for each service, compute the canonical container name
+//     `<project>_<service>_1` AND any explicit `container_name:` override;
+//  3. inspect each name on the live daemon — if the running container's
+//     ID matches SelfContainerID(), the deploy would kill us.
+//
+// Returns a misc.Coded error with ErrSelfDeployBlocked when a match is
+// found so the API layer can translate it into a recognisable code.
+func (b *composeStackBiz) checkSelfDeploy(ctx context.Context, cli *dockerclient.Client, projectName, content, selfID string) error {
+	cfg, err := compose.Parse(projectName, content)
+	if err != nil {
+		// Parsing errors are handled later by the engine — don't
+		// double-report here.
+		return nil
+	}
+	// Candidate container names to inspect.
+	var names []string
+	for _, svc := range cfg.Services {
+		if svc.ContainerName != "" {
+			names = append(names, svc.ContainerName)
+		}
+		names = append(names, projectName+"_"+svc.Name+"_1")
+	}
+	// Also scan any container currently labelled with this project —
+	// covers pre-existing containers with non-default names that would be
+	// torn down on redeploy.
+	extra, _ := cli.ContainerList(ctx, dockercontainer.ListOptions{
+		All:     true,
+		Filters: dockerfilters.NewArgs(dockerfilters.Arg("label", compose.LabelProject+"="+projectName)),
+	})
+	for _, c := range extra {
+		if misc.ContainerIDMatchesSelf(c.ID) {
+			return misc.Error(misc.ErrSelfDeployBlocked, fmt.Errorf("cannot deploy a stack that includes this Swirl instance (container %s)", c.ID[:12]))
+		}
+	}
+	// Inspect each candidate name (ignore not-found).
+	for _, n := range names {
+		c, ierr := cli.ContainerInspect(ctx, n)
+		if ierr != nil {
+			continue
+		}
+		if misc.ContainerIDMatchesSelf(c.ID) {
+			return misc.Error(misc.ErrSelfDeployBlocked, fmt.Errorf("cannot deploy a stack that includes this Swirl instance (container %s)", c.ID[:12]))
+		}
+	}
+	return nil
 }
 
 func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) error {
@@ -304,7 +438,7 @@ func (b *composeStackBiz) Stop(ctx context.Context, id string, user web.User) er
 	return nil
 }
 
-func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes bool, user web.User) error {
+func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes, force bool, user web.User) error {
 	stack, err := b.di.ComposeStackGet(ctx, id)
 	if err != nil || stack == nil {
 		if stack == nil {
@@ -314,6 +448,22 @@ func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes b
 	}
 	cli, err := b.clientForStack(ctx, stack)
 	if err == nil {
+		// B4 — volume preservation: before destroying anything, check
+		// whether the user's volumes carry data. If so, require force=true
+		// so the UI can show a second, rafforzato confirmation.
+		if removeVolumes && !force {
+			if vols, lErr := compose.ListProjectVolumes(ctx, cli, stack.Name); lErr == nil {
+				var withData []string
+				for _, v := range vols {
+					if v.HasData {
+						withData = append(withData, v.Name)
+					}
+				}
+				if len(withData) > 0 {
+					return &VolumesContainDataError{Volumes: withData}
+				}
+			}
+		}
 		engine := compose.NewStandaloneEngine(cli)
 		// Cleanup hook drops helper containers + secret volumes by label —
 		// no Vault lookup needed, so stack removal still works when Vault
@@ -545,10 +695,24 @@ func (b *composeStackBiz) StopExternal(ctx context.Context, hostID, name string,
 }
 
 // RemoveExternal removes all containers of an unmanaged project on a host.
-func (b *composeStackBiz) RemoveExternal(ctx context.Context, hostID, name string, removeVolumes bool, user web.User) error {
+func (b *composeStackBiz) RemoveExternal(ctx context.Context, hostID, name string, removeVolumes, force bool, user web.User) error {
 	cli, err := b.hostClient(ctx, hostID)
 	if err != nil {
 		return err
+	}
+	// Same volume-preservation guard as Remove — applies to external stacks too.
+	if removeVolumes && !force {
+		if vols, lErr := compose.ListProjectVolumes(ctx, cli, name); lErr == nil {
+			var withData []string
+			for _, v := range vols {
+				if v.HasData {
+					withData = append(withData, v.Name)
+				}
+			}
+			if len(withData) > 0 {
+				return &VolumesContainDataError{Volumes: withData}
+			}
+		}
 	}
 	engine := compose.NewStandaloneEngine(cli)
 	if err := engine.Remove(ctx, name, removeVolumes, b.sec.NewCleanupHook()); err != nil {

@@ -149,6 +149,10 @@ func composeStackRemove(b biz.ComposeStackBiz) web.HandlerFunc {
 		HostID        string `json:"hostId"`
 		Name          string `json:"name"`
 		RemoveVolumes bool   `json:"removeVolumes"`
+		// Force overrides the "volumes contain data" safety check. The UI
+		// obtains it by showing a second confirmation dialog with the
+		// volume list returned by the unforced attempt.
+		Force bool `json:"force"`
 	}
 	return func(c web.Context) error {
 		args := &Args{}
@@ -157,10 +161,21 @@ func composeStackRemove(b biz.ComposeStackBiz) web.HandlerFunc {
 		}
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
+		var err error
 		if args.ID != "" {
-			return ajax(c, b.Remove(ctx, args.ID, args.RemoveVolumes, c.User()))
+			err = b.Remove(ctx, args.ID, args.RemoveVolumes, args.Force, c.User())
+		} else {
+			err = b.RemoveExternal(ctx, args.HostID, args.Name, args.RemoveVolumes, args.Force, c.User())
 		}
-		return ajax(c, b.RemoveExternal(ctx, args.HostID, args.Name, args.RemoveVolumes, c.User()))
+		// Structured error: surface the list of non-empty volumes so the
+		// UI can render a second confirmation with exact names.
+		if vcd, ok := err.(*biz.VolumesContainDataError); ok {
+			return success(c, data.Map{
+				"volumesContainData": true,
+				"volumes":            vcd.Volumes,
+			})
+		}
+		return ajax(c, err)
 	}
 }
 

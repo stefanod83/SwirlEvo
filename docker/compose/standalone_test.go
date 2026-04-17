@@ -132,3 +132,75 @@ func TestValidateServicesEmptyServices(t *testing.T) {
 		t.Fatalf("expected nil on empty services, got %v", err)
 	}
 }
+
+// TestCollectIgnoredFieldWarningsNoDeploy — retro-compat baseline: a
+// compose file that does not declare any Swarm-only field must produce
+// zero warnings. This is the case that existed before Phase 2 and MUST
+// stay silent (otherwise we'd fire a warning on every single deploy).
+func TestCollectIgnoredFieldWarningsNoDeploy(t *testing.T) {
+	cfg := &composetypes.Config{
+		Services: []composetypes.ServiceConfig{
+			{Name: "web", Image: "nginx:latest"},
+		},
+	}
+	if w := collectIgnoredFieldWarnings(cfg); len(w) != 0 {
+		t.Fatalf("expected no warnings, got %v", w)
+	}
+}
+
+// TestCollectIgnoredFieldWarningsDeployBlock — a service with a non-empty
+// `deploy:` block must emit exactly one warning mentioning the service name.
+func TestCollectIgnoredFieldWarningsDeployBlock(t *testing.T) {
+	replicas := uint64(3)
+	cfg := &composetypes.Config{
+		Services: []composetypes.ServiceConfig{
+			{Name: "worker", Image: "busybox", Deploy: composetypes.DeployConfig{Replicas: &replicas}},
+		},
+	}
+	w := collectIgnoredFieldWarnings(cfg)
+	if len(w) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(w), w)
+	}
+	if !strings.Contains(w[0], "service worker") {
+		t.Fatalf("warning should mention service name, got %q", w[0])
+	}
+	if !strings.Contains(w[0], "deploy:") {
+		t.Fatalf("warning should mention the deploy: block, got %q", w[0])
+	}
+}
+
+// TestCollectIgnoredFieldWarningsMultipleServices — every offending service
+// contributes its own warning; non-offending services do not.
+func TestCollectIgnoredFieldWarningsMultipleServices(t *testing.T) {
+	cfg := &composetypes.Config{
+		Services: []composetypes.ServiceConfig{
+			{Name: "web", Image: "nginx"},
+			{Name: "api", Image: "api", Deploy: composetypes.DeployConfig{Mode: "replicated"}},
+			{Name: "db", Image: "postgres"},
+			{Name: "cache", Image: "redis", Deploy: composetypes.DeployConfig{EndpointMode: "dnsrr"}},
+		},
+	}
+	w := collectIgnoredFieldWarnings(cfg)
+	if len(w) != 2 {
+		t.Fatalf("expected 2 warnings, got %d: %v", len(w), w)
+	}
+}
+
+// TestIsZeroDeployConfig sanity-checks the zero-value detector for every
+// branch a real compose file can populate.
+func TestIsZeroDeployConfig(t *testing.T) {
+	var zero composetypes.DeployConfig
+	if !isZeroDeployConfig(zero) {
+		t.Fatalf("zero value should be detected as empty")
+	}
+	r := uint64(1)
+	if isZeroDeployConfig(composetypes.DeployConfig{Replicas: &r}) {
+		t.Fatalf("Replicas should count as non-empty")
+	}
+	if isZeroDeployConfig(composetypes.DeployConfig{Mode: "global"}) {
+		t.Fatalf("Mode should count as non-empty")
+	}
+	if isZeroDeployConfig(composetypes.DeployConfig{EndpointMode: "vip"}) {
+		t.Fatalf("EndpointMode should count as non-empty")
+	}
+}

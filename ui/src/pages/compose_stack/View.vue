@@ -49,6 +49,16 @@
           <n-descriptions-item v-if="detail.updatedAt" :label="t('fields.updated_at')">{{ detail.updatedAt }}</n-descriptions-item>
         </n-descriptions>
         <n-alert
+          v-if="lastDeployWarnings.length"
+          type="warning"
+          :title="t('messages.deploy_ignored_fields')"
+          style="margin-top: 12px;"
+        >
+          <ul style="margin: 0; padding-left: 18px; font-size: 12px;">
+            <li v-for="(w, i) of lastDeployWarnings" :key="i">{{ w }}</li>
+          </ul>
+        </n-alert>
+        <n-alert
           v-if="lastDeployError"
           type="error"
           :title="t('stack_secret.deploy_error_title')"
@@ -169,6 +179,7 @@ const containersLoading = ref(false)
 const bindings = ref<ComposeStackSecretBinding[]>([])
 const envFileContent = ref('')
 const lastDeployError = ref('')
+const lastDeployWarnings = ref<string[]>([])
 
 async function loadContainers() {
   if (!detail.value.hostId || !detail.value.name) return
@@ -201,6 +212,7 @@ async function loadByIdAndResolve(id: string) {
   const s = r.data
   envFileContent.value = s.envFile || ''
   lastDeployError.value = s.errorMessage || ''
+  lastDeployWarnings.value = s.lastWarnings || []
   const r2 = await composeStackApi.findDetail(s.hostId, s.name)
   if (r2.data) {
     detail.value = r2.data

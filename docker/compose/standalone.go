@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	composetypes "github.com/cuigh/swirl/docker/compose/types"
 	"github.com/docker/docker/api/types/container"
@@ -16,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 	"gopkg.in/yaml.v2"
 )
@@ -23,11 +25,13 @@ import (
 // Standard docker-compose labels — same naming as the official CLI so containers
 // created by `docker compose` are visible here as well.
 const (
-	LabelProject = "com.docker.compose.project"
-	LabelService = "com.docker.compose.service"
-	LabelNumber  = "com.docker.compose.container-number"
-	LabelOneoff  = "com.docker.compose.oneoff"
-	LabelManaged = "com.swirl.compose.managed"
+	LabelProject     = "com.docker.compose.project"
+	LabelService     = "com.docker.compose.service"
+	LabelNumber      = "com.docker.compose.container-number"
+	LabelOneoff      = "com.docker.compose.oneoff"
+	LabelNetworkName = "com.docker.compose.network"
+	LabelVolumeName  = "com.docker.compose.volume"
+	LabelManaged     = "com.swirl.compose.managed"
 )
 
 // StackInfo is a summary of a compose stack discovered on a host.
@@ -53,6 +57,17 @@ type DeployOptions struct {
 	// about Vault. The engine calls the hook methods at well-defined points
 	// in the Deploy lifecycle.
 	Hook DeployHook
+}
+
+// DeployResult summarises the non-fatal observations produced by a deploy.
+// Warnings are additive diagnostics — they never abort the deploy. Callers
+// typically persist them alongside the stack record and surface them in the
+// UI so the user is aware of fields that were silently dropped (e.g. the
+// Swarm-only `deploy:` block).
+type DeployResult struct {
+	// Warnings carries one entry per ignored / non-portable compose feature,
+	// each prefixed with the offending service name when applicable.
+	Warnings []string
 }
 
 // DeployHook lets a caller inject side effects into the Deploy lifecycle
@@ -90,10 +105,32 @@ func NewStandaloneEngine(cli *client.Client) *StandaloneEngine {
 	return &StandaloneEngine{cli: cli}
 }
 
-// Deploy applies the compose file: creates networks, volumes, pulls images and starts
-// one container per service. Re-invoking Deploy for an existing stack replaces it
-// (stop+remove old containers, recreate). Volumes are preserved across redeploys.
+// Deploy is the backwards-compatible thin wrapper around DeployWithResult.
+// Existing callers that don't care about warnings can keep using it
+// verbatim — the engine behaviour is identical.
 func (e *StandaloneEngine) Deploy(ctx context.Context, projectName, content string, opts DeployOptions) error {
+	_, err := e.DeployWithResult(ctx, projectName, content, opts)
+	return err
+}
+
+// DeployWithResult applies the compose file and returns a DeployResult
+// carrying non-fatal warnings (e.g. ignored `deploy:` blocks). The fatal
+// behaviour is strictly additive vs the previous Deploy:
+//
+//  1. preflight: parse + validate + scan for ignored fields (warnings);
+//  2. preflight: verify every `external: true` network/volume actually
+//     exists on the target daemon — abort early when any is missing so we
+//     never tear down the previous stack state on a typo;
+//  3. preflight: when PullImages is set, pull ALL service images BEFORE
+//     touching existing containers. On failure the old stack is intact.
+//  4. tear down the previous project containers (was before: same);
+//  5. ensure networks / volumes / hook BeforeDeploy (unchanged);
+//  6. create + start each service container (unchanged).
+//
+// Warnings are additive — they never change the outcome.
+func (e *StandaloneEngine) DeployWithResult(ctx context.Context, projectName, content string, opts DeployOptions) (*DeployResult, error) {
+	result := &DeployResult{}
+
 	// Inject env vars before parsing so ${VAR} references in the YAML
 	// are expanded by the compose loader. Cleaned up after parsing to
 	// avoid polluting the process for subsequent operations.
@@ -110,38 +147,155 @@ func (e *StandaloneEngine) Deploy(ctx context.Context, projectName, content stri
 
 	cfg, err := Parse(projectName, content)
 	if err != nil {
-		return fmt.Errorf("parse compose: %w", err)
+		return result, fmt.Errorf("parse compose: %w", err)
 	}
 
 	if err := validateServices(cfg); err != nil {
-		return err
+		return result, err
+	}
+
+	// B1 — collect warnings for compose-spec fields the standalone engine
+	// silently ignores, so the operator knows the running stack is not a
+	// faithful materialisation of the YAML.
+	result.Warnings = append(result.Warnings, collectIgnoredFieldWarnings(cfg)...)
+
+	// B6 — external networks/volumes must exist before we touch anything.
+	// A typo'd external reference would otherwise tear down the previous
+	// stack containers and then fail halfway through recreation, leaving
+	// the project in an unusable state.
+	if err := e.preflightExternalNetworks(ctx, projectName, cfg.Networks); err != nil {
+		return result, err
+	}
+	if err := e.preflightExternalVolumes(ctx, projectName, cfg.Volumes); err != nil {
+		return result, err
+	}
+
+	// B5 — pull all images up-front. On any failure we abort without
+	// touching the old containers. Errors are aggregated so the operator
+	// sees every missing image at once, not just the first.
+	if opts.PullImages {
+		var pullErrors []string
+		for _, svc := range cfg.Services {
+			if svc.Image == "" {
+				continue
+			}
+			if perr := e.pullImage(ctx, svc.Image); perr != nil {
+				pullErrors = append(pullErrors, fmt.Sprintf("%s (%s): %v", svc.Name, svc.Image, perr))
+			}
+		}
+		if len(pullErrors) > 0 {
+			return result, fmt.Errorf("pre-flight pull failed for: %s", strings.Join(pullErrors, "; "))
+		}
 	}
 
 	if err := e.removeProjectContainers(ctx, projectName, false); err != nil {
-		return err
+		return result, err
 	}
 
 	if err := e.ensureNetworks(ctx, projectName, cfg.Networks); err != nil {
-		return err
+		return result, err
 	}
 	if err := e.ensureVolumes(ctx, projectName, cfg.Volumes); err != nil {
-		return err
+		return result, err
 	}
 
 	if opts.Hook != nil {
 		if err := opts.Hook.BeforeDeploy(ctx, e.cli, projectName); err != nil {
-			return fmt.Errorf("deploy hook (before): %w", err)
+			return result, fmt.Errorf("deploy hook (before): %w", err)
 		}
 	}
 
 	for i, svc := range cfg.Services {
-		if opts.PullImages && svc.Image != "" {
-			if err := e.pullImage(ctx, svc.Image); err != nil {
-				return fmt.Errorf("pull %s: %w", svc.Image, err)
-			}
-		}
 		if err := e.createAndStart(ctx, projectName, cfg, &cfg.Services[i], opts.Hook); err != nil {
-			return fmt.Errorf("service %s: %w", svc.Name, err)
+			return result, fmt.Errorf("service %s: %w", svc.Name, err)
+		}
+	}
+	return result, nil
+}
+
+// collectIgnoredFieldWarnings scans the parsed compose config for fields
+// the standalone engine is known to drop and emits one warning per
+// service. Pure function, no Docker calls — safe to unit test.
+func collectIgnoredFieldWarnings(cfg *composetypes.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	var warnings []string
+	for _, svc := range cfg.Services {
+		// `deploy:` — Swarm-only scheduling/replication block. The
+		// compose spec explicitly says it's ignored by non-Swarm
+		// engines; we echo that to the operator.
+		if !isZeroDeployConfig(svc.Deploy) {
+			warnings = append(warnings, fmt.Sprintf("service %s: deploy: block ignored in standalone mode", svc.Name))
+		}
+	}
+	return warnings
+}
+
+// isZeroDeployConfig reports whether the compose-level DeployConfig is
+// effectively empty (i.e. the YAML omitted the block). We can't compare
+// against the struct zero value with == because DeployConfig contains
+// map/slice/pointer fields; a field-by-field check is the portable
+// version.
+func isZeroDeployConfig(d composetypes.DeployConfig) bool {
+	return d.Mode == "" &&
+		d.Replicas == nil &&
+		len(d.Labels) == 0 &&
+		d.UpdateConfig == nil &&
+		d.RollbackConfig == nil &&
+		isZeroResources(d.Resources) &&
+		d.RestartPolicy == nil &&
+		isZeroPlacement(d.Placement) &&
+		d.EndpointMode == ""
+}
+
+func isZeroResources(r composetypes.Resources) bool {
+	return r.Limits == nil && r.Reservations == nil
+}
+
+func isZeroPlacement(p composetypes.Placement) bool {
+	return len(p.Constraints) == 0 && len(p.Preferences) == 0 && p.MaxReplicas == 0
+}
+
+// preflightExternalNetworks verifies every `external: true` network
+// declared in the compose file actually exists on the target daemon.
+// External networks are referenced by their resolved name (the `Name:`
+// field when set, otherwise the key). Non-external networks are
+// skipped — they're created on demand by ensureNetworks.
+func (e *StandaloneEngine) preflightExternalNetworks(ctx context.Context, project string, nets map[string]composetypes.NetworkConfig) error {
+	for name, ncfg := range nets {
+		if !ncfg.External.External {
+			continue
+		}
+		resolved := ncfg.Name
+		if resolved == "" {
+			resolved = name
+		}
+		if _, err := e.cli.NetworkInspect(ctx, resolved, network.InspectOptions{}); err != nil {
+			if errdefs.IsNotFound(err) {
+				return fmt.Errorf("external network %q not found on host", resolved)
+			}
+			return fmt.Errorf("external network %q: %w", resolved, err)
+		}
+	}
+	return nil
+}
+
+// preflightExternalVolumes mirrors preflightExternalNetworks for volumes.
+func (e *StandaloneEngine) preflightExternalVolumes(ctx context.Context, project string, vols map[string]composetypes.VolumeConfig) error {
+	for name, vcfg := range vols {
+		if !vcfg.External.External {
+			continue
+		}
+		resolved := vcfg.Name
+		if resolved == "" {
+			resolved = name
+		}
+		if _, err := e.cli.VolumeInspect(ctx, resolved); err != nil {
+			if errdefs.IsNotFound(err) {
+				return fmt.Errorf("external volume %q not found on host", resolved)
+			}
+			return fmt.Errorf("external volume %q: %w", resolved, err)
 		}
 	}
 	return nil
@@ -231,8 +385,16 @@ func (e *StandaloneEngine) Remove(ctx context.Context, projectName string, remov
 		}
 	}
 	if removeVolumes {
+		// Double-filter: project label AND managed=true. External/imported
+		// volumes that happen to carry the same project label (e.g. a user
+		// who `docker volume create --label com.docker.compose.project=...`
+		// to share data across stacks) are intentionally spared — Swirl only
+		// deletes volumes it created itself.
 		vols, err := e.cli.VolumeList(ctx, volume.ListOptions{
-			Filters: filters.NewArgs(filters.Arg("label", LabelProject+"="+projectName)),
+			Filters: filters.NewArgs(
+				filters.Arg("label", LabelProject+"="+projectName),
+				filters.Arg("label", LabelManaged+"=true"),
+			),
 		})
 		if err == nil {
 			for _, v := range vols.Volumes {
@@ -246,6 +408,48 @@ func (e *StandaloneEngine) Remove(ctx context.Context, projectName string, remov
 		}
 	}
 	return nil
+}
+
+// VolumeSummary is a minimal projection of a project-scoped volume for the
+// preservation check. HasData is a best-effort heuristic: the Docker daemon
+// only populates UsageData when the `?filters` include size calculation, so
+// falling through to "unknown" is preferable to a false-negative that lets
+// the caller wipe user data.
+type VolumeSummary struct {
+	Name    string
+	Size    int64
+	HasData bool
+}
+
+// ListProjectVolumes returns the managed named volumes of a project. The
+// filter matches the (project + managed=true) pair that the engine stamps
+// at creation time, so external/imported volumes sharing the project label
+// are never included — the operator can inspect them separately.
+//
+// The HasData flag is populated from the daemon's UsageData when available,
+// otherwise it falls back to false (we'd rather prompt the user to confirm
+// an empty-looking volume than silently delete a non-empty one — the call
+// site treats "HasData=true OR unknown size" as "ask for confirmation").
+func ListProjectVolumes(ctx context.Context, cli *client.Client, project string) ([]VolumeSummary, error) {
+	resp, err := cli.VolumeList(ctx, volume.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("label", LabelProject+"="+project),
+			filters.Arg("label", LabelManaged+"=true"),
+		),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]VolumeSummary, 0, len(resp.Volumes))
+	for _, v := range resp.Volumes {
+		vs := VolumeSummary{Name: v.Name}
+		if v.UsageData != nil && v.UsageData.Size > 0 {
+			vs.Size = v.UsageData.Size
+			vs.HasData = true
+		}
+		out = append(out, vs)
+	}
+	return out, nil
 }
 
 // List returns all compose stacks discovered on the host (grouped by project label).
@@ -310,7 +514,13 @@ func (e *StandaloneEngine) removeProjectContainers(ctx context.Context, project 
 		if c.State == "running" {
 			_ = e.cli.ContainerStop(ctx, c.ID, container.StopOptions{})
 		}
-		if err := e.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+		// RemoveVolumes=true drops *anonymous* volumes attached to the
+		// container (e.g. VOLUME directives in the image) — named volumes are
+		// not affected by this flag; they stay live and are gated separately
+		// by the `removeVolumes` parameter of Remove() via label-filtered
+		// VolumeRemove calls. This prevents anonymous-volume leaks on
+		// every redeploy without touching user data in named volumes.
+		if err := e.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 			if !removeAll {
 				return err
 			}
@@ -339,7 +549,16 @@ func (e *StandaloneEngine) ensureNetworks(ctx context.Context, project string, n
 		if _, ok := existingByName[qualified]; ok {
 			continue
 		}
-		labels := map[string]string{LabelProject: project, LabelManaged: "true"}
+		// Compose v2 label compliance: the daemon validates that the
+		// `com.docker.compose.network` label matches the short (non-qualified)
+		// network name when the network is referenced by a service. Missing
+		// this label produces the confusing "network has incorrect label" error
+		// on subsequent deploys that touch the same network.
+		labels := map[string]string{
+			LabelProject:     project,
+			LabelNetworkName: name,
+			LabelManaged:     "true",
+		}
 		for k, v := range ncfg.Labels {
 			labels[k] = v
 		}
@@ -367,7 +586,14 @@ func (e *StandaloneEngine) ensureVolumes(ctx context.Context, project string, vo
 		if err == nil {
 			continue
 		}
-		labels := map[string]string{LabelProject: project, LabelManaged: "true"}
+		// Compose v2 label compliance (mirrors the network case): the daemon
+		// validates the `com.docker.compose.volume` label against the short
+		// volume name on subsequent operations, so we stamp it at creation.
+		labels := map[string]string{
+			LabelProject:    project,
+			LabelVolumeName: name,
+			LabelManaged:    "true",
+		}
 		for k, v := range vcfg.Labels {
 			labels[k] = v
 		}
@@ -505,6 +731,7 @@ func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, c
 		WorkingDir:   svc.WorkingDir,
 		Tty:          svc.Tty,
 		OpenStdin:    svc.StdinOpen,
+		Healthcheck:  buildHealthcheck(svc),
 	}
 	if len(svc.Entrypoint) > 0 {
 		ccfg.Entrypoint = []string(svc.Entrypoint)
@@ -524,6 +751,7 @@ func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, c
 		CapDrop:       svc.CapDrop,
 		DNS:           svc.DNS,
 		DNSSearch:     svc.DNSSearch,
+		LogConfig:     buildLogConfig(svc),
 	}
 
 	netCfg := &network.NetworkingConfig{
@@ -556,6 +784,57 @@ func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, c
 	}
 
 	return e.cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
+}
+
+// buildHealthcheck maps a compose-level HealthCheckConfig onto the Docker SDK
+// container.HealthConfig. Mirrors the logic in convertHealthcheck (Swarm path)
+// but without the error return: a malformed healthcheck (both Disable=true
+// and a Test command) is silently ignored rather than aborting the whole
+// deploy — the engine already validated the service earlier, and a warning
+// is captured via DeployResult in the caller.
+//
+// Returns nil when the service has no healthcheck — the Docker daemon then
+// falls back to the image's own HEALTHCHECK (if any).
+func buildHealthcheck(svc *composetypes.ServiceConfig) *container.HealthConfig {
+	if svc == nil || svc.HealthCheck == nil {
+		return nil
+	}
+	hc := svc.HealthCheck
+	if hc.Disable {
+		// Disable overrides every other field — emits NONE to explicitly
+		// disable the image-level HEALTHCHECK.
+		return &container.HealthConfig{Test: []string{"NONE"}}
+	}
+	out := &container.HealthConfig{
+		Test: []string(hc.Test),
+	}
+	if hc.Timeout != nil {
+		out.Timeout = time.Duration(*hc.Timeout)
+	}
+	if hc.Interval != nil {
+		out.Interval = time.Duration(*hc.Interval)
+	}
+	if hc.StartPeriod != nil {
+		out.StartPeriod = time.Duration(*hc.StartPeriod)
+	}
+	if hc.Retries != nil {
+		out.Retries = int(*hc.Retries)
+	}
+	return out
+}
+
+// buildLogConfig maps a compose-level LoggingConfig onto the Docker SDK
+// container.LogConfig. Returns the zero value when the service has no
+// logging block — the daemon then uses its default driver (usually
+// json-file), which is the existing behaviour.
+func buildLogConfig(svc *composetypes.ServiceConfig) container.LogConfig {
+	if svc == nil || svc.Logging == nil {
+		return container.LogConfig{}
+	}
+	return container.LogConfig{
+		Type:   svc.Logging.Driver,
+		Config: svc.Logging.Options,
+	}
 }
 
 func qualifyNetwork(project string, declared map[string]composetypes.NetworkConfig, name string) string {

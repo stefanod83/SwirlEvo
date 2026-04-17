@@ -92,6 +92,7 @@ type Interface interface {
 	ComposeStackUpdate(ctx context.Context, stack *ComposeStack) error
 	ComposeStackUpdateStatus(ctx context.Context, id, status string) error
 	ComposeStackUpdateError(ctx context.Context, id, errorMessage string) error
+	ComposeStackUpdateWarnings(ctx context.Context, id string, warnings []string) error
 	ComposeStackDelete(ctx context.Context, id string) error
 
 	BackupGet(ctx context.Context, id string) (*Backup, error)

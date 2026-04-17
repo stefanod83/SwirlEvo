@@ -9,6 +9,9 @@ export interface ComposeStack {
     envFile?: string;
     status?: string;
     errorMessage?: string;
+    // lastWarnings carries non-fatal observations from the most recent
+    // deploy (e.g. compose fields silently ignored in standalone mode).
+    lastWarnings?: string[];
     containers?: number;
     running?: number;
     services?: number;
@@ -69,6 +72,19 @@ export interface ActionRef {
     hostId?: string;
     name?: string;
     removeVolumes?: boolean;
+    // force overrides the "volumes contain data" preservation check when
+    // set. The UI obtains it by showing a second confirmation dialog
+    // with the list returned by the first (unforced) attempt.
+    force?: boolean;
+}
+
+// RemoveResponse is returned by /compose-stack/remove. When the backend
+// refused the removal because non-empty volumes would be wiped, it sends
+// a success payload (code=0) carrying `volumesContainData=true` + the
+// list of affected volume names — the UI then asks for confirmation.
+export interface RemoveResponse {
+    volumesContainData?: boolean;
+    volumes?: string[];
 }
 
 export class ComposeStackApi {
@@ -105,7 +121,7 @@ export class ComposeStackApi {
     }
 
     remove(ref: ActionRef) {
-        return ajax.post<Result<Object>>('/compose-stack/remove', ref)
+        return ajax.post<RemoveResponse>('/compose-stack/remove', ref)
     }
 }
 

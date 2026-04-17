@@ -20,5 +20,15 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=golang /app/swirl .
 COPY --from=golang /app/config config/
+# SWIRL_CONTAINER_ID is the operator-visible hook for Swirl's self-deploy
+# protection. When Swirl is running inside a Docker container you can
+# optionally set this to the container's ID so a stack deploy that would
+# replace the Swirl container is refused up-front. Leaving it empty falls
+# back to /proc/self/cgroup parsing + os.Hostname(). Typical compose
+# snippet:
+#
+#   environment:
+#     SWIRL_CONTAINER_ID: "${HOSTNAME}"
+ENV SWIRL_CONTAINER_ID=""
 EXPOSE 8001
 ENTRYPOINT ["/app/swirl"]

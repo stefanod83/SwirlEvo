@@ -78,10 +78,17 @@ func (d *Docker) ContainerInspect(ctx context.Context, node, id string) (ctr con
 }
 
 // ContainerRemove remove a container.
-func (d *Docker) ContainerRemove(ctx context.Context, node, id string) (err error) {
+//
+// `removeAnonymousVolumes` maps to `RemoveOptions.RemoveVolumes` on the Docker
+// SDK: when true, *anonymous* volumes declared by the container (e.g. VOLUME
+// directives baked into the image) are deleted together with the container.
+// Named volumes are NEVER removed by this flag — that's consistent with the
+// `docker rm -v` CLI semantics and intentional: named volumes are managed
+// separately (e.g. compose stack removal).
+func (d *Docker) ContainerRemove(ctx context.Context, node, id string, removeAnonymousVolumes bool) (err error) {
 	var c *client.Client
 	if c, err = d.agent(node); err == nil {
-		err = c.ContainerRemove(ctx, id, container.RemoveOptions{})
+		err = c.ContainerRemove(ctx, id, container.RemoveOptions{RemoveVolumes: removeAnonymousVolumes})
 	}
 	return
 }

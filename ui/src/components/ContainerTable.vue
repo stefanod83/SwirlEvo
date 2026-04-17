@@ -16,9 +16,9 @@
 </template>
 
 <script setup lang="ts">
-import { h, computed } from "vue";
+import { h, computed, ref } from "vue";
 import {
-  NDataTable, NButton, NButtonGroup, NIcon, NTooltip,
+  NDataTable, NButton, NButtonGroup, NIcon, NTooltip, NCheckbox, NSpace, NText,
   useDialog, useMessage,
 } from "naive-ui";
 import {
@@ -66,12 +66,32 @@ async function runAction(fn: () => Promise<any>, msg: string) {
 }
 
 function confirmDelete(c: Container) {
+  // Dedicated reactive flag per dialog — the checkbox writes to it and the
+  // positive-click handler reads it at submit time, so unchecked stays the
+  // safe default and the user has to opt in explicitly to dropping
+  // anonymous volumes. Named volumes are never touched by this flag; see
+  // docker.ContainerRemove comment.
+  const removeVolumes = ref(false)
   dialog.warning({
     title: t('buttons.delete'),
-    content: t('prompts.delete'),
+    content: () => h(NSpace, { vertical: true, size: 8 }, {
+      default: () => [
+        h(NText, null, { default: () => t('prompts.delete') }),
+        h(NCheckbox, {
+          checked: removeVolumes.value,
+          'onUpdate:checked': (v: boolean) => { removeVolumes.value = v },
+        }, { default: () => t('prompts.remove_anonymous_volumes') }),
+        h(NText, { depth: 3, style: 'font-size:12px' }, {
+          default: () => t('tips.remove_anonymous_volumes'),
+        }),
+      ],
+    }),
     positiveText: t('buttons.confirm'),
     negativeText: t('buttons.cancel'),
-    onPositiveClick: () => runAction(() => containerApi.delete(props.node, c.id, c.name), t('buttons.delete')),
+    onPositiveClick: () => runAction(
+      () => containerApi.delete(props.node, c.id, c.name, removeVolumes.value),
+      t('buttons.delete'),
+    ),
   })
 }
 

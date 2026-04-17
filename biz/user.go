@@ -174,6 +174,13 @@ func (b *userBiz) ModifyPassword(ctx context.Context, oldPwd, newPwd string, use
 		return errors.Format("user not found: %s", user.ID())
 	}
 
+	// Only internal users own their password locally. LDAP and
+	// Keycloak/OIDC users authenticate against their upstream provider,
+	// so changing the password here would be silently ineffective.
+	if u.Type != UserTypeInternal {
+		return errors.Coded(misc.ErrPasswordNotModifiable, "password is managed by an external identity provider and cannot be modified here")
+	}
+
 	if !passwd.Validate(oldPwd, u.Password, u.Salt) {
 		return errors.Coded(misc.ErrOldPasswordIncorrect, "current password is incorrect")
 	}

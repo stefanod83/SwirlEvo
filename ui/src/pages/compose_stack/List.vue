@@ -88,6 +88,34 @@ async function runAction(fn: () => Promise<any>, msg: string) {
   catch (e: any) { message.error(e?.message || String(e)) }
 }
 
+// removeWithForceConfirm encapsulates the two-step delete:
+//   1. call remove() without force — backend either deletes or returns
+//      { volumesContainData: true, volumes: [...] };
+//   2. if backend responded with that flag, open a second dialog that
+//      lists the volume names and calls remove() with force=true.
+async function removeWithForceConfirm(base: any, removeVolumes: boolean) {
+  try {
+    const r = await composeStackApi.remove({ ...base, removeVolumes, force: false })
+    if (r.data?.volumesContainData && (r.data?.volumes?.length || 0) > 0) {
+      dialog.error({
+        title: t('messages.volumes_contain_data_confirm'),
+        content: (r.data?.volumes || []).join('\n'),
+        positiveText: t('buttons.force_delete') || 'Force delete',
+        negativeText: t('buttons.cancel'),
+        onPositiveClick: () => runAction(
+          () => composeStackApi.remove({ ...base, removeVolumes, force: true }),
+          t('buttons.delete'),
+        ),
+      })
+      return
+    }
+    message.success(t('buttons.delete'))
+    await fetchData()
+  } catch (e: any) {
+    message.error(e?.message || String(e))
+  }
+}
+
 async function downloadStack(id: string, name: string) {
   try {
     const r = await composeStackApi.find(id)
@@ -126,14 +154,23 @@ async function downloadStack(id: string, name: string) {
 
 function confirmRemove(s: ComposeStackSummary) {
   const isExternal = !s.id
+  const base = isExternal ? { hostId: s.hostId, name: s.name } : { id: s.id }
+  const removeVolumes = ref(false)
   dialog.warning({
     title: t('buttons.delete'),
-    content: t('prompts.delete'),
+    content: () => h('div', null, [
+      h('p', { style: 'margin:0 0 8px 0' }, t('prompts.delete')),
+      h('label', { style: 'display:flex; align-items:center; gap:6px;' }, [
+        h('input', {
+          type: 'checkbox',
+          onChange: (e: Event) => (removeVolumes.value = (e.target as HTMLInputElement).checked),
+        }),
+        h('span', null, t('fields.remove_volumes') || 'Also remove named volumes'),
+      ]),
+    ]) as any,
     positiveText: t('buttons.confirm'),
     negativeText: t('buttons.cancel'),
-    onPositiveClick: () => runAction(() => composeStackApi.remove(
-      isExternal ? { hostId: s.hostId, name: s.name, removeVolumes: false } : { id: s.id, removeVolumes: false }
-    ), t('buttons.delete')),
+    onPositiveClick: () => removeWithForceConfirm(base, removeVolumes.value),
   })
 }
 

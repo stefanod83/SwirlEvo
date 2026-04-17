@@ -109,6 +109,10 @@ func containerDelete(b biz.ContainerBiz) web.HandlerFunc {
 		Node string `json:"node"`
 		ID   string `json:"id"`
 		Name string `json:"name"`
+		// Volumes (default false) → `docker rm -v`: also drops anonymous
+		// volumes. Preserved as opt-in so existing callers keep the safe
+		// behaviour (no data loss).
+		Volumes bool `json:"volumes"`
 	}
 	return func(c web.Context) (err error) {
 		args := &Args{}
@@ -116,7 +120,7 @@ func containerDelete(b biz.ContainerBiz) web.HandlerFunc {
 			ctx, cancel := misc.Context(defaultTimeout)
 			defer cancel()
 
-			err = b.Delete(ctx, args.Node, args.ID, args.Name, c.User())
+			err = b.Delete(ctx, args.Node, args.ID, args.Name, args.Volumes, c.User())
 		}
 		return ajax(c, err)
 	}
