@@ -34,11 +34,12 @@
       :row-key="row => row.name"
       size="small"
       :columns="columns"
-      :data="state.data"
+      :data="paginatedData"
       :pagination="pagination"
       :loading="state.loading"
-      @update:page="fetchData"
+      @update:page="changePage"
       @update-page-size="changePageSize"
+      @update:sorter="handleSorterChange"
       scroll-x="max-content"
     />
   </n-space>
@@ -213,7 +214,8 @@ const columns = [
     render: (e: Event) => renderTime(e.time),
   },
 ];
-const { state, pagination, fetchData, changePageSize } = useDataTable(eventApi.search, filter)
+const { state, pagination, fetchData, changePage, changePageSize, paginatedData, handleSorterChange, setSortColumns } = useDataTable(eventApi.search, filter, { remote: false })
+setSortColumns(columns)
 
 function renderObject(e: Event) {
   switch (e.type) {

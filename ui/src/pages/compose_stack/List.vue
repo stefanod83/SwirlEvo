@@ -29,11 +29,12 @@
         :row-key="(row: any) => row.hostId + '|' + row.name"
         size="small"
         :columns="columns"
-        :data="state.data"
+        :data="paginatedData"
         :pagination="pagination"
         :loading="state.loading"
-        @update:page="fetchData"
+        @update:page="changePage"
         @update-page-size="changePageSize"
+        @update:sorter="handleSorterChange"
         scroll-x="max-content"
       />
     </template>
@@ -243,7 +244,8 @@ const columns = [
     },
   },
 ];
-const { state, pagination, fetchData, changePageSize } = useDataTable(composeStackApi.search, filter, false)
+const { state, pagination, fetchData, changePage, changePageSize, paginatedData, handleSorterChange, setSortColumns } = useDataTable(composeStackApi.search, filter, { remote: false, autoFetch: false })
+setSortColumns(columns)
 
 watch(selectedHostId, (v) => {
   filter.hostId = v || ''

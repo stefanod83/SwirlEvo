@@ -21,11 +21,12 @@
       :row-key="(c: Secret) => c.id"
       size="small"
       :columns="columns"
-      :data="state.data"
+      :data="paginatedData"
       :pagination="pagination"
       :loading="state.loading"
-      @update:page="fetchData"
+      @update:page="changePage"
       @update-page-size="changePageSize"
+      @update:sorter="handleSorterChange"
       scroll-x="max-content"
     />
   </n-space>
@@ -98,10 +99,12 @@ const columns = [
     },
   },
 ];
-const { state, pagination, fetchData, changePageSize } = useDataTable(secretApi.search, filter)
+const { state, pagination, fetchData, changePage, changePageSize, paginatedData, handleSorterChange, setSortColumns } = useDataTable(secretApi.search, filter, { remote: false })
+setSortColumns(columns)
 
-async function deleteSecret(id: string, index: number) {
+async function deleteSecret(id: string, _index: number) {
   await secretApi.delete(id);
-  state.data.splice(index, 1)
+  const i = (state.data as Secret[]).findIndex(c => c.id === id)
+  if (i >= 0) state.data.splice(i, 1)
 }
 </script>

@@ -1,22 +1,31 @@
 <template>
+  <!--
+    ContainerTable accepts the FULL dataset and handles sort + pagination
+    internally so that sort is global across every page, not just the
+    visible rows. The parent must pass `data` containing every container
+    (no external pagination) and an optional `pagination` prop to render
+    the page picker. The older "remote" external-pagination pattern has
+    been removed — see `ui/src/utils/data-table.ts` and
+    `feedback_naive_ui_remote_sort.md` for the rationale.
+  -->
   <n-data-table
     :row-key="(row: any) => row.id"
     size="small"
     :columns="allColumns"
-    :data="data"
-    :pagination="pagination"
+    :data="paginatedData"
+    :pagination="internalPagination"
     :loading="loading"
-    remote
     :checked-row-keys="selectable ? checkedKeys : undefined"
     @update:checked-row-keys="(k: any) => $emit('update:checkedKeys', k)"
-    @update:page="(p: number) => $emit('update:page', p)"
-    @update-page-size="(s: number) => $emit('update-page-size', s)"
+    @update:page="onPageChange"
+    @update-page-size="onPageSizeChange"
+    @update:sorter="handleSorterChange"
     scroll-x="max-content"
   />
 </template>
 
 <script setup lang="ts">
-import { h, computed, ref } from "vue";
+import { h, computed, ref, watch } from "vue";
 import {
   NDataTable, NButton, NButtonGroup, NIcon, NTooltip, NCheckbox, NSpace, NText,
   useDialog, useMessage,
@@ -103,6 +112,67 @@ const allColumns = computed(() => {
   const sel = props.selectable ? [{ type: 'selection' as const, fixed: 'left' as const }] : []
   return [...sel, ...columns.value]
 })
+
+// Global client-side sort over the FULL dataset passed in via `props.data`.
+// Because this component is the sole owner of the column definitions, it is
+// also the owner of the sort state and the pagination slice.
+const sorterState = ref<{ columnKey: string | number, order: 'ascend' | 'descend' | false } | null>(null)
+function handleSorterChange(s: any) {
+  if (!s || !s.order) { sorterState.value = null }
+  else { sorterState.value = { columnKey: s.columnKey, order: s.order } }
+  // Reset to page 1 so the user sees the new top of the ordering.
+  localPage.value = 1
+}
+const sortedData = computed(() => {
+  const s = sorterState.value
+  if (!s || !s.order) return props.data
+  const col = columns.value.find((c: any) => c && c.key === s.columnKey)
+  const fn: any = col?.sorter
+  if (typeof fn !== 'function') return props.data
+  const copy = [...props.data]
+  copy.sort((a, b) => {
+    const r = fn(a, b)
+    return s.order === 'ascend' ? r : -r
+  })
+  return copy
+})
+
+// Pagination state. If the parent provides a `pagination` prop we mirror
+// its page/pageSize into a local ref so sort changes can reset it without
+// mutating the parent's reactive object. If no `pagination` is given, we
+// show the entire dataset at once (no page picker).
+const localPage = ref(1)
+const internalPagination = computed(() => {
+  if (!props.pagination) return false as false
+  const pageSize = props.pagination.pageSize || 10
+  const itemCount = sortedData.value.length
+  return {
+    ...props.pagination,
+    page: localPage.value,
+    pageSize,
+    itemCount,
+    pageCount: Math.max(1, Math.ceil(itemCount / pageSize)),
+  }
+})
+const paginatedData = computed(() => {
+  if (!props.pagination) return sortedData.value
+  const pageSize = props.pagination.pageSize || 10
+  const start = (localPage.value - 1) * pageSize
+  return sortedData.value.slice(start, start + pageSize)
+})
+function onPageChange(p: number) {
+  localPage.value = p
+  emit('update:page', p)
+}
+function onPageSizeChange(s: number) {
+  localPage.value = 1
+  if (props.pagination) props.pagination.pageSize = s
+  emit('update-page-size', s)
+}
+// Reset page when the dataset changes (e.g. after a filter change). Avoids
+// a "ghost empty page" feeling where the user lands on page 3 of an empty
+// result set.
+watch(() => props.data, () => { localPage.value = 1 })
 
 const columns = computed(() => {
   const base: any[] = [

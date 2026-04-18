@@ -110,7 +110,28 @@ function loginWithKeycloak() {
   window.location.href = '/api/auth/keycloak/login?redirect=' + encodeURIComponent(redirect)
 }
 
-onMounted(() => { checkState(); loadProviders() });
+// Defensive: if the user is already authenticated (e.g. Keycloak SSO session
+// silently refreshed the session token on the previous roundtrip, or the user
+// hit /login while still holding a valid token) skip the form entirely and go
+// straight to the target. Without this, the user sees the login page even
+// though no credentials are required — which looks like "Keycloak failed"
+// when the real state is "already logged in". This also plays safe when
+// browsers retain back/forward cache and restore the login page after a
+// successful OAuth complete.
+function redirectIfAuthenticated() {
+  if (store.state.user?.token) {
+    const redirect = decodeURIComponent(<string>route.query.redirect || "/")
+    router.replace({ path: redirect })
+    return true
+  }
+  return false
+}
+
+onMounted(() => {
+  if (redirectIfAuthenticated()) return
+  checkState()
+  loadProviders()
+});
 </script>
 
 <style lang="scss" scoped>

@@ -23,11 +23,12 @@
       :row-key="(t: Task) => t.id"
       size="small"
       :columns="columns"
-      :data="state.data"
+      :data="paginatedData"
       :pagination="pagination"
       :loading="state.loading"
-      @update:page="fetchData"
+      @update:page="changePage"
       @update-page-size="changePageSize"
+      @update:sorter="handleSorterChange"
       scroll-x="max-content"
     />
   </n-space>
@@ -97,5 +98,6 @@ const columns = [
     sorter: (a: Task, b: Task) => (a.createdAt || '').localeCompare(b.createdAt || ''),
   },
 ];
-const { state, pagination, fetchData, changePageSize } = useDataTable(taskApi.search, filter)
+const { state, pagination, fetchData, changePage, changePageSize, paginatedData, handleSorterChange, setSortColumns } = useDataTable(taskApi.search, filter, { remote: false })
+setSortColumns(columns)
 </script>

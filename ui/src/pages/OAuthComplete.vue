@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import { useStore } from "vuex";
 import { Mutations } from "@/store/mutations";
@@ -23,28 +23,44 @@ onMounted(async () => {
   const token = params.get('token') || ''
   const name = params.get('name') || ''
   const permsStr = params.get('perms') || ''
-  const redirect = params.get('redirect') || '/'
+  // Guard against empty string landing here (some proxies forward ?redirect=
+  // as an empty value) — fall back to home.
+  const redirectParam = params.get('redirect') || ''
+  const redirect = redirectParam && redirectParam !== '/oauth-complete' ? redirectParam : '/'
   const idToken = params.get('idToken') || ''
 
   if (!token) {
+    // Fragment was stripped (some proxies drop it from 302 redirects) or
+    // upstream callback failed. Fall through to the login page so the user
+    // can retry — do NOT clear any existing session silently.
     message.value = t('texts.action_failed') || 'Login failed'
     setTimeout(() => router.push({ name: 'login' }), 1200)
     return
   }
 
   const perms = permsStr ? permsStr.split(',').filter(Boolean) : []
+  // Commit first so the axios interceptor and router guard see the token
+  // on the very next tick.
   store.commit(Mutations.SetUser, { name, token, perms })
   if (idToken) {
     try { localStorage.setItem('kc_id_token', idToken) } catch { /* noop */ }
   }
   // Clean hash before navigation so the token isn't left in browser history.
   history.replaceState(null, '', window.location.pathname)
-  // Small delay to let the Vuex store + axios interceptor pick up the
-  // new token before the target page fires its first API call. Without
-  // this, the initial request can race ahead without the auth header
-  // and trigger a 403 redirect.
-  await new Promise(r => setTimeout(r, 100))
-  router.replace({ path: redirect })
+  // Wait one Vue tick so the reactive state is flushed before we navigate.
+  // Previously this used a fixed 100ms setTimeout — brittle on slow devices
+  // and excessive on fast ones. nextTick is deterministic and enough because
+  // the Vuex commit is synchronous and the axios interceptor reads the store
+  // on each request (no subscription needed).
+  await nextTick()
+  // Use router.replace so /oauth-complete is never retained in history.
+  // On success we prefer name-based navigation to '/' to avoid any path
+  // matching quirks; for a custom redirect we use the path as-is.
+  if (redirect === '/' || redirect === '') {
+    router.replace({ name: 'home' })
+  } else {
+    router.replace({ path: redirect })
+  }
 })
 </script>
 

@@ -51,13 +51,14 @@
         :row-key="(row: any) => row.name"
         size="small"
         :columns="columns"
-        :data="state.data"
+        :data="paginatedData"
         :pagination="pagination"
         :loading="state.loading"
         :checked-row-keys="checkedNames"
         @update:checked-row-keys="(k: any) => checkedNames = k"
-        @update:page="fetchData"
+        @update:page="changePage"
         @update-page-size="changePageSize"
+        @update:sorter="handleSorterChange"
         scroll-x="max-content"
       />
     </template>
@@ -150,11 +151,15 @@ const columns: any[] = [
     },
   },
 ];
-const { state, pagination, fetchData, changePageSize } = useDataTable(volumeApi.search, filter, false)
+const { state, pagination, fetchData, changePage, changePageSize, paginatedData, handleSorterChange, setSortColumns } = useDataTable(volumeApi.search, filter, { remote: false, autoFetch: false })
+setSortColumns(columns)
 
-async function remove(name: string, index: number) {
+async function remove(name: string, _index: number) {
   await volumeApi.delete(filter.node, name);
-  state.data.splice(index, 1)
+  // When a client-side sort is active, `_index` refers to the SORTED view,
+  // not state.data. Splice by identity instead.
+  const i = (state.data as Volume[]).findIndex(v => v.name === name)
+  if (i >= 0) state.data.splice(i, 1)
 }
 
 async function bulkDelete() {

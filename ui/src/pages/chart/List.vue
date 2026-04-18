@@ -42,11 +42,12 @@
       :row-key="(r: Chart) => r.id"
       size="small"
       :columns="columns"
-      :data="state.data"
+      :data="paginatedData"
       :pagination="pagination"
       :loading="state.loading"
-      @update:page="fetchData"
+      @update:page="changePage"
       @update-page-size="changePageSize"
+      @update:sorter="handleSorterChange"
       scroll-x="max-content"
     />
   </n-space>
@@ -159,7 +160,8 @@ const columns = [
     },
   },
 ];
-const { state, pagination, fetchData, changePageSize } = useDataTable(chartApi.search, filter)
+const { state, pagination, fetchData, changePage, changePageSize, paginatedData, handleSorterChange, setSortColumns } = useDataTable(chartApi.search, filter, { remote: false, autoFetch: false })
+setSortColumns(columns)
 
 function importChart() {
   var text = ''
@@ -196,9 +198,10 @@ function exportChart(c: Chart) {
   })
 }
 
-async function deleteChart(c: Chart, index: number) {
+async function deleteChart(c: Chart, _index: number) {
   await chartApi.delete(c.id, c.title);
-  state.data.splice(index, 1)
+  const i = (state.data as Chart[]).findIndex(x => x.id === c.id)
+  if (i >= 0) state.data.splice(i, 1)
 }
 
 onMounted(fetchData);

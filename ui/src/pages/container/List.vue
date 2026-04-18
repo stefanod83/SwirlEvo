@@ -85,7 +85,6 @@
         :checked-keys="checkedIds"
         @update:checked-keys="(k: string[]) => checkedIds = k"
         @refresh="fetchData"
-        @update:page="fetchData"
         @update-page-size="changePageSize"
       />
     </template>
@@ -138,7 +137,7 @@ const statusOptions = [
   { label: 'Paused', value: 'paused' },
 ]
 
-const { state, pagination, fetchData: fetchDataRaw, changePageSize } = useDataTable(containerApi.search, filter, false)
+const { state, pagination, fetchData: fetchDataRaw, changePageSize } = useDataTable(containerApi.search, filter, { remote: false, autoFetch: false })
 
 function fetchData(page?: number) {
   checkedIds.value = []

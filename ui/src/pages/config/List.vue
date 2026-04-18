@@ -21,11 +21,12 @@
       :row-key="(c: Config) => c.id"
       size="small"
       :columns="columns"
-      :data="state.data"
+      :data="paginatedData"
       :pagination="pagination"
       :loading="state.loading"
-      @update:page="fetchData"
+      @update:page="changePage"
       @update-page-size="changePageSize"
+      @update:sorter="handleSorterChange"
       scroll-x="max-content"
     />
   </n-space>
@@ -97,10 +98,12 @@ const columns = [
     },
   },
 ];
-const { state, pagination, fetchData, changePageSize } = useDataTable(configApi.search, filter)
+const { state, pagination, fetchData, changePage, changePageSize, paginatedData, handleSorterChange, setSortColumns } = useDataTable(configApi.search, filter, { remote: false })
+setSortColumns(columns)
 
-async function deleteConfig(id: string, index: number) {
+async function deleteConfig(id: string, _index: number) {
   await configApi.delete(id);
-  state.data.splice(index, 1)
+  const i = (state.data as Config[]).findIndex(c => c.id === id)
+  if (i >= 0) state.data.splice(i, 1)
 }
 </script>

@@ -35,11 +35,12 @@
       :row-key="row => row.name"
       size="small"
       :columns="columns"
-      :data="state.data"
+      :data="paginatedData"
       :pagination="pagination"
       :loading="state.loading"
-      @update:page="fetchData"
+      @update:page="changePage"
       @update-page-size="changePageSize"
+      @update:sorter="handleSorterChange"
       scroll-x="max-content"
     />
   </n-space>
@@ -130,18 +131,20 @@ const columns = [
     },
   },
 ];
-const { state, pagination, fetchData, changePageSize } = useDataTable(userApi.search, () => {
+const { state, pagination, fetchData, changePage, changePageSize, paginatedData, handleSorterChange, setSortColumns } = useDataTable(userApi.search, () => {
   return { ...args, filter: route.query.filter }
-})
+}, { remote: false })
+setSortColumns(columns)
 
 async function setStatus(u: User, status: number) {
   await userApi.setStatus({ id: u.id, status });
   u.status = status
 }
 
-async function remove(u: User, index: number) {
+async function remove(u: User, _index: number) {
   await userApi.delete(u.id, u.name);
-  state.data.splice(index, 1)
+  const i = (state.data as User[]).findIndex(x => x.id === u.id)
+  if (i >= 0) state.data.splice(i, 1)
 }
 
 watch(() => route.query.filter, (newValue: any, oldValue: any) => {

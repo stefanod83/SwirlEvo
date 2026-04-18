@@ -51,13 +51,14 @@
         :row-key="(row: any) => row.id"
         size="small"
         :columns="columns"
-        :data="state.data"
+        :data="paginatedData"
         :pagination="pagination"
         :loading="state.loading"
         :checked-row-keys="checkedIds"
         @update:checked-row-keys="(k: any) => checkedIds = k"
-        @update:page="fetchData"
+        @update:page="changePage"
         @update-page-size="changePageSize"
+        @update:sorter="handleSorterChange"
         scroll-x="max-content"
       />
     </template>
@@ -177,10 +178,13 @@ function actionButton(type: 'default' | 'error' | 'warning' | 'success' | 'info'
   })
 }
 
-async function doDelete(i: Image, index: number, force: boolean) {
+async function doDelete(i: Image, _index: number, force: boolean) {
   try {
     await imageApi.delete(filter.node, i.id, "", force)
-    state.data.splice(index, 1)
+    // `_index` refers to the sorted view when a client-side sort is active,
+    // so splice by identity instead.
+    const idx = (state.data as Image[]).findIndex(x => x.id === i.id)
+    if (idx >= 0) state.data.splice(idx, 1)
     message.success(t('buttons.delete'))
   } catch (e: any) {
     message.error(e?.message || String(e))
@@ -264,7 +268,8 @@ const columns = [
     },
   },
 ];
-const { state, pagination, fetchData, changePageSize } = useDataTable(imageApi.search, filter, false)
+const { state, pagination, fetchData, changePage, changePageSize, paginatedData, handleSorterChange, setSortColumns } = useDataTable(imageApi.search, filter, { remote: false, autoFetch: false })
+setSortColumns(columns)
 
 async function bulkDelete(force: boolean) {
   if (!checkedIds.value.length) return
