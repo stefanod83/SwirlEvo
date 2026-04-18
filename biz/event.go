@@ -32,6 +32,7 @@ const (
 	EventTypeHost      EventType = "Host"
 	EventTypeBackup      EventType = "Backup"
 	EventTypeVaultSecret EventType = "VaultSecret"
+	EventTypeSelfDeploy  EventType = "SelfDeploy"
 )
 
 type EventAction string
@@ -59,6 +60,12 @@ const (
 	EventActionDownload   EventAction = "Download"
 	EventActionMigrate    EventAction = "Migrate"
 	EventActionCleanup    EventAction = "Cleanup"
+	// Self-deploy lifecycle actions. Emitted by SelfDeployBiz.TriggerDeploy
+	// (Start at the moment the sidekick is spawned) and by the sidekick
+	// itself (Success/Failure) — the latter wires in during Phase 4.
+	EventActionSelfDeployStart   EventAction = "Start"
+	EventActionSelfDeploySuccess EventAction = "Success"
+	EventActionSelfDeployFailure EventAction = "Failure"
 )
 
 type EventBiz interface {
@@ -81,6 +88,7 @@ type EventBiz interface {
 	CreateHost(action EventAction, id, name string, user web.User)
 	CreateBackup(action EventAction, id, name string, user web.User)
 	CreateVaultSecret(action EventAction, id, name string, user web.User)
+	CreateSelfDeploy(action EventAction, jobID, imageTag string, user web.User)
 }
 
 func NewEvent(d dao.Interface) EventBiz {
@@ -220,4 +228,35 @@ func (b *eventBiz) CreateBackup(action EventAction, id, name string, user web.Us
 func (b *eventBiz) CreateVaultSecret(action EventAction, id, name string, user web.User) {
 	args := data.Map{"id": id, "name": name}
 	b.create(EventTypeVaultSecret, action, args, user)
+}
+
+// CreateSelfDeploy records a self-deploy lifecycle transition. `jobID` is
+// the uuid that ties the three events (start → success|failure) together
+// in the audit trail; `imageTag` is the target image reference so
+// operators can audit what was attempted without joining on external
+// state. Either may be empty (Failure before PrepareJob fully resolved
+// the target, for instance) — the args map elides missing keys.
+//
+// Emission model (Phase 7 hardening):
+//   - `Start` is emitted by the main Swirl's TriggerDeploy right after
+//     the sidekick container has been spawned successfully (the sidekick
+//     may still fail to run, but the deploy *intent* has been recorded).
+//   - `Success` / `Failure` are emitted by the main Swirl's Status
+//     handler when it polls state.json and observes a terminal phase
+//     with EventPublished=false. The sidekick has no DB access so it
+//     cannot emit these directly; main-side publishing with an
+//     idempotency flag on state.json avoids any event duplication
+//     regardless of how many times Status is polled.
+//   - The `user` argument for `Success` / `Failure` events is nil
+//     (the sidekick runs without a logged-in session); this is
+//     supported by eventBiz.create which nil-checks web.User.
+func (b *eventBiz) CreateSelfDeploy(action EventAction, jobID, imageTag string, user web.User) {
+	args := data.Map{}
+	if jobID != "" {
+		args["jobId"] = jobID
+	}
+	if imageTag != "" {
+		args["imageTag"] = imageTag
+	}
+	b.create(EventTypeSelfDeploy, action, args, user)
 }

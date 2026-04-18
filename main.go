@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	_ "github.com/cuigh/swirl/api"
 	"github.com/cuigh/swirl/backup"
 	"github.com/cuigh/swirl/biz"
+	deployagent "github.com/cuigh/swirl/cmd/deploy_agent"
 	_ "github.com/cuigh/swirl/dao/bolt"
 	_ "github.com/cuigh/swirl/dao/mongo"
 	"github.com/cuigh/swirl/misc"
@@ -34,6 +36,16 @@ var (
 )
 
 func main() {
+	// Subcommand dispatch: intercept `./swirl deploy-agent ...` before
+	// auxo's flag parser sees the arguments. The sidekick is a one-shot
+	// sibling process that drives the self-deploy lifecycle (stop old →
+	// pull → start new → health-check) without racing the primary Swirl.
+	// Keeping the sniff in main() means the default `./swirl` invocation
+	// path is unchanged — `os.Exit` below never runs for the server case.
+	if len(os.Args) > 1 && os.Args[1] == "deploy-agent" {
+		os.Exit(deployagent.Run())
+	}
+
 	app.Name = "Swirl"
 	app.Version = "2.0.0rc1"
 	app.Desc = "A web management UI for Docker, focused on swarm cluster"

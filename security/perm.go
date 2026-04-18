@@ -37,6 +37,11 @@ var Resources = map[string]uint64{
 	"vault": 1 << 19,
 	// vault_secret catalog — stores references to KVv2 entries, never values.
 	"vault_secret": 1 << 20,
+	// self_deploy: feature that lets Swirl redeploy itself via a sidekick
+	// container. Separate resource (not folded into `setting`) so the
+	// edit/execute split is granular: ops can review config without gaining
+	// the ability to actually trigger a deploy.
+	"self_deploy": 1 << 21,
 }
 
 // Actions holds all actions requiring authorization. Up to 24 actions are supported.
@@ -91,6 +96,7 @@ var Perms = map[string][]string{
 	// vault.admin guards Vault connection settings + test endpoint.
 	"vault":        {"admin"},
 	"vault_secret": {"view", "edit", "delete", "cleanup"},
+	"self_deploy":  {"view", "edit", "execute"},
 }
 
 type Authorizer struct {

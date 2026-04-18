@@ -801,5 +801,90 @@ export default {
         "env_file_subtitle": "Variables defined here are substituted into the compose YAML via ${VAR} at deploy time. One KEY=VALUE per line.",
         "env_file_placeholder": "# One variable per line\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
+    "events": {
+        "type": {
+            "self_deploy": "Self-deploy"
+        },
+        "action": {
+            "self_deploy_start": "Start",
+            "self_deploy_success": "Success",
+            "self_deploy_failure": "Failure"
+        }
+    },
+    "self_deploy": {
+        "title": "Self-deploy",
+        "subtitle": "Redeploy Swirl itself by rendering a compose template and delegating the swap to a short-lived sidekick container.",
+        "enabled": "Enabled",
+        "template": "Compose template",
+        "template_hint": "Go text/template. Available placeholders: {{.ImageTag}}, {{.ExposePort}}, {{.RecoveryPort}}, {{.VolumeData}}, {{.NetworkName}}, {{.ContainerName}}, {{range .TraefikLabels}}{{.}}{{end}}, {{range $k, $v := .ExtraEnv}}{{$k}}={{$v}}{{end}}.",
+        "placeholders": {
+            "title": "Placeholders",
+            "image_tag": "Target image",
+            "expose_port": "Expose port",
+            "recovery_port": "Recovery port",
+            "recovery_allow": "Recovery allow-list",
+            "recovery_allow_hint": "CIDR list, one per line. Loopback (127.0.0.1/32) is the safe default.",
+            "traefik_labels": "Traefik labels",
+            "traefik_labels_hint": "One label per line, emitted verbatim (e.g. traefik.enable=true).",
+            "volume_data": "Data volume",
+            "network_name": "Network name",
+            "container_name": "Container name",
+            "extra_env": "Extra environment",
+            "extra_env_hint": "One KEY=VALUE per line. Merged into the service environment."
+        },
+        "advanced": {
+            "title": "Advanced",
+            "auto_rollback": "Automatic rollback on failure",
+            "deploy_timeout": "Deploy timeout (seconds)",
+            "show_template": "Advanced: edit raw template",
+            "template_hint": "Edit the compose template directly. Most users don't need this — the fields below generate a valid template automatically."
+        },
+        "actions": {
+            "preview": "Preview YAML",
+            "deploy": "Deploy now",
+            "save": "Save",
+            "confirm_deploy_title": "Redeploy Swirl now?",
+            "confirm_deploy_body": "This will stop the current Swirl container, pull the target image, and start the new one. Your session will disconnect for approximately 60 seconds. If the deploy fails, the sidekick will expose a recovery UI on the configured port.",
+            "confirm_ack": "I understand this will interrupt active sessions"
+        },
+        "status": {
+            "title": "Status",
+            "idle": "Idle",
+            "pending": "Pending",
+            "stopping": "Stopping primary",
+            "pulling": "Pulling image",
+            "starting": "Starting new container",
+            "health_check": "Health check",
+            "success": "Success",
+            "failed": "Failed",
+            "rolled_back": "Rolled back",
+            "recovery": "Recovery mode active",
+            "recovery_url": "Recovery UI",
+            "job_id": "Job id",
+            "log_tail": "Recent logs",
+            "no_logs": "No logs yet.",
+            "reconnecting": "Sidekick started. Your session will close shortly. Attempting to reconnect…",
+            "reconnect_failed": "Reconnect timed out. Open the recovery UI to diagnose."
+        },
+        "progress": {
+            "title": "Self-deploy in progress",
+            "failed_to_connect": "Cannot reach the sidekick UI. Open {url} in a new tab to see progress.",
+            "timeout": "Deploy is taking longer than expected. Check the live view for details."
+        },
+        "warnings": {
+            "allow_any_ip": "Security warning: the recovery allow-list contains 0.0.0.0/0 — the Recovery UI will accept connections from ANY source.",
+            "disabled_cannot_deploy": "Self-deploy is disabled. Enable it and save the configuration before triggering a deploy."
+        },
+        "errors": {
+            "swarm_blocked": "Self-deploy is only available in standalone mode.",
+            "no_self_id": "Swirl cannot identify its own container. Set SWIRL_CONTAINER_ID or run Swirl inside Docker.",
+            "lock_held": "A self-deploy is already in progress. Wait for it to complete or inspect the sidekick container.",
+            "template_invalid": "The compose template failed to render. Fix the error and save again.",
+            "save_failed": "Failed to save self-deploy configuration.",
+            "preview_failed": "Failed to render the preview.",
+            "deploy_failed": "Failed to start the self-deploy sidekick.",
+            "status_failed": "Failed to read deploy status."
+        }
+    },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork). All rights reserved.",
 }

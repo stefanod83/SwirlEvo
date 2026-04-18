@@ -58,4 +58,5 @@ func init() {
 	container.Put(NewVault, container.Name("api.vault"))
 	container.Put(NewVaultSecret, container.Name("api.vault-secret"))
 	container.Put(NewComposeStackSecret, container.Name("api.compose-stack-secret"))
+	container.Put(NewSelfDeploy, container.Name("api.self-deploy"))
 }

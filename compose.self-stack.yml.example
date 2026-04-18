@@ -1,0 +1,130 @@
+# Swirl self-stack bootstrap — optional.
+# You can also run Swirl bare with `docker run` and configure everything from the UI.
+# This file is provided as an alternative for operators who prefer a compose-based bootstrap.
+#
+# Quick start:
+#   docker compose -f compose.self-stack.yml.example up -d
+# Then visit http://<host>:8001 and go to Settings → Self-deploy.
+#
+# Volumes and networks are managed by compose (no `docker volume/network create` needed).
+#
+# Context
+# -------
+# Swirl's self-deploy feature lets Swirl redeploy ITSELF: you push a new
+# image, hit "Deploy now" in Settings → Self-deploy, and a short-lived
+# sidekick container stops the old Swirl, pulls the new image, starts
+# the new Swirl, and verifies it is healthy. On failure the sidekick
+# exposes a recovery UI so you can retry or rollback.
+#
+# The sidekick is triggered from WITHIN Swirl, which means the first
+# deploy has to be bootstrapped manually — there is no running Swirl yet
+# to click "Deploy". That is what this file is for.
+#
+# First-deploy workflow
+# ---------------------
+#   1. Copy this file, review the placeholders, then:
+#        docker compose -f compose.self-stack.yml.example up -d
+#
+#   2. Open Swirl at http://<host>:8001 and log in (bootstrap admin is
+#      documented in the README).
+#
+#   3. Go to Settings → Self-deploy:
+#        - paste or customise the compose template (or leave the seed);
+#        - set IMAGE_TAG to the next version (e.g. cuigh/swirl:v2.1.1);
+#        - set RecoveryAllow to a tight CIDR, e.g. your admin VPN;
+#        - save; click Preview to sanity-check the rendered YAML;
+#        - click Deploy now.
+#
+#   4. From deploy #2 onwards Swirl manages itself. You never run
+#      `docker compose` by hand again unless something catastrophic
+#      happens to the swirl_data volume or the sidekick itself.
+#
+# ----------------------------------------------------------------------
+# What YOU must replace / review before `docker compose up`:
+#   - IMAGE_TAG        : the initial image, e.g. cuigh/swirl:v2.1.0
+#   - the exposed port : change 8001 below if you need a different one
+#   - the recovery port: change 8002 below if 8002 is already in use
+#   - the Traefik block: uncomment + edit if you front Swirl with Traefik
+# ----------------------------------------------------------------------
+
+services:
+  swirl:
+    # Replace with the desired image. Once the first deploy is done, this
+    # value is mirrored in the Self-deploy settings and subsequent
+    # redeploys override it from the UI.
+    image: cuigh/swirl:latest            # TODO: pin to an explicit tag
+    container_name: swirl
+    restart: unless-stopped
+
+    # The sidekick identifies its target by this container's ID. We pass
+    # the Docker-assigned hostname (which equals the container ID inside
+    # the container itself, by default) through SWIRL_CONTAINER_ID so
+    # Swirl's misc.SelfContainerID() resolves to the right value even in
+    # host networks where /proc/self/cgroup is unavailable.
+    environment:
+      - MODE=standalone
+      - DB_TYPE=bolt
+      - DB_ADDRESS=/data
+      - SWIRL_CONTAINER_ID=${HOSTNAME}
+
+    # The sidekick mounts the docker socket the SAME way; this container
+    # needs it for host-management features and, critically, so that the
+    # first self-deploy can spawn the sidekick with a matching socket.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - swirl_data:/data
+
+    ports:
+      # Swirl HTTP UI — change the host-side port freely, keep the
+      # container-side port aligned with ExposePort in Self-deploy
+      # settings. The default ExposePort is 8001.
+      - "8001:8001"
+
+    networks:
+      - swirl_net
+
+    # Uncomment if you expose Swirl via Traefik. Once you save these in
+    # Settings → Self-deploy → Placeholders → TraefikLabels, subsequent
+    # redeploys preserve them automatically.
+    #
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.swirl.rule=Host(`swirl.example.com`)"
+    #   - "traefik.http.routers.swirl.entrypoints=websecure"
+    #   - "traefik.http.routers.swirl.tls.certresolver=letsencrypt"
+    #   - "traefik.http.services.swirl.loadbalancer.server.port=8001"
+
+# Compose-managed named volume. Docker named volumes survive container
+# removal by default, so BoltDB, backups, self-deploy history, and
+# pending job state all persist across redeploys without any manual
+# `docker volume create`.
+volumes:
+  swirl_data:
+
+# Compose-managed bridge network. Compose will create it on first
+# `up` and reuse it on every subsequent redeploy. If you need to
+# attach other containers (Traefik, a reverse proxy, etc.) to the
+# same network, you can either add them to this file or mark the
+# network as `external: true` in your own customised template and
+# create it out-of-band.
+networks:
+  swirl_net:
+
+# ----------------------------------------------------------------------
+# Recovery port exposure (OPTIONAL)
+# ----------------------------------------------------------------------
+# The sidekick binds its recovery UI on the HOST network namespace (not
+# on swirl_net) so it can continue serving even when the new Swirl is
+# borken and nothing is attached to swirl_net. By default it listens on
+# 127.0.0.1:8002 — which means the recovery UI is only reachable from
+# SSH tunnels or localhost.
+#
+# If you need remote access, set RecoveryAllow in Settings to a tight
+# CIDR (e.g. your admin VPN range) AND expose the port on your LAN.
+# DO NOT set RecoveryAllow to 0.0.0.0/0 unless the port is firewalled
+# elsewhere — the recovery UI performs actions on your behalf and is
+# gated by IP allow-list + CSRF token, not by a password.
+#
+# Swirl prints a WARN-level log entry every time Self-deploy is triggered
+# with an allow-list that matches 0.0.0.0/0 so the audit trail flags
+# misconfigurations.

@@ -54,6 +54,16 @@ func (d *Docker) call(fn func(c *client.Client) error) error {
 	return err
 }
 
+// Client returns the primary (manager-side in Swarm mode, local daemon in
+// standalone mode) Docker SDK client. Exposed so higher layers that need
+// raw SDK operations — notably the self-deploy biz which must spawn a
+// sidekick container without going through the node-aware dispatch —
+// can skip the d.call wrapper. Prefer d.call when the operation maps
+// cleanly onto the fn(c) pattern.
+func (d *Docker) Client() (*client.Client, error) {
+	return d.client()
+}
+
 func (d *Docker) client() (c *client.Client, err error) {
 	if d.c == nil {
 		d.locker.Lock()

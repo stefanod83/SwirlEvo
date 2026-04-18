@@ -1,0 +1,36 @@
+# Volume and network are managed by the compose-engine. They're created at
+# first deploy if missing and preserved across redeploys (named volumes in
+# Docker survive container removal by default). Operator can rename them via
+# placeholders.
+services:
+  {{.ContainerName}}:
+    image: {{.ImageTag}}
+    container_name: {{.ContainerName}}
+    restart: unless-stopped
+    ports:
+      - "{{.ExposePort}}:{{.ExposePort}}"
+    environment:
+      - MODE=standalone
+      - DB_TYPE=bolt
+      - DB_ADDRESS=/data
+      - SWIRL_CONTAINER_ID=${HOSTNAME}
+{{- range $k, $v := .ExtraEnv }}
+      - {{ $k }}={{ $v }}
+{{- end }}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - {{.VolumeData}}:/data
+    networks:
+      - {{.NetworkName}}
+{{- if .TraefikLabels }}
+    labels:
+{{- range .TraefikLabels }}
+      - {{ . | quote }}
+{{- end }}
+{{- end }}
+
+volumes:
+  {{.VolumeData}}:
+
+networks:
+  {{.NetworkName}}:

@@ -665,6 +665,76 @@ First release of the SwirlEvo fork (continues [cuigh/swirl](https://github.com/c
   services. All assertions work without a live Docker daemon —
   `validateServices` is pure.
 
+### Self-deploy (v1, standalone only)
+
+Swirl can now redeploy itself from the UI. Click **Settings → Self-deploy
+→ Deploy now**; a short-lived sidekick container (`swirl-deploy-agent-*`)
+stops the running Swirl, pulls the new image, deploys the new stack,
+verifies `/api/system/mode` answers, and — on failure — either rolls
+back automatically or exposes a tiny allow-listed recovery UI.
+
+* **Scope v1**: standalone mode only. Swarm mode is blocked at the biz
+  level (`ErrSelfDeployBlocked`). The UI hides the panel. A future
+  version will tackle Swarm (rolling service update with rollback).
+* **Safety pivot**: the old container is **renamed** to `swirl-previous`,
+  never removed, until the new Swirl is healthy. Auto-rollback
+  (default on) renames it back if anything fails. Worst case: you
+  land back on the version you started from, plus one audit entry.
+* **Sidekick model**: spawned on demand via the Docker socket; no
+  persistent agent. Mounts the state directory (`/data/self-deploy/`)
+  + socket + runs with `NetworkMode=host` so it can bind the recovery
+  port and reach the new Swirl's expose port regardless of compose
+  network state. `AutoRemove=false` so operators can `docker logs` it
+  after the fact.
+* **Recovery UI**: embedded HTTP server exposing `/`, `/logs`,
+  `/retry`, `/rollback`. IP allow-list (CIDR) + one-time CSRF token
+  per session, no password. Default bind `127.0.0.1:8002`. Setting
+  `RecoveryAllow=0.0.0.0/0` is accepted but produces a WARN-level log
+  entry on every deploy.
+* **Template + placeholders**: the compose YAML is a Go `text/template`
+  with typed placeholders (`ImageTag`, `ExposePort`, `RecoveryPort`,
+  `RecoveryAllow`, `TraefikLabels`, `VolumeData`, `NetworkName`,
+  `ContainerName`, `ExtraEnv`). Defaults live in
+  `misc/self_deploy_defaults.go`. `Preview` renders + parses through
+  `compose.Parse` so bad templates fail before they reach disk.
+* **Env requirement**: the primary Swirl must be started with
+  `SWIRL_CONTAINER_ID=${HOSTNAME}` (or equivalent) so it can identify
+  the container the sidekick must swap out. See the shipped example
+  `compose.self-stack.yml.example`.
+* **API endpoints** (mounted at `/api/self-deploy`):
+  - `GET /load-config` — `self_deploy.view`
+  - `POST /save-config` — `self_deploy.edit`
+  - `POST /preview` — `self_deploy.view`
+  - `POST /deploy` — `self_deploy.execute`, returns HTTP 202 Accepted
+  - `GET /status` — `self_deploy.view`, idempotent audit-event emitter
+* **Permissions** (new in `security/perm.go`): resource
+  `self_deploy` with actions `{view, edit, execute}`. Mirrored in
+  `ui/src/utils/perm.ts` so the Role editor can grant them.
+* **Audit events**: new `EventTypeSelfDeploy` with actions
+  `Start` (emitted by TriggerDeploy on successful sidekick spawn) +
+  `Success` / `Failure` (emitted by the main Swirl's Status handler
+  when it observes a terminal phase in `state.json` — the sidekick has
+  no DB access). Idempotency via the `EventPublished` flag inside
+  `state.json` so repeated polls never duplicate the audit entry.
+* **Invariants** (enforced before spawn, double-checked by sidekick):
+  `PrimaryContainer` is non-empty AND exists on the daemon;
+  `TargetImageTag` is non-empty; `ComposeYAML` passes `compose.Parse`
+  (which runs the strict standalone rules — no `build:`, `image:`
+  required per service); `RecoveryPort != ExposePort`;
+  external networks/volumes referenced by the compose file exist on
+  the host; no service `container_name` collides with the sidekick
+  naming pattern `swirl-deploy-agent-*`. `RecoveryAllow=0.0.0.0/0`
+  is a warning, not an error.
+* **Operator docs**: [`docs/self-deploy.md`](docs/self-deploy.md) —
+  prerequisites, first-deploy bootstrap, subsequent-deploy workflow,
+  recovery, rollback, troubleshooting, security considerations,
+  limitations.
+* **Seed example**: [`compose.self-stack.yml.example`](compose.self-stack.yml.example) —
+  operator-facing starting point for the first deploy. Valid YAML out
+  of the box; comments explain every field an operator will change.
+* **i18n**: new keys `events.type.self_deploy`,
+  `events.action.self_deploy_start|success|failure` in en / it / zh.
+
 ---
 
 ## v1.0.0 (2021-12-15)

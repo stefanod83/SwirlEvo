@@ -137,4 +137,5 @@ func init() {
 	container.Put(NewDashboard)
 	container.Put(NewHost)
 	container.Put(NewBackup)
+	container.Put(NewSelfDeploy)
 }

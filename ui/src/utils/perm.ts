@@ -83,4 +83,8 @@ export const perms = [
         key: 'vault_secret',
         actions: ['view', 'edit', 'delete', 'cleanup'],
     },
+    {
+        key: 'self_deploy',
+        actions: ['view', 'edit', 'execute'],
+    },
 ]

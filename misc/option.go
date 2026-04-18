@@ -112,6 +112,22 @@ type Setting struct {
 		// path becomes `<mount>/data/<kv_prefix><vault_prefix>/<id>`.
 		VaultPrefix string `json:"vault_prefix"`
 	} `json:"backup"`
+	// SelfDeploy carries the self-deploy feature configuration. The biz
+	// layer loads + saves this sub-struct through the Setting id
+	// "self_deploy". The Placeholders field drives the compose template
+	// renderer (see misc.SelfDeployPlaceholders + biz.RenderTemplate).
+	//
+	// Phase 3: wired to DAO round-trip. Phase 5 exposes it in the UI.
+	// The default zero value (Enabled=false, empty template, zero
+	// timeout) is deliberate — LoadConfig fills it with safe defaults
+	// when the persisted record is absent or empty.
+	SelfDeploy struct {
+		Enabled       bool                   `json:"enabled"`
+		Template      string                 `json:"template"`
+		Placeholders  SelfDeployPlaceholders `json:"placeholders"`
+		AutoRollback  bool                   `json:"autoRollback"`
+		DeployTimeout int                    `json:"deployTimeout"` // seconds
+	} `json:"self_deploy"`
 }
 
 // IsStandalone returns true when Swirl is running in standalone mode.

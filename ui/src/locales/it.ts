@@ -801,5 +801,90 @@ export default {
         "env_file_subtitle": "Le variabili definite qui vengono sostituite nel compose YAML via ${VAR} al momento del deploy. Una coppia CHIAVE=VALORE per riga.",
         "env_file_placeholder": "# Una variabile per riga\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
+    "events": {
+        "type": {
+            "self_deploy": "Auto-deploy"
+        },
+        "action": {
+            "self_deploy_start": "Avvio",
+            "self_deploy_success": "Successo",
+            "self_deploy_failure": "Fallimento"
+        }
+    },
+    "self_deploy": {
+        "title": "Self-deploy",
+        "subtitle": "Effettua il redeploy di Swirl renderizzando un template compose e delegando lo swap a un container sidekick temporaneo.",
+        "enabled": "Abilitato",
+        "template": "Template compose",
+        "template_hint": "Go text/template. Placeholder disponibili: {{.ImageTag}}, {{.ExposePort}}, {{.RecoveryPort}}, {{.VolumeData}}, {{.NetworkName}}, {{.ContainerName}}, {{range .TraefikLabels}}{{.}}{{end}}, {{range $k, $v := .ExtraEnv}}{{$k}}={{$v}}{{end}}.",
+        "placeholders": {
+            "title": "Placeholder",
+            "image_tag": "Immagine target",
+            "expose_port": "Porta esposta",
+            "recovery_port": "Porta di recovery",
+            "recovery_allow": "Allow-list recovery",
+            "recovery_allow_hint": "Lista di CIDR, uno per riga. Il default sicuro è loopback (127.0.0.1/32).",
+            "traefik_labels": "Label Traefik",
+            "traefik_labels_hint": "Una label per riga, emesse verbatim (es. traefik.enable=true).",
+            "volume_data": "Volume dati",
+            "network_name": "Nome della network",
+            "container_name": "Nome del container",
+            "extra_env": "Environment aggiuntive",
+            "extra_env_hint": "Una coppia CHIAVE=VALORE per riga. Viene unita all'environment del service."
+        },
+        "advanced": {
+            "title": "Avanzate",
+            "auto_rollback": "Rollback automatico in caso di errore",
+            "deploy_timeout": "Timeout di deploy (secondi)",
+            "show_template": "Avanzato: modifica template",
+            "template_hint": "Modifica il template compose direttamente. Quasi tutti non ne hanno bisogno: i campi sotto generano un template valido automaticamente."
+        },
+        "actions": {
+            "preview": "Anteprima YAML",
+            "deploy": "Deploy ora",
+            "save": "Salva",
+            "confirm_deploy_title": "Effettuare ora il redeploy di Swirl?",
+            "confirm_deploy_body": "Verrà fermato il container Swirl attuale, scaricata l'immagine target e avviato il nuovo container. La sessione verrà disconnessa per circa 60 secondi. In caso di errore, il sidekick esporrà una UI di recovery sulla porta configurata.",
+            "confirm_ack": "Confermo che l'operazione interromperà le sessioni attive"
+        },
+        "status": {
+            "title": "Stato",
+            "idle": "Inattivo",
+            "pending": "In attesa",
+            "stopping": "Arresto del container primario",
+            "pulling": "Download dell'immagine",
+            "starting": "Avvio del nuovo container",
+            "health_check": "Health check",
+            "success": "Completato",
+            "failed": "Fallito",
+            "rolled_back": "Rollback eseguito",
+            "recovery": "Modalità recovery attiva",
+            "recovery_url": "UI di recovery",
+            "job_id": "Id job",
+            "log_tail": "Log recenti",
+            "no_logs": "Nessun log ancora.",
+            "reconnecting": "Sidekick avviato. La sessione si chiuderà a breve. Tentativo di riconnessione in corso…",
+            "reconnect_failed": "Timeout della riconnessione. Apri la UI di recovery per la diagnostica."
+        },
+        "progress": {
+            "title": "Auto-deploy in corso",
+            "failed_to_connect": "Impossibile raggiungere il sidekick. Apri {url} in una nuova scheda per vedere il progresso.",
+            "timeout": "Il deploy sta richiedendo più del previsto. Consulta la vista live per i dettagli."
+        },
+        "warnings": {
+            "allow_any_ip": "Avviso di sicurezza: la allow-list di recovery contiene 0.0.0.0/0 — la UI di recovery accetterà connessioni da QUALSIASI sorgente.",
+            "disabled_cannot_deploy": "Il self-deploy è disabilitato. Abilitalo e salva la configurazione prima di avviare un deploy."
+        },
+        "errors": {
+            "swarm_blocked": "Il self-deploy è disponibile solo in modalità standalone.",
+            "no_self_id": "Swirl non riesce a identificare il proprio container. Imposta SWIRL_CONTAINER_ID o esegui Swirl dentro Docker.",
+            "lock_held": "Un self-deploy è già in corso. Attendi il completamento oppure ispeziona il container sidekick.",
+            "template_invalid": "Il template compose non è stato renderizzato correttamente. Correggi l'errore e salva nuovamente.",
+            "save_failed": "Impossibile salvare la configurazione del self-deploy.",
+            "preview_failed": "Impossibile generare l'anteprima.",
+            "deploy_failed": "Impossibile avviare il sidekick di self-deploy.",
+            "status_failed": "Impossibile leggere lo stato del deploy."
+        }
+    },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork). Tutti i diritti riservati.",
 }
