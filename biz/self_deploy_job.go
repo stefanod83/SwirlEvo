@@ -40,6 +40,21 @@ const (
 	SelfDeployPhaseRolledBack  = "rolled_back"
 )
 
+// SelfDeployJobPlaceholders is a MINIMAL struct embedded in
+// SelfDeployJob so the sidekick (which is built from the same module)
+// can access the couple of runtime hints it needs — the Swirl image
+// tag (used for rollback reference) and the expose port (used to
+// build the post-deploy health-check URL).
+//
+// This is NOT the v1/v2 SelfDeployPlaceholders — the template /
+// placeholder rendering is gone entirely in v3. The struct is kept
+// with the same field names to preserve JSON tag stability with any
+// in-flight sidekick container from a previous version during upgrade.
+type SelfDeployJobPlaceholders struct {
+	ImageTag   string `json:"imageTag"`
+	ExposePort int    `json:"exposePort"`
+}
+
 // SelfDeployJob is the descriptor the primary Swirl writes to disk and
 // the sidekick reads. Field names are stable across the primary/sidekick
 // boundary — renaming a JSON tag is a breaking change for any sidekick
@@ -50,18 +65,27 @@ const (
 // module) does not need to vendor a duplicate type and the JSON is
 // readable by operators during diagnostics.
 type SelfDeployJob struct {
-	ID               string                 `json:"id"` // uuid-ish short hex (createId)
-	CreatedAt        time.Time              `json:"createdAt"`
-	CreatedBy        string                 `json:"createdBy,omitempty"`
-	ComposeYAML      string                 `json:"composeYaml"`
-	Placeholders     SelfDeployPlaceholders `json:"placeholders"`
-	PreviousImageTag string                 `json:"previousImageTag,omitempty"`
-	TargetImageTag   string                 `json:"targetImageTag"`
-	PrimaryContainer string                 `json:"primaryContainer"`
-	RecoveryPort     int                    `json:"recoveryPort"`
-	RecoveryAllow    []string               `json:"recoveryAllow"`
-	TimeoutSec       int                    `json:"timeoutSec"`
-	AutoRollback     bool                   `json:"autoRollback"`
+	ID               string                    `json:"id"` // uuid-ish short hex (createId)
+	CreatedAt        time.Time                 `json:"createdAt"`
+	CreatedBy        string                    `json:"createdBy,omitempty"`
+	ComposeYAML      string                    `json:"composeYaml"`
+	Placeholders     SelfDeployJobPlaceholders `json:"placeholders"`
+	PreviousImageTag string                    `json:"previousImageTag,omitempty"`
+	TargetImageTag   string                    `json:"targetImageTag"`
+	PrimaryContainer string                    `json:"primaryContainer"`
+	// SourceStackID is the ID of the ComposeStack record this deploy is
+	// updating. Persisted in the job so the sidekick can pass it through
+	// to any follow-up operation that needs to correlate the run back to
+	// a Swirl-managed stack.
+	SourceStackID string `json:"sourceStackId,omitempty"`
+	// StackName is the compose-project name the sidekick must use when
+	// invoking StandaloneEngine.Deploy. Derived from the source
+	// ComposeStack.Name — no longer hardcoded to "swirl".
+	StackName     string   `json:"stackName"`
+	RecoveryPort  int      `json:"recoveryPort"`
+	RecoveryAllow []string `json:"recoveryAllow"`
+	TimeoutSec    int      `json:"timeoutSec"`
+	AutoRollback  bool     `json:"autoRollback"`
 }
 
 // SelfDeployState is the mutable record updated by the sidekick as the

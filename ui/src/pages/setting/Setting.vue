@@ -472,7 +472,6 @@
       </n-form>
     </x-panel>
     <x-panel
-      v-if="canViewSelfDeploy"
       :title="t('self_deploy.title')"
       :subtitle="t('self_deploy.subtitle')"
       divider="bottom"
@@ -488,162 +487,47 @@
         >{{ panel === 'self_deploy' ? t('buttons.collapse') : t('buttons.expand') }}</n-button>
       </template>
       <n-space vertical :size="16" style="padding: 4px 0 0 12px">
-        <!-- Block 1: Enabled flag + disabled-deploy warning -->
-        <n-form
-          :model="selfDeploy"
-          label-placement="left"
-          label-width="auto"
-        >
-          <n-form-item :label="t('self_deploy.enabled')" label-align="right">
-            <n-switch v-model:value="selfDeploy.enabled" />
-          </n-form-item>
-        </n-form>
-
-        <!-- Block: Advanced toggle (show/hide raw template editor) -->
+        <!-- Block 1: Stack flag — enable + select the Swirl compose stack.
+             Everything else (YAML, env, bindings) is edited via the normal
+             compose_stack pages. -->
         <div>
-          <n-space align="center">
-            <n-switch v-model:value="showAdvanced" size="small" />
-            <n-text>{{ t('self_deploy.advanced.show_template') }}</n-text>
-          </n-space>
-          <div class="sd-hint" style="margin-top: 4px;">
-            {{ t('self_deploy.advanced.template_hint') }}
-          </div>
-        </div>
-
-        <!-- Block 2: Compose template (advanced) — hidden by default, kept mounted via v-show -->
-        <div v-show="showAdvanced">
-          <div class="sd-block-title">{{ t('self_deploy.template') }}</div>
-          <div class="sd-hint">{{ t('self_deploy.template_hint') }}</div>
-          <x-code-mirror
-            v-model="selfDeploy.template"
-            :style="{ width: '100%', minHeight: '300px' }"
-            height="340px"
-          />
-        </div>
-
-        <!-- Preview button + output: always visible (useful in basic mode too) -->
-        <div>
-          <n-space>
-            <n-button
-              size="small"
-              :loading="sdPreviewLoading"
-              @click="previewSelfDeploy"
-            >{{ t('self_deploy.actions.preview') }}</n-button>
-          </n-space>
-          <n-alert
-            v-if="sdPreviewError"
-            type="error"
-            :show-icon="true"
-            style="margin-top: 8px; font-size: 12px;"
-          >{{ sdPreviewError }}</n-alert>
-          <div v-if="sdPreviewYaml" style="margin-top: 8px">
-            <div class="sd-block-title">{{ t('self_deploy.actions.preview') }}</div>
-            <x-code-mirror
-              :model-value="sdPreviewYaml"
-              :readonly="true"
-              :style="{ width: '100%' }"
-              height="260px"
-            />
-          </div>
-        </div>
-
-        <!-- Block 3: Placeholders -->
-        <div>
-          <div class="sd-block-title">{{ t('self_deploy.placeholders.title') }}</div>
-          <n-form
-            :model="selfDeploy.placeholders"
-            label-placement="left"
-            label-width="auto"
-          >
-            <n-form-item :label="t('self_deploy.placeholders.image_tag')" label-align="right">
-              <n-input
-                v-model:value="selfDeploy.placeholders.imageTag"
-                placeholder="cuigh/swirl:latest"
-              />
-            </n-form-item>
-            <n-grid :cols="2" :x-gap="16">
-              <n-form-item-gi :label="t('self_deploy.placeholders.expose_port')" label-align="right">
-                <n-input-number
-                  :min="1"
-                  :max="65535"
-                  v-model:value="selfDeploy.placeholders.exposePort"
-                  style="width: 100%"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi :label="t('self_deploy.placeholders.recovery_port')" label-align="right">
-                <n-input-number
-                  :min="1"
-                  :max="65535"
-                  v-model:value="selfDeploy.placeholders.recoveryPort"
-                  style="width: 100%"
-                />
-              </n-form-item-gi>
-            </n-grid>
-            <n-form-item :label="t('self_deploy.placeholders.recovery_allow')" label-align="right">
-              <n-input
-                type="textarea"
-                :autosize="{ minRows: 2, maxRows: 6 }"
-                :placeholder="t('self_deploy.placeholders.recovery_allow_hint')"
-                v-model:value="recoveryAllowText"
-              />
-            </n-form-item>
-            <n-alert
-              v-if="recoveryAllowWarn"
-              type="error"
-              :show-icon="true"
-              style="margin: -8px 0 12px 0;"
-            >{{ t('self_deploy.warnings.allow_any_ip') }}</n-alert>
-            <n-form-item :label="t('self_deploy.placeholders.traefik_labels')" label-align="right">
-              <n-input
-                type="textarea"
-                :autosize="{ minRows: 2, maxRows: 8 }"
-                :placeholder="t('self_deploy.placeholders.traefik_labels_hint')"
-                v-model:value="traefikLabelsText"
-              />
-            </n-form-item>
-            <n-grid :cols="2" :x-gap="16">
-              <n-form-item-gi :label="t('self_deploy.placeholders.volume_data')" label-align="right">
-                <n-input
-                  v-model:value="selfDeploy.placeholders.volumeData"
-                  placeholder="swirl_data"
-                />
-              </n-form-item-gi>
-              <n-form-item-gi :label="t('self_deploy.placeholders.network_name')" label-align="right">
-                <n-input
-                  v-model:value="selfDeploy.placeholders.networkName"
-                  placeholder="swirl_net"
-                />
-              </n-form-item-gi>
-            </n-grid>
-            <n-form-item :label="t('self_deploy.placeholders.container_name')" label-align="right">
-              <n-input
-                v-model:value="selfDeploy.placeholders.containerName"
-                placeholder="swirl"
-              />
-            </n-form-item>
-            <n-form-item :label="t('self_deploy.placeholders.extra_env')" label-align="right">
-              <n-input
-                type="textarea"
-                :autosize="{ minRows: 2, maxRows: 10 }"
-                :placeholder="t('self_deploy.placeholders.extra_env_hint')"
-                v-model:value="extraEnvText"
-              />
-            </n-form-item>
-          </n-form>
-        </div>
-
-        <!-- Block 4: Advanced -->
-        <div>
-          <div class="sd-block-title">{{ t('self_deploy.advanced.title') }}</div>
           <n-form
             :model="selfDeploy"
             label-placement="left"
             label-width="auto"
+            :show-feedback="false"
+            size="small"
           >
-            <n-form-item :label="t('self_deploy.advanced.auto_rollback')" label-align="right">
+            <n-form-item :label="t('self_deploy.enabled')" label-align="right">
+              <n-switch v-model:value="selfDeploy.enabled" />
+            </n-form-item>
+            <n-form-item :label="t('self_deploy.source_stack')" label-align="right">
+              <n-select
+                v-model:value="selfDeploy.sourceStackId"
+                :options="sourceStackOptions"
+                :loading="sdSourceStackLoading"
+                :placeholder="t('self_deploy.source_stack')"
+                style="min-width: 320px;"
+                clearable
+              />
+            </n-form-item>
+          </n-form>
+          <div class="sd-hint" style="margin-left: 6px;">{{ t('self_deploy.source_stack_hint') }}</div>
+        </div>
+
+        <!-- Block 2: Sidekick options — how the deploy-agent behaves. -->
+        <div>
+          <n-form
+            :model="selfDeploy"
+            label-placement="left"
+            label-width="auto"
+            :show-feedback="false"
+            size="small"
+          >
+            <n-form-item :label="t('self_deploy.auto_rollback')" label-align="right">
               <n-switch v-model:value="selfDeploy.autoRollback" />
             </n-form-item>
-            <n-form-item :label="t('self_deploy.advanced.deploy_timeout')" label-align="right">
+            <n-form-item :label="t('self_deploy.deploy_timeout')" label-align="right">
               <n-input-number
                 :min="60"
                 :max="1800"
@@ -651,30 +535,39 @@
                 style="width: 100%"
               />
             </n-form-item>
+            <n-form-item :label="t('self_deploy.recovery_port')" label-align="right">
+              <n-input-number
+                :min="1"
+                :max="65535"
+                v-model:value="selfDeploy.recoveryPort"
+                style="width: 100%"
+              />
+            </n-form-item>
+            <n-form-item :label="t('self_deploy.recovery_allow')" label-align="right">
+              <n-input
+                type="textarea"
+                :autosize="{ minRows: 2, maxRows: 6 }"
+                v-model:value="recoveryAllowText"
+              />
+            </n-form-item>
           </n-form>
+          <n-alert
+            v-if="recoveryAllowWarn"
+            type="error"
+            :show-icon="true"
+            style="margin: 8px 0 0 0;"
+          >{{ t('self_deploy.warnings.allow_any_ip') }}</n-alert>
         </div>
 
-        <!-- Block 5: Actions + Status -->
+        <!-- Save -->
         <n-space>
           <n-button
             v-if="canEditSelfDeploy"
             type="primary"
             :loading="sdSaving"
             @click="saveSelfDeploy"
-          >{{ t('self_deploy.actions.save') }}</n-button>
-          <n-button
-            v-if="canExecuteSelfDeploy"
-            type="error"
-            :loading="sdDeploying"
-            :disabled="!selfDeploy.enabled"
-            @click="openDeployConfirm"
-          >{{ t('self_deploy.actions.deploy') }}</n-button>
+          >{{ t('buttons.save') }}</n-button>
         </n-space>
-        <n-alert
-          v-if="!selfDeploy.enabled && canExecuteSelfDeploy"
-          type="warning"
-          :show-icon="true"
-        >{{ t('self_deploy.warnings.disabled_cannot_deploy') }}</n-alert>
 
         <n-alert
           v-if="sdSaveError"
@@ -716,33 +609,8 @@
           <div class="sd-block-title">{{ t('self_deploy.status.log_tail') }}</div>
           <pre class="sd-log">{{ logTailText || t('self_deploy.status.no_logs') }}</pre>
         </div>
-        <n-alert
-          v-if="reconnectFailed"
-          type="warning"
-          :show-icon="true"
-        >{{ t('self_deploy.status.reconnect_failed') }}</n-alert>
       </n-space>
     </x-panel>
-
-    <!-- Deploy confirmation modal -->
-    <n-modal
-      v-model:show="showDeployConfirm"
-      preset="dialog"
-      type="error"
-      :title="t('self_deploy.actions.confirm_deploy_title')"
-      :positive-text="t('self_deploy.actions.deploy')"
-      :negative-text="t('buttons.cancel')"
-      :positive-button-props="{ disabled: !deployAck, loading: sdDeploying }"
-      @positive-click="confirmDeploy"
-      @negative-click="showDeployConfirm = false"
-    >
-      <div style="margin-bottom: 12px;">
-        {{ t('self_deploy.actions.confirm_deploy_body') }}
-      </div>
-      <n-checkbox v-model:checked="deployAck">
-        {{ t('self_deploy.actions.confirm_ack') }}
-      </n-checkbox>
-    </n-modal>
 
     <!-- Live progress modal: iframes the sidekick UI while the deploy runs. -->
     <n-modal
@@ -840,13 +708,11 @@ import {
   NDynamicInput,
   NSelect,
   NTag,
-  NCheckbox,
   NModal,
   NSpin,
 } from "naive-ui";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
-import XCodeMirror from "@/components/CodeMirror.vue";
 import settingApi from "@/api/setting";
 import { store } from "@/store";
 import type { Setting } from "@/api/setting";
@@ -854,10 +720,11 @@ import vaultApi from "@/api/vault";
 import roleApi from "@/api/role";
 import selfDeployApi, {
   defaultConfig as sdDefaultConfig,
-  defaultPlaceholders as sdDefaultPlaceholders,
   type SelfDeployConfig,
   type SelfDeployStatus,
 } from "@/api/self-deploy";
+import composeStackApi, { type ComposeStackSummary } from "@/api/compose_stack";
+import { useAutoDeployProgress } from "@/composables/useAutoDeployProgress";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -1128,82 +995,58 @@ async function fetchData() {
 }
 
 // ---------------------------------------------------------------------
-// Self-deploy wiring
+// Self-deploy wiring (v3 — flag + sidekick options)
 // ---------------------------------------------------------------------
 //
 // The self-deploy panel is visible to users with `self_deploy.view`.
-// Save requires `.edit`, Deploy requires `.execute`. Gating happens
-// both in the template (v-if) and at the API layer (auth tag).
+// Save requires `.edit`. The actual Auto-Deploy button lives on
+// compose_stack/Edit.vue — this panel is only Settings.
 
-const canViewSelfDeploy = computed(() => store.getters.allow('self_deploy.view'))
 const canEditSelfDeploy = computed(() => store.getters.allow('self_deploy.edit'))
-const canExecuteSelfDeploy = computed(() => store.getters.allow('self_deploy.execute'))
 
-// Typed reactive copy of the persisted config. Starts with planning
-// defaults so the form is never empty on first mount.
-const selfDeploy = ref<SelfDeployConfig>({
-  ...sdDefaultConfig,
-  placeholders: { ...sdDefaultPlaceholders },
-})
+// Typed reactive copy of the persisted config. Starts with defaults
+// so the form is never empty on first mount.
+const selfDeploy = ref<SelfDeployConfig>({ ...sdDefaultConfig })
 
-// Per-field UI state. The CIDR / label / env textareas are plain
-// strings that we split/join around the backend roundtrip — this keeps
-// the form ergonomic (operators paste a block of lines) without
-// pushing the serialization concern into the backend contract.
+// Textarea-backed plain string for recoveryAllow; split/join at the
+// backend boundary.
 const recoveryAllowText = ref('')
-const traefikLabelsText = ref('')
-const extraEnvText = ref('')
 
-const sdPreviewYaml = ref('')
-const sdPreviewError = ref('')
-const sdPreviewLoading = ref(false)
 const sdSaving = ref(false)
-const sdDeploying = ref(false)
 const sdSaveError = ref('')
-const showAdvanced = ref(false)
+
+// Source-stack dropdown state. Populated at mount from
+// /compose-stack/search; the operator picks the Swirl-representing
+// stack and the save goes through unchanged.
+const sourceStackOptions = ref<{ label: string; value: string }[]>([])
+const sdSourceStackLoading = ref(false)
 
 const sdStatus = ref<SelfDeployStatus | null>(null)
 let sdPollTimer: number | null = null
 
-const showDeployConfirm = ref(false)
-const deployAck = ref(false)
-const reconnectFailed = ref(false)
-const lastRecoveryPort = ref<number>(0)
+// Live-progress iframe modal — reused from the composable, shared
+// with compose_stack/Edit.vue so the exact same modal opens there
+// when the operator clicks Auto-Deploy.
+const {
+  progressOpen,
+  progressUrl,
+  progressIframe,
+  progressIframeFailed,
+  progressTimedOut,
+  iframeFallbackMessage,
+  onIframeLoad,
+  onIframeError,
+} = useAutoDeployProgress()
 
-// Live-progress iframe modal state. The iframe points at the sidekick
-// HTTP server (same machinery that used to only spawn on failure;
-// Phase 8 made it always-on). The modal opens the moment the operator
-// confirms a deploy and closes either when (a) /api/system/mode returns
-// 200 on the new Swirl, or (b) the sidekick posts a "success" message
-// to window.parent.
-const progressOpen = ref(false)
-const progressUrl = ref('')
-const progressIframe = ref<HTMLIFrameElement | null>(null)
-const progressIframeFailed = ref(false)
-const progressIframeLoaded = ref(false)
-const progressTimedOut = ref(false)
-let progressPostMsgHandler: ((ev: MessageEvent) => void) | null = null
-let progressPollTimer: number | null = null
-let progressTimeoutTimer: number | null = null
-let progressLoadGuardTimer: number | null = null
-
-const iframeFallbackMessage = computed(() =>
-  t('self_deploy.progress.failed_to_connect', { url: progressUrl.value || '' })
-)
-
-// A block of CIDRs where any entry equals 0.0.0.0/0 triggers a red
-// banner — matches the same rule enforced by the biz validator.
 const recoveryAllowWarn = computed(() => {
-  return (selfDeploy.value.placeholders.recoveryAllow || []).some(
+  return (selfDeploy.value.recoveryAllow || []).some(
     (c: string) => c.trim() === '0.0.0.0/0'
   )
 })
 
 const recoveryLink = computed(() => {
-  const port = lastRecoveryPort.value || selfDeploy.value.placeholders.recoveryPort
+  const port = selfDeploy.value.recoveryPort
   if (!port) return ''
-  // The sidekick binds 127.0.0.1 by default — use the current origin's
-  // scheme/host so operators on the same machine get a clickable link.
   return `${window.location.protocol}//${window.location.hostname}:${port}/`
 })
 
@@ -1212,15 +1055,9 @@ const logTailText = computed(() => {
   return sdStatus.value.logTail.slice(-20).join('\n')
 })
 
-// Keep selfDeploy.placeholders.recoveryAllow in sync with the textarea.
+// Keep selfDeploy.recoveryAllow in sync with the textarea.
 watch(recoveryAllowText, (v) => {
-  selfDeploy.value.placeholders.recoveryAllow = splitLines(v)
-})
-watch(traefikLabelsText, (v) => {
-  selfDeploy.value.placeholders.traefikLabels = splitLines(v)
-})
-watch(extraEnvText, (v) => {
-  selfDeploy.value.placeholders.extraEnv = parseEnvLines(v)
+  selfDeploy.value.recoveryAllow = splitLines(v)
 })
 
 function splitLines(v: string): string[] {
@@ -1228,26 +1065,6 @@ function splitLines(v: string): string[] {
     .split(/\r?\n/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
-}
-
-function parseEnvLines(v: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const line of splitLines(v)) {
-    const idx = line.indexOf('=')
-    if (idx <= 0) continue
-    const key = line.slice(0, idx).trim()
-    if (!key) continue
-    out[key] = line.slice(idx + 1)
-  }
-  return out
-}
-
-function serializeEnv(env: Record<string, string> | undefined | null): string {
-  if (!env) return ''
-  return Object.keys(env)
-    .sort()
-    .map((k) => `${k}=${env[k]}`)
-    .join('\n')
 }
 
 function phaseTagType(phase: string): 'default' | 'info' | 'success' | 'warning' | 'error' {
@@ -1268,55 +1085,50 @@ function phaseTagType(phase: string): 'default' | 'info' | 'success' | 'warning'
 
 function phaseLabel(phase: string): string {
   const key = `self_deploy.status.${phase}`
-  // Fall back to the raw phase if we don't have a translation — keeps
-  // the UI readable for phases added in later phases (Fase 6+).
   const label = t(key)
   return label === key ? phase : label
 }
 
 async function loadSelfDeploy() {
-  if (!canViewSelfDeploy.value) return
   try {
     const r = await selfDeployApi.loadConfig()
     if (r?.data) {
       const cfg = r.data
-      // Merge with defaults to protect against missing fields in older
-      // persisted blobs (no schema migration — see the Settings note in
-      // CLAUDE.md).
+      // Merge with defaults to protect against missing fields. v3
+      // silently drops legacy template/placeholders fields because
+      // the TypeScript interface no longer names them.
       selfDeploy.value = {
         enabled: !!cfg.enabled,
-        template: cfg.template || '',
+        sourceStackId: cfg.sourceStackId || '',
         autoRollback: cfg.autoRollback ?? true,
         deployTimeout: cfg.deployTimeout || 300,
-        placeholders: {
-          ...sdDefaultPlaceholders,
-          ...(cfg.placeholders || {}),
-        },
+        recoveryPort: cfg.recoveryPort || 8002,
+        recoveryAllow: (cfg.recoveryAllow && cfg.recoveryAllow.length)
+          ? cfg.recoveryAllow
+          : ['127.0.0.1/32'],
       }
-      recoveryAllowText.value = (selfDeploy.value.placeholders.recoveryAllow || []).join('\n')
-      traefikLabelsText.value = (selfDeploy.value.placeholders.traefikLabels || []).join('\n')
-      extraEnvText.value = serializeEnv(selfDeploy.value.placeholders.extraEnv)
+      recoveryAllowText.value = (selfDeploy.value.recoveryAllow || []).join('\n')
     }
   } catch (e: any) {
     sdSaveError.value = e?.message || t('self_deploy.errors.save_failed')
   }
 }
 
-async function previewSelfDeploy() {
-  sdPreviewLoading.value = true
-  sdPreviewError.value = ''
-  sdPreviewYaml.value = ''
+async function loadSourceStacks() {
+  sdSourceStackLoading.value = true
   try {
-    // Pass the current placeholders so the preview reflects unsaved
-    // edits. The backend still renders against the *saved* template
-    // (we don't override it here) — that's documented in the API
-    // handler comment.
-    const r = await selfDeployApi.preview(selfDeploy.value.placeholders)
-    sdPreviewYaml.value = r?.data?.yaml || ''
-  } catch (e: any) {
-    sdPreviewError.value = e?.response?.data?.info || e?.message || t('self_deploy.errors.preview_failed')
+    const r = await composeStackApi.search({ pageIndex: 1, pageSize: 200 })
+    const items: ComposeStackSummary[] = (r?.data?.items as any) || []
+    sourceStackOptions.value = items
+      .filter(s => !!s.id) // only managed stacks (external have no id)
+      .map(s => ({
+        label: s.hostName ? `${s.hostName} / ${s.name}` : s.name,
+        value: s.id,
+      }))
+  } catch {
+    sourceStackOptions.value = []
   } finally {
-    sdPreviewLoading.value = false
+    sdSourceStackLoading.value = false
   }
 }
 
@@ -1324,10 +1136,12 @@ async function saveSelfDeploy() {
   sdSaving.value = true
   sdSaveError.value = ''
   try {
-    // Sync textareas one last time in case the watch is still debouncing.
-    selfDeploy.value.placeholders.recoveryAllow = splitLines(recoveryAllowText.value)
-    selfDeploy.value.placeholders.traefikLabels = splitLines(traefikLabelsText.value)
-    selfDeploy.value.placeholders.extraEnv = parseEnvLines(extraEnvText.value)
+    // Sync textarea one last time in case the watch is still debouncing.
+    selfDeploy.value.recoveryAllow = splitLines(recoveryAllowText.value)
+    if (selfDeploy.value.enabled && !selfDeploy.value.sourceStackId) {
+      sdSaveError.value = t('self_deploy.errors.source_stack_required')
+      return
+    }
     await selfDeployApi.saveConfig(selfDeploy.value)
     window.message.info(t('texts.action_success'))
   } catch (e: any) {
@@ -1337,186 +1151,16 @@ async function saveSelfDeploy() {
   }
 }
 
-function openDeployConfirm() {
-  deployAck.value = false
-  showDeployConfirm.value = true
-}
-
-async function confirmDeploy() {
-  if (!deployAck.value) return
-  sdDeploying.value = true
-  try {
-    const r = await selfDeployApi.deploy()
-    showDeployConfirm.value = false
-    const rawUrl = r?.data?.recoveryUrl || ''
-    if (rawUrl) {
-      const portMatch = rawUrl.match(/:(\d+)$/)
-      if (portMatch) lastRecoveryPort.value = parseInt(portMatch[1], 10)
-    }
-    if (!lastRecoveryPort.value && selfDeploy.value.placeholders.recoveryPort) {
-      lastRecoveryPort.value = selfDeploy.value.placeholders.recoveryPort
-    }
-    // Resolve the iframe URL. The backend ships either a bare port
-    // (":8002") or a fully-qualified URL. Prefix with scheme + hostname
-    // of the current Swirl origin so an operator hitting Swirl through
-    // a reverse proxy still gets a sidekick URL they can reach.
-    progressUrl.value = buildProgressUrl(rawUrl, lastRecoveryPort.value)
-    progressIframeFailed.value = false
-    progressIframeLoaded.value = false
-    progressTimedOut.value = false
-    progressOpen.value = true
-    reconnectFailed.value = false
-
-    startProgressPolling()
-    addProgressPostMessageListener()
-    startProgressLoadGuard()
-    startProgressTimeoutGuard()
-  } catch (e: any) {
-    sdSaveError.value = e?.response?.data?.info || e?.message || t('self_deploy.errors.deploy_failed')
-  } finally {
-    sdDeploying.value = false
-  }
-}
-
-// buildProgressUrl composes an iframe-loadable URL from whatever the
-// backend hands us. Three acceptable input shapes:
-//   - "" (empty)             → fallback: current origin + ":<port>" if known
-//   - ":8002"                → prefix with scheme + hostname of current origin
-//   - "http(s)://host:port/" → use verbatim
-function buildProgressUrl(raw: string, portHint: number): string {
-  const origin = window.location
-  if (!raw) {
-    if (!portHint) return ''
-    return `${origin.protocol}//${origin.hostname}:${portHint}/`
-  }
-  if (/^https?:\/\//i.test(raw)) return raw
-  if (raw.startsWith(':')) {
-    return `${origin.protocol}//${origin.hostname}${raw}/`
-  }
-  // Bare port or something else — best-effort compose.
-  return `${origin.protocol}//${origin.hostname}:${raw}/`
-}
-
-// startProgressPolling runs the /api/system/mode polling in parallel
-// with the iframe so the modal closes the instant the new Swirl is up,
-// without relying solely on postMessage (which would need the iframe to
-// be loadable — not guaranteed for allow-list blocks).
-function startProgressPolling() {
-  stopProgressPolling()
-  const tick = async () => {
-    if (!progressOpen.value) return
-    try {
-      const resp = await fetch('/api/system/mode', { cache: 'no-store' })
-      if (resp.ok) {
-        onDeploySuccess()
-        return
-      }
-    } catch {
-      /* still down — the new container is not yet serving */
-    }
-  }
-  // First probe immediately (cheap; non-blocking on failure), then
-  // every 3s while the modal is open.
-  tick()
-  progressPollTimer = window.setInterval(tick, 3000)
-}
-
-function stopProgressPolling() {
-  if (progressPollTimer !== null) {
-    clearInterval(progressPollTimer)
-    progressPollTimer = null
-  }
-}
-
-// addProgressPostMessageListener wires the sidekick's postMessage
-// (see cmd/deploy_agent/ui/script.js::togglePanels) so a successful
-// deploy closes the modal without waiting for the polling loop.
-function addProgressPostMessageListener() {
-  removeProgressPostMessageListener()
-  progressPostMsgHandler = (ev: MessageEvent) => {
-    const d = ev.data
-    if (d && typeof d === 'object' && d.type === 'swirl.self-deploy' && d.phase === 'success') {
-      onDeploySuccess()
-    }
-  }
-  window.addEventListener('message', progressPostMsgHandler)
-}
-
-function removeProgressPostMessageListener() {
-  if (progressPostMsgHandler) {
-    window.removeEventListener('message', progressPostMsgHandler)
-    progressPostMsgHandler = null
-  }
-}
-
-// startProgressLoadGuard: if the iframe has not dispatched a `load`
-// event within 10s, show a textual fallback with the URL so the
-// operator can open it in a new tab. Does NOT close the modal — the
-// deploy is still running in the background.
-function startProgressLoadGuard() {
-  if (progressLoadGuardTimer !== null) {
-    clearTimeout(progressLoadGuardTimer)
-  }
-  progressLoadGuardTimer = window.setTimeout(() => {
-    if (!progressIframeLoaded.value) {
-      progressIframeFailed.value = true
-    }
-  }, 10_000)
-}
-
-// startProgressTimeoutGuard: after 5 minutes without either a
-// /api/system/mode success or a postMessage, show the "taking longer
-// than expected" warning in the modal header. The modal stays open —
-// the operator can still interact with the iframe.
-function startProgressTimeoutGuard() {
-  if (progressTimeoutTimer !== null) {
-    clearTimeout(progressTimeoutTimer)
-  }
-  progressTimeoutTimer = window.setTimeout(() => {
-    progressTimedOut.value = true
-  }, 5 * 60 * 1000)
-}
-
-function onIframeLoad() {
-  progressIframeLoaded.value = true
-  progressIframeFailed.value = false
-}
-
-function onIframeError() {
-  progressIframeFailed.value = true
-}
-
-function onDeploySuccess() {
-  stopProgressPolling()
-  removeProgressPostMessageListener()
-  if (progressTimeoutTimer !== null) {
-    clearTimeout(progressTimeoutTimer)
-    progressTimeoutTimer = null
-  }
-  if (progressLoadGuardTimer !== null) {
-    clearTimeout(progressLoadGuardTimer)
-    progressLoadGuardTimer = null
-  }
-  progressOpen.value = false
-  // Full reload so Vuex and the live setting snapshot are fresh.
-  window.location.assign('/')
-}
-
 async function refreshSelfDeployStatus() {
-  if (!canViewSelfDeploy.value) return
   try {
     const r = await selfDeployApi.status()
     sdStatus.value = r?.data || null
-    if (sdStatus.value?.recoveryActive && !lastRecoveryPort.value) {
-      lastRecoveryPort.value = selfDeploy.value.placeholders.recoveryPort
-    }
   } catch {
     /* keep last-known — the panel should stay usable during transient errors */
   }
 }
 
 function startSelfDeployPolling() {
-  if (!canViewSelfDeploy.value) return
   refreshSelfDeployStatus()
   if (sdPollTimer !== null) return
   sdPollTimer = window.setInterval(refreshSelfDeployStatus, 3_000)
@@ -1532,21 +1176,13 @@ function stopSelfDeployPolling() {
 onMounted(async () => {
   await fetchData()
   await loadSelfDeploy()
+  loadSourceStacks()
   startSelfDeployPolling()
 })
 
 onUnmounted(() => {
   stopSelfDeployPolling()
-  stopProgressPolling()
-  removeProgressPostMessageListener()
-  if (progressTimeoutTimer !== null) {
-    clearTimeout(progressTimeoutTimer)
-    progressTimeoutTimer = null
-  }
-  if (progressLoadGuardTimer !== null) {
-    clearTimeout(progressLoadGuardTimer)
-    progressLoadGuardTimer = null
-  }
+  // The composable registers its own onUnmounted for progress cleanup.
 })
 </script>
 
@@ -1570,14 +1206,14 @@ onUnmounted(() => {
 }
 .sd-block-title {
   font-weight: 600;
-  margin: 0 0 6px 0;
-  font-size: 14px;
+  margin: 0 0 4px 0;
+  font-size: 13px;
 }
 .sd-hint {
   font-size: 12px;
   color: var(--n-text-color-3, #666);
-  margin-bottom: 6px;
-  line-height: 1.5;
+  margin-bottom: 4px;
+  line-height: 1.45;
 }
 .sd-status-panel {
   border: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.2));
@@ -1600,6 +1236,10 @@ onUnmounted(() => {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-all;
+}
+.sd-yaml-input :deep(textarea) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 .sd-iframe-fallback {
   position: absolute;

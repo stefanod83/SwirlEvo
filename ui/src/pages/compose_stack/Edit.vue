@@ -55,11 +55,15 @@
     </x-panel>
 
     <n-space>
-      <n-button type="primary" :loading="submitting" @click="deployStack">
+      <n-button
+        :type="isSelfDeployStack ? 'warning' : 'primary'"
+        :loading="submitting"
+        @click="isSelfDeployStack ? autoDeployStack() : deployStack()"
+      >
         <template #icon>
           <n-icon><rocket-outline /></n-icon>
         </template>
-        {{ t('buttons.deploy') }}
+        {{ isSelfDeployStack ? t('self_deploy.actions.auto_deploy') : t('buttons.deploy') }}
       </n-button>
       <n-button secondary :loading="submitting" @click="saveStack">
         <template #icon>
@@ -68,6 +72,59 @@
         {{ t('buttons.save') }}
       </n-button>
     </n-space>
+
+    <!-- Auto-Deploy confirmation dialog -->
+    <n-modal
+      v-model:show="autoDeployConfirm"
+      preset="dialog"
+      type="warning"
+      :title="t('self_deploy.actions.auto_deploy_confirm_title')"
+      :positive-text="t('self_deploy.actions.auto_deploy')"
+      :negative-text="t('buttons.cancel')"
+      :positive-button-props="{ loading: submitting }"
+      @positive-click="confirmAutoDeploy"
+      @negative-click="autoDeployConfirm = false"
+    >
+      <div>{{ t('self_deploy.actions.auto_deploy_confirm_body') }}</div>
+    </n-modal>
+
+    <!-- Live progress modal (shared composable) -->
+    <n-modal
+      v-model:show="progressOpen"
+      :mask-closable="false"
+      :closable="false"
+      preset="card"
+      :bordered="false"
+      style="width: 80vw; height: 80vh; max-width: 1200px;"
+    >
+      <template #header>
+        <n-space align="center" :size="8">
+          <n-spin size="small" />
+          <span>{{ t('self_deploy.progress.title') }}</span>
+        </n-space>
+      </template>
+      <template #header-extra>
+        <n-tag v-if="progressTimedOut" type="warning" size="small" round>
+          {{ t('self_deploy.progress.timeout') }}
+        </n-tag>
+      </template>
+      <div style="position: relative; width: 100%; height: calc(80vh - 90px);">
+        <iframe
+          v-if="progressUrl"
+          ref="progressIframe"
+          :src="progressUrl"
+          style="width: 100%; height: 100%; border: 0; background: #0f1318;"
+          @load="onIframeLoad"
+          @error="onIframeError"
+        />
+        <div v-if="progressIframeFailed" class="ads-iframe-fallback">
+          <p>{{ iframeFallbackMessage }}</p>
+          <p v-if="progressUrl">
+            <a :href="progressUrl" target="_blank" rel="noopener">{{ progressUrl }}</a>
+          </p>
+        </div>
+      </div>
+    </n-modal>
 
     <!--
       Bindings panel: lets the operator attach VaultSecret entries to this
@@ -413,6 +470,8 @@ import type {
 import vaultSecretApi from "@/api/vault-secret";
 import type { VaultSecret } from "@/api/vault-secret";
 import * as hostApi from "@/api/host";
+import selfDeployApi, { type SelfDeployConfig } from "@/api/self-deploy";
+import { useAutoDeployProgress } from "@/composables/useAutoDeployProgress";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from 'vue-i18n'
 import { requiredRule } from "@/utils/form";
@@ -486,6 +545,59 @@ async function deployStack() {
     router.push({ name: 'std_stack_list' })
   } catch (e: any) {
     message.error(e?.message || String(e))
+  } finally {
+    submitting.value = false
+  }
+}
+
+// ---- Self-deploy Auto-Deploy branch --------------------------------------
+//
+// When the stack being edited is the one flagged as the self-deploy source
+// stack in Settings, the Deploy button flips to "Auto-Deploy" and routes
+// through /api/self-deploy/deploy instead of the usual stack deploy. The
+// sidekick orchestrates the restart and the live progress iframe modal
+// (shared composable) opens immediately.
+
+const sdConfig = ref<SelfDeployConfig | null>(null)
+const autoDeployConfirm = ref(false)
+
+const isSelfDeployStack = computed(() => {
+  return !!(sdConfig.value?.enabled && sdConfig.value?.sourceStackId === model.id)
+})
+
+const {
+  progressOpen,
+  progressUrl,
+  progressIframe,
+  progressIframeFailed,
+  progressTimedOut,
+  iframeFallbackMessage,
+  openProgressFromDeployResult,
+  onIframeLoad,
+  onIframeError,
+} = useAutoDeployProgress()
+
+async function loadSelfDeployConfig() {
+  try {
+    const r = await selfDeployApi.loadConfig()
+    sdConfig.value = r?.data || null
+  } catch {
+    sdConfig.value = null
+  }
+}
+
+function autoDeployStack() {
+  autoDeployConfirm.value = true
+}
+
+async function confirmAutoDeploy() {
+  submitting.value = true
+  try {
+    const r = await selfDeployApi.deploy()
+    autoDeployConfirm.value = false
+    openProgressFromDeployResult(r?.data)
+  } catch (e: any) {
+    message.error(e?.response?.data?.info || e?.message || String(e))
   } finally {
     submitting.value = false
   }
@@ -796,7 +908,10 @@ onMounted(async () => {
       model.envFile = s.data.envFile || ''
       model.errorMessage = s.data.errorMessage || ''
     }
-    await Promise.all([loadVaultSecrets(), reloadBindings()])
+    // Fire in parallel: stack-level artifacts + self-deploy flag check.
+    // loadSelfDeployConfig is tolerant to 403/404 (returns null) so
+    // users without self_deploy.view still get a clean Deploy button.
+    await Promise.all([loadVaultSecrets(), reloadBindings(), loadSelfDeployConfig()])
   } else {
     model.content = '# Paste or author your docker-compose YAML here\n# example:\n# services:\n#   web:\n#     image: nginx:alpine\n#     ports:\n#       - "8080:80"\n'
   }
@@ -810,5 +925,23 @@ onMounted(async () => {
 .hash {
   font-size: 11px;
   opacity: 0.75;
+}
+.ads-iframe-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: rgba(15, 19, 24, 0.92);
+  color: #e4e8ee;
+  text-align: center;
+  font-size: 14px;
+}
+.ads-iframe-fallback a {
+  color: #4b91ff;
+  word-break: break-all;
 }
 </style>

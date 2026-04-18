@@ -16,6 +16,7 @@ services:
       - "8001:8001"
     environment:
       - MODE=standalone
+      - DB_TYPE=mongo
       - DB_ADDRESS=mongodb://mongodb:27017/swirl
       - SWIRL_BACKUP_KEY=${SWIRL_BACKUP_KEY:-}
       - TZ=${TZ:-UTC}

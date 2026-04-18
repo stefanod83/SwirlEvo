@@ -1,33 +1,17 @@
 import ajax, { Result } from './ajax'
 
-// Mirrors biz.SelfDeployPlaceholders (misc.SelfDeployPlaceholders
-// under the hood). The UI stores CIDR and traefik-label lists as plain
-// string arrays and only converts to/from the newline-per-item
-// textareas at the binding boundary.
-export interface SelfDeployPlaceholders {
-    imageTag: string;
-    exposePort: number;
-    recoveryPort: number;
-    recoveryAllow: string[];
-    traefikLabels: string[];
-    volumeData: string;
-    networkName: string;
-    containerName: string;
-    extraEnv: Record<string, string>;
-}
-
-// Mirrors biz.SelfDeployConfig.
+// Mirrors biz.SelfDeployConfig (v3). No template, no placeholders —
+// the YAML is read verbatim from the compose stack identified by
+// `sourceStackId` and edited through the normal compose_stack editor.
 export interface SelfDeployConfig {
     enabled: boolean;
-    template: string;
-    placeholders: SelfDeployPlaceholders;
+    sourceStackId: string;
     autoRollback: boolean;
     deployTimeout: number;
+    recoveryPort: number;
+    recoveryAllow: string[];
 }
 
-// Mirrors biz.SelfDeployStatus + the recoveryActive flag added by the
-// API layer. `startedAt` / `finishedAt` are intentionally optional —
-// the idle snapshot carries neither.
 export interface SelfDeployStatus {
     phase: string;
     jobId?: string;
@@ -39,37 +23,22 @@ export interface SelfDeployStatus {
     recoveryUrl?: string;
 }
 
-export interface SelfDeployPreviewResult {
-    yaml: string;
-}
-
 export interface SelfDeployDeployResult {
     jobId: string;
     recoveryUrl: string;
-    targetImageTag: string;
+    targetImageTag?: string;
+    stackName?: string;
 }
 
-// DefaultPlaceholders mirrors biz.DefaultPlaceholders so the form can
-// be populated with sensible values even when the backend has never
-// returned a config yet (fresh install).
-export const defaultPlaceholders: SelfDeployPlaceholders = {
-    imageTag: 'cuigh/swirl:latest',
-    exposePort: 8001,
-    recoveryPort: 8002,
-    recoveryAllow: ['127.0.0.1/32'],
-    traefikLabels: [],
-    volumeData: 'swirl_data',
-    networkName: 'swirl_net',
-    containerName: 'swirl',
-    extraEnv: {},
-}
-
+// defaultConfig mirrors biz.applyConfigDefaults so the Settings form is
+// never empty on first mount (fresh install).
 export const defaultConfig: SelfDeployConfig = {
     enabled: false,
-    template: '',
-    placeholders: defaultPlaceholders,
+    sourceStackId: '',
     autoRollback: true,
     deployTimeout: 300,
+    recoveryPort: 8002,
+    recoveryAllow: ['127.0.0.1/32'],
 }
 
 export class SelfDeployApi {
@@ -81,17 +50,7 @@ export class SelfDeployApi {
         return ajax.post<Result<Object>>('/self-deploy/save-config', cfg)
     }
 
-    // `override` is optional — when omitted, the backend renders with
-    // the persisted config. Passing an override lets the UI preview a
-    // set of placeholders before the user hits Save.
-    preview(override?: Partial<SelfDeployPlaceholders>) {
-        const body = override ? { placeholders: override } : {}
-        return ajax.post<SelfDeployPreviewResult>('/self-deploy/preview', body)
-    }
-
-    // Returns 202 with {jobId, recoveryUrl, targetImageTag}. The UI
-    // should start a health-check poll after a short grace period
-    // because the primary is about to be stopped by the sidekick.
+    // Returns 202 with {jobId, recoveryUrl, targetImageTag?, stackName?}.
     deploy() {
         return ajax.post<SelfDeployDeployResult>('/self-deploy/deploy')
     }

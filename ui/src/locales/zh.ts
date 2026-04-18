@@ -89,6 +89,7 @@ export default {
         "url": "URL",
         "login_name": "登录名",
         "username": "用户名",
+        "users_with_role": "拥有该角色的用户",
         "created_at": "创建时间",
         "updated_at": "更新时间",
         "created_by": "创建人",
@@ -561,6 +562,7 @@ export default {
         "vault_secret_no_value": "Swirl 不保存密钥值，仅保存指向 Vault 条目的引用；实际值在部署时从 Vault 读取。",
     },
     "texts": {
+        "no_users_with_role": "没有用户被分配此角色",
         "action_success": "操作成功",
         "init_admin": "初始化管理员账号",
         "records": "共 {total} 条记录",
@@ -807,39 +809,18 @@ export default {
     },
     "self_deploy": {
         "title": "自部署",
-        "subtitle": "通过渲染 compose 模板并将切换过程委派给短期 sidekick 容器，实现 Swirl 自身的重新部署。",
+        "subtitle": "将一个现有的 compose stack 标记为运行 Swirl 自身的 stack。该 stack 的 Deploy 按钮会变为 Auto-Deploy，通过 sidekick 重启 Swirl。",
         "enabled": "启用",
-        "template": "Compose 模板",
-        "template_hint": "Go text/template。可用占位符：{{.ImageTag}}、{{.ExposePort}}、{{.RecoveryPort}}、{{.VolumeData}}、{{.NetworkName}}、{{.ContainerName}}、{{range .TraefikLabels}}{{.}}{{end}}、{{range $k, $v := .ExtraEnv}}{{$k}}={{$v}}{{end}}。",
-        "placeholders": {
-            "title": "占位符",
-            "image_tag": "目标镜像",
-            "expose_port": "对外端口",
-            "recovery_port": "恢复端口",
-            "recovery_allow": "恢复白名单",
-            "recovery_allow_hint": "CIDR 列表，每行一项。默认仅允许本地回环（127.0.0.1/32）。",
-            "traefik_labels": "Traefik 标签",
-            "traefik_labels_hint": "每行一个标签，原样输出（例如 traefik.enable=true）。",
-            "volume_data": "数据卷",
-            "network_name": "网络名称",
-            "container_name": "容器名称",
-            "extra_env": "额外环境变量",
-            "extra_env_hint": "每行一个 KEY=VALUE，会合并进服务的 environment。"
-        },
-        "advanced": {
-            "title": "高级",
-            "auto_rollback": "失败时自动回滚",
-            "deploy_timeout": "部署超时（秒）",
-            "show_template": "高级：编辑原始模板",
-            "template_hint": "直接编辑 compose 模板。大多数用户无需此操作 —— 下方字段会自动生成有效模板。"
-        },
+        "source_stack": "源 Stack",
+        "source_stack_hint": "管理 Swirl 的 compose stack。",
+        "auto_rollback": "失败时自动回滚",
+        "deploy_timeout": "部署超时（秒）",
+        "recovery_port": "恢复界面端口",
+        "recovery_allow": "恢复界面 IP 白名单 (CIDR)",
         "actions": {
-            "preview": "预览 YAML",
-            "deploy": "立即部署",
-            "save": "保存",
-            "confirm_deploy_title": "确认立即重新部署 Swirl？",
-            "confirm_deploy_body": "将停止当前 Swirl 容器、拉取目标镜像并启动新容器。您的会话将中断约 60 秒。如果部署失败，sidekick 会在配置的端口上提供恢复 UI。",
-            "confirm_ack": "我了解此操作将中断当前会话"
+            "auto_deploy": "Auto-Deploy",
+            "auto_deploy_confirm_title": "确认自动部署此 Swirl stack？",
+            "auto_deploy_confirm_body": "此操作将通过辅助容器重启 Swirl，当前会话将断开约 60 秒。"
         },
         "status": {
             "title": "状态",
@@ -856,9 +837,7 @@ export default {
             "recovery_url": "恢复 UI",
             "job_id": "任务 ID",
             "log_tail": "最近日志",
-            "no_logs": "暂无日志。",
-            "reconnecting": "Sidekick 已启动，会话即将关闭，正在尝试重新连接……",
-            "reconnect_failed": "重新连接超时。请打开恢复 UI 进行诊断。"
+            "no_logs": "暂无日志。"
         },
         "progress": {
             "title": "自部署进行中",
@@ -866,16 +845,15 @@ export default {
             "timeout": "部署耗时超出预期，请查看实时视图了解详情。"
         },
         "warnings": {
-            "allow_any_ip": "安全警告：恢复白名单包含 0.0.0.0/0 — 恢复 UI 将接受来自任何来源的连接。",
-            "disabled_cannot_deploy": "自部署未启用。请先启用并保存配置，再触发部署。"
+            "allow_any_ip": "安全警告：恢复白名单包含 0.0.0.0/0 — 恢复 UI 将接受来自任何来源的连接。"
         },
         "errors": {
             "swarm_blocked": "自部署仅在 standalone 模式下可用。",
             "no_self_id": "Swirl 无法识别自身容器。请设置 SWIRL_CONTAINER_ID 或在 Docker 中运行 Swirl。",
+            "source_stack_required": "启用前请先选择源 stack。",
+            "stack_not_found": "所选源 stack 不再存在。",
             "lock_held": "已有自部署正在进行中。请等待完成或检查 sidekick 容器。",
-            "template_invalid": "compose 模板渲染失败。请修正错误后重新保存。",
             "save_failed": "保存自部署配置失败。",
-            "preview_failed": "生成预览失败。",
             "deploy_failed": "启动自部署 sidekick 失败。",
             "status_failed": "读取部署状态失败。"
         }

@@ -55,6 +55,24 @@
         </n-gi>
       </n-grid>
     </x-panel>
+    <x-panel :title="t('fields.users_with_role')">
+      <n-empty v-if="!loading && !usersWithRole.length" :description="t('texts.no_users_with_role')" />
+      <n-space v-else :size="8" wrap>
+        <n-tag
+          v-for="u in usersWithRole"
+          :key="u.id"
+          type="info"
+          :bordered="false"
+          style="cursor: pointer;"
+          @click="$router.push({ name: 'user_detail', params: { id: u.id } })"
+        >
+          {{ u.name || u.loginName }}
+          <template #icon>
+            <n-icon><person-outline /></n-icon>
+          </template>
+        </n-tag>
+      </n-space>
+    </x-panel>
   </n-space>
 </template>
 
@@ -67,9 +85,15 @@ import {
   NGrid,
   NGi,
   NTime,
+  NTag,
+  NEmpty,
 } from "naive-ui";
 import { useRoute } from "vue-router";
-import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
+import {
+  ArrowBackCircleOutline as BackIcon,
+  RefreshOutline,
+  PersonOutline,
+} from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import XPairTag from "@/components/PairTag.vue";
@@ -77,6 +101,8 @@ import XAnchor from "@/components/Anchor.vue";
 import { XDescription, XDescriptionItem } from "@/components/description";
 import roleApi from "@/api/role";
 import type { Role } from "@/api/role";
+import userApi from "@/api/user";
+import type { User } from "@/api/user";
 import { perms } from "@/utils/perm";
 import { useI18n } from 'vue-i18n'
 
@@ -84,6 +110,7 @@ const { t } = useI18n()
 const route = useRoute();
 const model = ref({} as Role);
 const loading = ref(false);
+const usersWithRole = ref<User[]>([]);
 const ps = computed(() => {
   const set = new Set(model.value.perms)
   const arr: any = []
@@ -97,8 +124,15 @@ const ps = computed(() => {
 async function fetchData() {
   loading.value = true;
   try {
-    let r = await roleApi.find(route.params.id as string);
+    const roleId = route.params.id as string;
+    let r = await roleApi.find(roleId);
     model.value = r.data as Role;
+    // Fetch all users and filter client-side. UserSearchArgs doesn't support
+    // role filter on the backend; dataset is small in typical Swirl deployments
+    // so loading everything + filtering here is fine.
+    const ur = await userApi.search({ name: '', loginName: '', filter: '', pageIndex: 1, pageSize: 999999 } as any)
+    const all = (ur.data as any)?.items || []
+    usersWithRole.value = all.filter((u: User) => Array.isArray(u.roles) && u.roles.includes(roleId))
   } finally {
     loading.value = false;
   }

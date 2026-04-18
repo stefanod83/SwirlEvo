@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "Bash(command -v go)"
+      "Bash(command -v go)",
+      "Bash(grep)",
+      "Bash(docker)"
     ]
   }
 }

@@ -14,3 +14,4 @@ rsync -av --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.g
   docker build --no-cache -t swirl:standalone . && \
   docker compose -f docker-compose.standalone-bolt.yml up -d
 
+docker tag swirl:standalone registry.devarch.local:443/devarch-it/swirlevo:v2.0.0rc1 && docker push registry.devarch.local:443/devarch-it/swirlevo:v2.0.0rc1

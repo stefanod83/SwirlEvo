@@ -89,6 +89,7 @@ export default {
         "url": "URL",
         "login_name": "Nome di login",
         "username": "Nome utente",
+        "users_with_role": "Utenti con questo ruolo",
         "created_at": "Creato il",
         "updated_at": "Aggiornato il",
         "created_by": "Creato da",
@@ -563,6 +564,7 @@ export default {
         "vault_secret_no_value": "Swirl non salva mai il valore del secret. Solo il riferimento alla voce Vault è memorizzato qui; il valore viene letto da Vault al deploy.",
     },
     "texts": {
+        "no_users_with_role": "Nessun utente ha questo ruolo assegnato",
         "action_success": "Operazione completata con successo",
         "init_admin": "Inizializza amministratore",
         "records": "{total} record | {total} record",
@@ -813,39 +815,18 @@ export default {
     },
     "self_deploy": {
         "title": "Self-deploy",
-        "subtitle": "Effettua il redeploy di Swirl renderizzando un template compose e delegando lo swap a un container sidekick temporaneo.",
+        "subtitle": "Marca uno stack compose esistente come quello che esegue Swirl stesso. Il suo pulsante Deploy diventa Auto-Deploy e riavvia Swirl tramite un sidekick.",
         "enabled": "Abilitato",
-        "template": "Template compose",
-        "template_hint": "Go text/template. Placeholder disponibili: {{.ImageTag}}, {{.ExposePort}}, {{.RecoveryPort}}, {{.VolumeData}}, {{.NetworkName}}, {{.ContainerName}}, {{range .TraefikLabels}}{{.}}{{end}}, {{range $k, $v := .ExtraEnv}}{{$k}}={{$v}}{{end}}.",
-        "placeholders": {
-            "title": "Placeholder",
-            "image_tag": "Immagine target",
-            "expose_port": "Porta esposta",
-            "recovery_port": "Porta di recovery",
-            "recovery_allow": "Allow-list recovery",
-            "recovery_allow_hint": "Lista di CIDR, uno per riga. Il default sicuro è loopback (127.0.0.1/32).",
-            "traefik_labels": "Label Traefik",
-            "traefik_labels_hint": "Una label per riga, emesse verbatim (es. traefik.enable=true).",
-            "volume_data": "Volume dati",
-            "network_name": "Nome della network",
-            "container_name": "Nome del container",
-            "extra_env": "Environment aggiuntive",
-            "extra_env_hint": "Una coppia CHIAVE=VALORE per riga. Viene unita all'environment del service."
-        },
-        "advanced": {
-            "title": "Avanzate",
-            "auto_rollback": "Rollback automatico in caso di errore",
-            "deploy_timeout": "Timeout di deploy (secondi)",
-            "show_template": "Avanzato: modifica template",
-            "template_hint": "Modifica il template compose direttamente. Quasi tutti non ne hanno bisogno: i campi sotto generano un template valido automaticamente."
-        },
+        "source_stack": "Stack sorgente",
+        "source_stack_hint": "Lo stack compose che gestisce Swirl.",
+        "auto_rollback": "Rollback automatico su errore",
+        "deploy_timeout": "Timeout deploy (secondi)",
+        "recovery_port": "Porta UI di recovery",
+        "recovery_allow": "Allow-list IP recovery (CIDR)",
         "actions": {
-            "preview": "Anteprima YAML",
-            "deploy": "Deploy ora",
-            "save": "Salva",
-            "confirm_deploy_title": "Effettuare ora il redeploy di Swirl?",
-            "confirm_deploy_body": "Verrà fermato il container Swirl attuale, scaricata l'immagine target e avviato il nuovo container. La sessione verrà disconnessa per circa 60 secondi. In caso di errore, il sidekick esporrà una UI di recovery sulla porta configurata.",
-            "confirm_ack": "Confermo che l'operazione interromperà le sessioni attive"
+            "auto_deploy": "Auto-Deploy",
+            "auto_deploy_confirm_title": "Eseguire Auto-Deploy dello stack Swirl?",
+            "auto_deploy_confirm_body": "Questa azione riavvia Swirl tramite il sidekick. La sessione si disconnetterà per circa 60 secondi."
         },
         "status": {
             "title": "Stato",
@@ -862,9 +843,7 @@ export default {
             "recovery_url": "UI di recovery",
             "job_id": "Id job",
             "log_tail": "Log recenti",
-            "no_logs": "Nessun log ancora.",
-            "reconnecting": "Sidekick avviato. La sessione si chiuderà a breve. Tentativo di riconnessione in corso…",
-            "reconnect_failed": "Timeout della riconnessione. Apri la UI di recovery per la diagnostica."
+            "no_logs": "Nessun log ancora."
         },
         "progress": {
             "title": "Auto-deploy in corso",
@@ -872,16 +851,15 @@ export default {
             "timeout": "Il deploy sta richiedendo più del previsto. Consulta la vista live per i dettagli."
         },
         "warnings": {
-            "allow_any_ip": "Avviso di sicurezza: la allow-list di recovery contiene 0.0.0.0/0 — la UI di recovery accetterà connessioni da QUALSIASI sorgente.",
-            "disabled_cannot_deploy": "Il self-deploy è disabilitato. Abilitalo e salva la configurazione prima di avviare un deploy."
+            "allow_any_ip": "Avviso di sicurezza: la allow-list di recovery contiene 0.0.0.0/0 — la UI di recovery accetterà connessioni da QUALSIASI sorgente."
         },
         "errors": {
             "swarm_blocked": "Il self-deploy è disponibile solo in modalità standalone.",
             "no_self_id": "Swirl non riesce a identificare il proprio container. Imposta SWIRL_CONTAINER_ID o esegui Swirl dentro Docker.",
+            "source_stack_required": "Seleziona uno stack sorgente prima di abilitare.",
+            "stack_not_found": "Lo stack selezionato non esiste più.",
             "lock_held": "Un self-deploy è già in corso. Attendi il completamento oppure ispeziona il container sidekick.",
-            "template_invalid": "Il template compose non è stato renderizzato correttamente. Correggi l'errore e salva nuovamente.",
             "save_failed": "Impossibile salvare la configurazione del self-deploy.",
-            "preview_failed": "Impossibile generare l'anteprima.",
             "deploy_failed": "Impossibile avviare il sidekick di self-deploy.",
             "status_failed": "Impossibile leggere lo stato del deploy."
         }
