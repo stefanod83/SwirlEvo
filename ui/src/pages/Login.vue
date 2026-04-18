@@ -83,9 +83,20 @@ const rules = {
   name: requiredRule(),
   password: requiredRule(),
 };
+// Routes that must never be used as post-login redirect targets: they either
+// loop back to auth (login/oauth-complete) or represent dead ends (404).
+// If any of these slip into ?redirect=..., default to home instead.
+function safeRedirect(raw: string | null | undefined): string {
+  const decoded = decodeURIComponent(raw || "/")
+  if (!decoded || decoded === "/login" || decoded === "/404" || decoded === "/oauth-complete") {
+    return "/"
+  }
+  return decoded
+}
+
 const { submit, submiting } = useForm<AuthUser>(form, () => userApi.login(model), (user: AuthUser) => {
   store.commit(Mutations.SetUser, user);
-  let redirect = decodeURIComponent(<string>route.query.redirect || "/");
+  const redirect = safeRedirect(<string>route.query.redirect);
   router.push({ path: redirect });
 })
 
@@ -106,7 +117,7 @@ async function loadProviders() {
 }
 
 function loginWithKeycloak() {
-  const redirect = <string>route.query.redirect || '/'
+  const redirect = safeRedirect(<string>route.query.redirect)
   window.location.href = '/api/auth/keycloak/login?redirect=' + encodeURIComponent(redirect)
 }
 
@@ -120,7 +131,7 @@ function loginWithKeycloak() {
 // successful OAuth complete.
 function redirectIfAuthenticated() {
   if (store.state.user?.token) {
-    const redirect = decodeURIComponent(<string>route.query.redirect || "/")
+    const redirect = safeRedirect(<string>route.query.redirect)
     router.replace({ path: redirect })
     return true
   }
