@@ -9,6 +9,7 @@
     `feedback_naive_ui_remote_sort.md` for the rationale.
   -->
   <n-data-table
+    remote
     :row-key="(row: any) => row.id"
     size="small"
     :columns="allColumns"
