@@ -89,14 +89,15 @@
       <div>{{ t('self_deploy.actions.auto_deploy_confirm_body') }}</div>
     </n-modal>
 
-    <!-- Live progress modal (shared composable) -->
+    <!-- Deploy-in-progress modal (shared composable): spinner +
+         status text, polls /api/system/mode. -->
     <n-modal
       v-model:show="progressOpen"
       :mask-closable="false"
       :closable="false"
       preset="card"
       :bordered="false"
-      style="width: 80vw; height: 80vh; max-width: 1200px;"
+      style="max-width: 520px;"
     >
       <template #header>
         <n-space align="center" :size="8">
@@ -109,22 +110,18 @@
           {{ t('self_deploy.progress.timeout') }}
         </n-tag>
       </template>
-      <div style="position: relative; width: 100%; height: calc(80vh - 90px);">
-        <iframe
-          v-if="progressUrl"
-          ref="progressIframe"
-          :src="progressUrl"
-          style="width: 100%; height: 100%; border: 0; background: #0f1318;"
-          @load="onIframeLoad"
-          @error="onIframeError"
-        />
-        <div v-if="progressIframeFailed" class="ads-iframe-fallback">
-          <p>{{ iframeFallbackMessage }}</p>
-          <p v-if="progressUrl">
-            <a :href="progressUrl" target="_blank" rel="noopener">{{ progressUrl }}</a>
-          </p>
+      <n-space vertical :size="12" style="padding: 8px 4px;">
+        <div style="font-size: 14px; line-height: 1.5">
+          {{ progressDescription }}
         </div>
-      </div>
+        <div class="muted" style="font-size: 13px">
+          {{ progressStatus }}
+          <span v-if="progressElapsed" style="margin-left: 8px; opacity: 0.7">({{ progressElapsed }})</span>
+        </div>
+        <div v-if="currentJobId" class="muted" style="font-size: 12px">
+          {{ t('self_deploy.status.job_id') }}: <code>{{ currentJobId }}</code>
+        </div>
+      </n-space>
     </n-modal>
 
     <!--
@@ -575,14 +572,12 @@ const isSelfDeployStack = computed(() => {
 
 const {
   progressOpen,
-  progressUrl,
-  progressIframe,
-  progressIframeFailed,
+  progressStatus,
+  progressDescription,
+  progressElapsed,
   progressTimedOut,
-  iframeFallbackMessage,
+  currentJobId,
   openProgressFromDeployResult,
-  onIframeLoad,
-  onIframeError,
 } = useAutoDeployProgress()
 
 async function loadSelfDeployConfig() {

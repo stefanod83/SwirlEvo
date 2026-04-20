@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
@@ -81,13 +80,8 @@ func selfDeployDeploy(b biz.SelfDeployBiz) web.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		recoveryURL := ""
-		if job.RecoveryPort > 0 {
-			recoveryURL = ":" + strconv.Itoa(job.RecoveryPort)
-		}
 		payload := data.Map{
 			"jobId":          job.ID,
-			"recoveryUrl":    recoveryURL,
 			"targetImageTag": job.TargetImageTag,
 			"stackName":      job.StackName,
 		}
@@ -104,13 +98,11 @@ func selfDeployStatus(b biz.SelfDeployBiz) web.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		recoveryActive := st.Phase == biz.SelfDeployPhaseRecovery
 		return success(c, data.Map{
 			"phase":             st.Phase,
 			"jobId":             st.JobID,
 			"error":             st.Error,
 			"logTail":           st.LogTail,
-			"recoveryActive":    recoveryActive,
 			"sidekickContainer": st.SidekickContainer,
 			"sidekickAlive":     st.SidekickAlive,
 			"sidekickLogs":      st.SidekickLogs,

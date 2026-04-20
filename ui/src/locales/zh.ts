@@ -815,8 +815,6 @@ export default {
         "source_stack_hint": "管理 Swirl 的 compose stack。",
         "auto_rollback": "失败时自动回滚",
         "deploy_timeout": "部署超时（秒）",
-        "recovery_port": "恢复界面端口",
-        "recovery_allow": "恢复界面 IP 白名单 (CIDR)",
         "actions": {
             "auto_deploy": "Auto-Deploy",
             "auto_deploy_confirm_title": "确认自动部署此 Swirl stack？",
@@ -833,8 +831,7 @@ export default {
             "success": "成功",
             "failed": "失败",
             "rolled_back": "已回滚",
-            "recovery": "恢复模式已激活",
-            "recovery_url": "恢复 UI",
+            "recovery": "需要手动恢复（回滚失败）",
             "job_id": "任务 ID",
             "log_tail": "最近日志",
             "no_logs": "暂无日志。",
@@ -853,11 +850,12 @@ export default {
         },
         "progress": {
             "title": "自部署进行中",
-            "failed_to_connect": "无法连接到辅助容器。请在新标签页中打开 {url} 查看进度。",
-            "timeout": "部署耗时超出预期，请查看实时视图了解详情。"
-        },
-        "warnings": {
-            "allow_any_ip": "安全警告：恢复白名单包含 0.0.0.0/0 — 恢复 UI 将接受来自任何来源的连接。"
+            "description": "Swirl 容器正在被辅助容器替换。新的 Swirl 上线后此页面将自动重新加载。",
+            "waiting_initial": "等待部署开始…",
+            "waiting_restored": "部署已在进行中 — 正在重新连接…",
+            "waiting_connecting": "无法连接主 Swirl — 等待新容器响应。",
+            "waiting_503": "新 Swirl 正在启动 — 等待就绪。",
+            "timeout": "部署耗时超出预期。"
         },
         "errors": {
             "swarm_blocked": "自部署仅在 standalone 模式下可用。",

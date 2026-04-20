@@ -821,8 +821,6 @@ export default {
         "source_stack_hint": "Lo stack compose che gestisce Swirl.",
         "auto_rollback": "Rollback automatico su errore",
         "deploy_timeout": "Timeout deploy (secondi)",
-        "recovery_port": "Porta UI di recovery",
-        "recovery_allow": "Allow-list IP recovery (CIDR)",
         "actions": {
             "auto_deploy": "Auto-Deploy",
             "auto_deploy_confirm_title": "Eseguire Auto-Deploy dello stack Swirl?",
@@ -839,8 +837,7 @@ export default {
             "success": "Completato",
             "failed": "Fallito",
             "rolled_back": "Rollback eseguito",
-            "recovery": "Modalità recovery attiva",
-            "recovery_url": "UI di recovery",
+            "recovery": "Recovery richiesto (rollback manuale necessario)",
             "job_id": "Id job",
             "log_tail": "Log recenti",
             "no_logs": "Nessun log ancora.",
@@ -859,11 +856,12 @@ export default {
         },
         "progress": {
             "title": "Auto-deploy in corso",
-            "failed_to_connect": "Impossibile raggiungere il sidekick. Apri {url} in una nuova scheda per vedere il progresso.",
-            "timeout": "Il deploy sta richiedendo più del previsto. Consulta la vista live per i dettagli."
-        },
-        "warnings": {
-            "allow_any_ip": "Avviso di sicurezza: la allow-list di recovery contiene 0.0.0.0/0 — la UI di recovery accetterà connessioni da QUALSIASI sorgente."
+            "description": "Il container Swirl è in fase di sostituzione tramite il sidekick. Questa pagina si ricaricherà automaticamente quando il nuovo Swirl sarà online.",
+            "waiting_initial": "In attesa dell'avvio del deploy…",
+            "waiting_restored": "Deploy già in corso — riconnessione in corso…",
+            "waiting_connecting": "Swirl primario non raggiungibile — in attesa della risposta del nuovo container.",
+            "waiting_503": "Nuovo Swirl in avvio — in attesa della readiness.",
+            "timeout": "Il deploy sta richiedendo più del previsto."
         },
         "errors": {
             "swarm_blocked": "Il self-deploy è disponibile solo in modalità standalone.",

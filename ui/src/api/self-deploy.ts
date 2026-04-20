@@ -1,15 +1,14 @@
 import ajax, { Result } from './ajax'
 
-// Mirrors biz.SelfDeployConfig (v3). No template, no placeholders —
-// the YAML is read verbatim from the compose stack identified by
-// `sourceStackId` and edited through the normal compose_stack editor.
+// Mirrors biz.SelfDeployConfig (v3-simplified: no template,
+// no placeholders, no recovery UI). The YAML is read verbatim from the
+// compose stack identified by `sourceStackId` and edited through the
+// normal compose_stack editor.
 export interface SelfDeployConfig {
     enabled: boolean;
     sourceStackId: string;
     autoRollback: boolean;
     deployTimeout: number;
-    recoveryPort: number;
-    recoveryAllow: string[];
 }
 
 export interface SelfDeployStatus {
@@ -19,8 +18,6 @@ export interface SelfDeployStatus {
     finishedAt?: string;
     error?: string;
     logTail?: string[];
-    recoveryActive: boolean;
-    recoveryUrl?: string;
     // Sidekick introspection (populated by the biz layer at every
     // /status poll via docker inspect + docker logs — lets the UI show
     // sidekick output even when the sidekick crashed before writing any
@@ -36,7 +33,6 @@ export interface SelfDeployStatus {
 
 export interface SelfDeployDeployResult {
     jobId: string;
-    recoveryUrl: string;
     targetImageTag?: string;
     stackName?: string;
 }
@@ -48,8 +44,6 @@ export const defaultConfig: SelfDeployConfig = {
     sourceStackId: '',
     autoRollback: true,
     deployTimeout: 300,
-    recoveryPort: 8002,
-    recoveryAllow: ['127.0.0.1/32'],
 }
 
 export class SelfDeployApi {

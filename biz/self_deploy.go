@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -72,15 +71,14 @@ type SelfDeployBiz interface {
 // feature (v3).
 //
 // Retrocompat: older records that still carry the v1/v2 fields
-// (`template`, `placeholders`) unmarshal cleanly — json.Unmarshal
-// drops unknown keys. No migration is required.
+// (`template`, `placeholders`, `recoveryPort`, `recoveryAllow`)
+// unmarshal cleanly — json.Unmarshal drops unknown keys. No migration
+// is required.
 type SelfDeployConfig struct {
-	Enabled       bool     `json:"enabled"`
-	SourceStackID string   `json:"sourceStackId"`
-	AutoRollback  bool     `json:"autoRollback"`
-	DeployTimeout int      `json:"deployTimeout"` // seconds
-	RecoveryPort  int      `json:"recoveryPort"`
-	RecoveryAllow []string `json:"recoveryAllow"`
+	Enabled       bool   `json:"enabled"`
+	SourceStackID string `json:"sourceStackId"`
+	AutoRollback  bool   `json:"autoRollback"`
+	DeployTimeout int    `json:"deployTimeout"` // seconds
 }
 
 // SelfDeployStatus is the snapshot surfaced by the Status endpoint.
@@ -180,12 +178,6 @@ func applyConfigDefaults(cfg *SelfDeployConfig) *SelfDeployConfig {
 	if cfg.DeployTimeout <= 0 {
 		cfg.DeployTimeout = misc.SelfDeployDefaultTimeoutSec
 	}
-	if cfg.RecoveryPort <= 0 {
-		cfg.RecoveryPort = misc.SelfDeployRecoveryPort
-	}
-	if len(cfg.RecoveryAllow) == 0 {
-		cfg.RecoveryAllow = []string{misc.SelfDeployDefaultRecoveryCIDR}
-	}
 	// AutoRollback has no "unset" sentinel — default to true when a
 	// brand-new record is being created (Enabled=false && no source
 	// stack yet). Once the operator saves a config we trust the
@@ -206,14 +198,6 @@ func (b *selfDeployBiz) SaveConfig(ctx context.Context, cfg *SelfDeployConfig, u
 	if cfg.Enabled && cfg.SourceStackID == "" {
 		return errors.New("self-deploy: source stack is required when enabled")
 	}
-	// Normalise recovery_allow: strip empties, de-dup whitespace.
-	allow := make([]string, 0, len(cfg.RecoveryAllow))
-	for _, c := range cfg.RecoveryAllow {
-		if s := strings.TrimSpace(c); s != "" {
-			allow = append(allow, s)
-		}
-	}
-	cfg.RecoveryAllow = allow
 
 	buf, err := json.Marshal(cfg)
 	if err != nil {
@@ -388,15 +372,6 @@ func (b *selfDeployBiz) prepareJob(ctx context.Context) (*SelfDeployJob, error) 
 		prevImage = sidekickImageFallback
 	}
 
-	allow := cfg.RecoveryAllow
-	if len(allow) == 0 {
-		allow = []string{misc.SelfDeployDefaultRecoveryCIDR}
-	}
-	recPort := cfg.RecoveryPort
-	if recPort <= 0 {
-		recPort = misc.SelfDeployRecoveryPort
-	}
-
 	job := &SelfDeployJob{
 		ID:          createId(),
 		CreatedAt:   time.Now().UTC(),
@@ -410,8 +385,6 @@ func (b *selfDeployBiz) prepareJob(ctx context.Context) (*SelfDeployJob, error) 
 		PrimaryContainer: selfID,
 		SourceStackID:    cfg.SourceStackID,
 		StackName:        stack.Name,
-		RecoveryPort:     recPort,
-		RecoveryAllow:    allow,
 		TimeoutSec:       cfg.DeployTimeout,
 		AutoRollback:     cfg.AutoRollback,
 		EnvVars:          envVars,
@@ -882,8 +855,6 @@ func (b *selfDeployBiz) spawnSidekick(ctx context.Context, cli *dockerclient.Cli
 
 	env := []string{
 		"SWIRL_SELF_DEPLOY_JOB=" + jobPath,
-		"SWIRL_RECOVERY_PORT=" + strconv.Itoa(job.RecoveryPort),
-		"SWIRL_RECOVERY_ALLOW=" + strings.Join(job.RecoveryAllow, ","),
 	}
 
 	// ENTRYPOINT of the Swirl image is `/app/swirl`. Passing only
@@ -1202,19 +1173,11 @@ func validateInvariants(job *SelfDeployJob) error {
 	if err != nil {
 		return fmt.Errorf("self-deploy: YAML is invalid: %w", err)
 	}
-	if job.RecoveryPort != 0 && job.Placeholders.ExposePort != 0 && job.RecoveryPort == job.Placeholders.ExposePort {
-		return fmt.Errorf("self-deploy: RecoveryPort (%d) must differ from ExposePort", job.RecoveryPort)
-	}
 	if cfg != nil {
 		for _, svc := range cfg.Services {
 			if svc.ContainerName != "" && sidekickContainerNameRe.MatchString(svc.ContainerName) {
 				return fmt.Errorf("self-deploy: service %q uses container_name %q which collides with the sidekick naming pattern (swirl-deploy-agent-*); rename the service", svc.Name, svc.ContainerName)
 			}
-		}
-	}
-	for _, cidr := range job.RecoveryAllow {
-		if strings.TrimSpace(cidr) == "0.0.0.0/0" {
-			log.Get("self-deploy").Warnf("self-deploy: RecoveryAllow includes 0.0.0.0/0 — recovery UI will accept connections from ANY source; ensure the port is firewalled")
 		}
 	}
 	return nil

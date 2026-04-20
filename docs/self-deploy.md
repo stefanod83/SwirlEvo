@@ -6,6 +6,16 @@ Swirl can redeploy itself. The v3 flow is:
 2. Flag it as the self-deploy source in **Settings → Self-deploy**.
 3. When you open that stack's Edit page, the **Deploy** button becomes **Auto-Deploy** (warning-colored). Click it to trigger a short-lived sidekick container that stops the running Swirl, pulls the new image, redeploys the stack, and verifies the new Swirl is healthy.
 
+While the deploy is in flight, the Swirl UI shows a simple **"Deploy in
+progress"** modal. It polls `/api/system/mode` every 3 seconds; when
+the new primary is online, the page full-reloads. There is **no iframe,
+no sidekick HTTP server, no recovery UI** — the sidekick is a silent
+one-shot process whose only outputs are `state.json` on the shared
+volume and `docker logs` of its own container. The post-deploy
+Settings page shows the terminal phase + sidekick container logs
+inline; manual rollback (if auto-rollback failed) is a short CLI
+sequence documented under [Rollback](#rollback).
+
 This page is the operator guide. The feature is **standalone mode only**.
 
 ---
@@ -16,8 +26,8 @@ This page is the operator guide. The feature is **standalone mode only**.
 2. [Prerequisites](#prerequisites)
 3. [Getting started](#getting-started)
 4. [Subsequent deploys via the UI](#subsequent-deploys-via-the-ui)
-5. [Live progress + session survival](#live-progress--session-survival)
-6. [Recovery mode + stuck lock](#recovery-mode--stuck-lock)
+5. [Progress modal + session survival](#progress-modal--session-survival)
+6. [Stuck lock recovery](#stuck-lock-recovery)
 7. [Rollback](#rollback)
 8. [Preflight validation](#preflight-validation)
 9. [Troubleshooting](#troubleshooting)
@@ -32,7 +42,7 @@ This page is the operator guide. The feature is **standalone mode only**.
 |-----------|------|
 | **Source ComposeStack** | A Swirl-managed compose stack whose YAML describes the currently-running Swirl + its siblings (mongodb, etc.). Lives in Swirl's own DB. |
 | **Main Swirl** | Validates the source YAML, parses `.env`-style variables, writes `job.json` on the shared `/data/self-deploy/` volume, and spawns the sidekick. |
-| **Sidekick container** (`swirl-deploy-agent-<short>`) | Runs with `network_mode: host`. Stops + renames old primary, pulls image, calls `StandaloneEngine.DeployWithResult` on the stack's project name (preserving the renamed backup via `PreserveContainerNames`), health-checks the new Swirl by resolving its container IP from compose labels, then removes the backup. Exits when the deploy resolves. |
+| **Sidekick container** (`swirl-deploy-agent-<short>`) | Runs with `network_mode: host`. Stops + renames old primary, pulls image, calls `StandaloneEngine.DeployWithResult` on the stack's project name (preserving the renamed backup via `PreserveContainerNames`), health-checks the new Swirl by resolving its container IP from compose labels, then removes the backup. Exits when the deploy resolves. **No HTTP server, no recovery UI** — the sidekick only writes `state.json` and exits with 0 on success / 3 on any non-success terminal. |
 | **Shared volume** (`/data/self-deploy/`) | Contains `job.json`, `state.json`, `.lock`. Survives across container swaps **only** if the Swirl service in the source YAML mounts a persistent volume at `/data`. A preflight check blocks the deploy if this mount is missing. |
 
 ### The rename-then-deploy pivot
@@ -66,6 +76,7 @@ The renamed backup still carries the `com.docker.compose.project=<stack>` label.
 - **Docker socket mount.** `/var/run/docker.sock:/var/run/docker.sock` on the primary.
 - **External networks must exist.** If your YAML references `external: true` networks (e.g. `traefik-net`), they must already exist on the daemon — `preflightExternalNetworks` bails otherwise.
 - **Env file syntax is respected.** The source stack's EnvFile (`.env`) is parsed and its vars are injected before YAML parse, both primary-side (for preflight) and sidekick-side (for the actual deploy). `${VAR}` references in volumes/ports/env resolve as expected.
+- **No recovery port / allow-list required.** v3 removed the sidekick HTTP server entirely — no port to open, no CIDR to allow-list.
 
 ---
 
@@ -135,11 +146,11 @@ Then:
 2. Open **Settings → Self-deploy**:
    - Flip **Enabled**.
    - Pick the stack from the **Source stack** dropdown.
-   - Optional: tune **Auto-rollback**, **Deploy timeout**, **Recovery port**, **Recovery allow-list**.
+   - Optional: tune **Auto-rollback**, **Deploy timeout**.
    - Click **Save**.
 3. Navigate to **Stacks → that stack → Edit**. The **Deploy** button is now yellow and labeled **Auto-Deploy**.
-4. Change the `image:` tag in the YAML editor to the new version, click **Save**, then **Auto-Deploy**.
-5. A modal opens with a live progress iframe served by the sidekick on `<recovery-port>`.
+4. Change the `image:` tag in the YAML editor to the new version, then click **Auto-Deploy** (it auto-saves the stack before triggering the deploy).
+5. A small modal appears: "Self-deploy in progress — this page will auto-reload when the new Swirl is online."
 6. When the new Swirl answers `GET /api/system/mode`, the modal closes and the page full-reloads on `/`.
 
 ---
@@ -152,21 +163,47 @@ There is no separate "template editor" in Settings — the YAML is the single so
 
 ---
 
-## Live progress + session survival
+## Progress modal + session survival
 
-During a deploy the following guardrails are active:
+When Auto-Deploy is clicked, the UI opens a small modal with a spinner
+and a status line like:
 
-- **`selfDeployInProgress` flag** (Vuex + sessionStorage, 10-minute TTL): set when Auto-Deploy opens the progress modal.
-- **Axios interceptor** ([ui/src/api/ajax.ts](../ui/src/api/ajax.ts)): while the flag is true, transient 401/403/404/500 responses are **silenced** (resolved with a synthetic `{code:-1}` body rather than a never-resolving promise) so:
-  - The operator is NOT redirected to login when the old Swirl's HTTP server shuts down.
+> **Self-deploy in progress**
+> Swirl is being swapped out by the sidekick container. This page will
+> auto-reload as soon as the new Swirl is online.
+>
+> Primary Swirl unreachable — waiting for the new container to respond. (0:15)
+>
+> Job id: abc12345
+
+The modal is **purely client-side**:
+
+- **Polling**: `GET /api/system/mode` every 3 seconds via plain
+  `fetch` (bypasses axios). First `200 OK` closes the modal, clears
+  the in-progress flag, and full-reloads the page on `/`.
+- **Session flag**: `selfDeployInProgress` in Vuex, persisted in
+  `sessionStorage` with a 10-minute TTL. Set when Auto-Deploy opens
+  the modal, cleared on success.
+- **Axios interceptor** ([ui/src/api/ajax.ts](../ui/src/api/ajax.ts)):
+  while the flag is true, transient 401/403/404/500 responses are
+  **silenced** (resolved with a synthetic `{code:-1}` body rather
+  than a never-resolving promise) so:
+  - The operator is NOT redirected to login when the old Swirl's
+    HTTP server shuts down.
   - No memory leak from accumulating pending async closures.
-- **Router guard**: while the flag is true, any navigation away from `setting`/`login`/`init` is bounced back to `setting` so the progress modal stays visible.
-- **Session restore**: if the tab full-reloads mid-deploy, the Settings page checks sessionStorage on mount and re-opens the modal via `resumeFromSession()`.
-- **Polling**: the modal polls `GET /api/system/mode` every 3 seconds via plain `fetch` (bypasses the axios interceptor). First `200 OK` triggers `onDeploySuccess` which clears the flag and reloads the page.
+- **Router guard**: while the flag is true, any navigation away from
+  `setting`/`login`/`init` is bounced back to `setting` so the modal
+  stays visible.
+- **Session restore**: if the tab full-reloads mid-deploy, the
+  Settings page checks sessionStorage on mount and re-opens the
+  modal via `resumeFromSession()`.
+- **5-minute timeout tag**: after 5 minutes without a 200 from
+  `/api/system/mode`, the modal header shows a "Deploy is taking
+  longer than expected" warning tag. The poll continues.
 
 ---
 
-## Recovery mode + stuck lock
+## Stuck lock recovery
 
 ### Stale lock detection
 
@@ -201,7 +238,10 @@ Enabled by default. On any deploy failure after the rename step:
 3. Rename `swirl-previous` back to the original name.
 4. Start it + health-check against it (30s budget, via the same label-based URL resolver).
 
-If rollback itself fails, the state transitions to `recovery` and the sidekick keeps serving its HTTP server for manual intervention.
+If rollback itself fails, the state transitions to `recovery` — the
+sidekick exits 3, the `.lock` is released, and the Settings page
+shows the terminal `state.json` + inline sidekick logs. At this
+point you must recover manually (see below).
 
 ### Manual rollback (last resort)
 
@@ -227,7 +267,6 @@ Before the sidekick is spawned, `prepareJob` runs a battery of checks — any fa
 7. **Daemon-aware invariants**:
    - Primary container exists.
    - External networks and volumes exist.
-   - `RecoveryPort ≠ ExposePort`.
    - No service uses `container_name` colliding with `swirl-deploy-agent-*`.
 8. **Stack compatibility** (`checkStackCompatibility`):
    - For every env var on the primary that looks like `scheme://host:port`, if `host` matches a target service name, the Swirl service and that service must share at least one network in the target YAML. Example blocker:
@@ -282,10 +321,9 @@ Post-fix: the sidekick resolves the target container's IP via `com.docker.compos
 
 ## Security considerations
 
-- **Sidekick HTTP server** guarded by IP allow-list + per-session CSRF token. Default allow-list: `127.0.0.1/32`.
-- **Docker socket mount** on the sidekick is equivalent to root on the host. Attack surface is the 3-endpoint HTTP server.
-- **Recovery port NOT auto-published** — loopback only by default. Widen via `RecoveryAllow` or via SSH tunnel.
+- **Docker socket mount** on the sidekick is equivalent to root on the host. Attack surface is just the one-shot deploy process that exits when the deploy resolves. No HTTP server to attack, no CSRF, no allow-list needed.
 - **Audit events** emitted for every lifecycle transition: `SelfDeployStart`, `SelfDeploySuccess`, `SelfDeployFailure`, `SelfDeployReset`.
+- **Sidekick lifetime** is capped by the deploy timeout (default 300s). After that the context is cancelled and the sidekick exits — no long-lived daemon lingering with socket access.
 
 ---
 

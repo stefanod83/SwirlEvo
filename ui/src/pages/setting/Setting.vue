@@ -535,28 +535,7 @@
                 style="width: 100%"
               />
             </n-form-item>
-            <n-form-item :label="t('self_deploy.recovery_port')" label-align="right">
-              <n-input-number
-                :min="1"
-                :max="65535"
-                v-model:value="selfDeploy.recoveryPort"
-                style="width: 100%"
-              />
-            </n-form-item>
-            <n-form-item :label="t('self_deploy.recovery_allow')" label-align="right">
-              <n-input
-                type="textarea"
-                :autosize="{ minRows: 2, maxRows: 6 }"
-                v-model:value="recoveryAllowText"
-              />
-            </n-form-item>
           </n-form>
-          <n-alert
-            v-if="recoveryAllowWarn"
-            type="error"
-            :show-icon="true"
-            style="margin: 8px 0 0 0;"
-          >{{ t('self_deploy.warnings.allow_any_ip') }}</n-alert>
         </div>
 
         <!-- Save -->
@@ -586,20 +565,6 @@
               {{ t('self_deploy.status.job_id') }}: <code>{{ sdStatus.jobId }}</code>
             </span>
           </n-space>
-          <n-alert
-            v-if="sdStatus.recoveryActive"
-            type="error"
-            :show-icon="true"
-            :title="t('self_deploy.status.recovery')"
-            style="margin-bottom: 8px"
-          >
-            <a
-              v-if="recoveryLink"
-              :href="recoveryLink"
-              target="_blank"
-              rel="noopener"
-            >{{ t('self_deploy.status.recovery_url') }}: {{ recoveryLink }}</a>
-          </n-alert>
           <n-alert
             v-if="sdStatus.error"
             type="error"
@@ -659,14 +624,16 @@
       </n-space>
     </x-panel>
 
-    <!-- Live progress modal: iframes the sidekick UI while the deploy runs. -->
+    <!-- Deploy-in-progress modal: no iframe. Just a spinner + status
+         line while `/api/system/mode` is polled. Closes + reloads the
+         page when the new Swirl answers 200. -->
     <n-modal
       v-model:show="progressOpen"
       :mask-closable="false"
       :closable="false"
       preset="card"
       :bordered="false"
-      style="width: 80vw; height: 80vh; max-width: 1200px;"
+      style="max-width: 520px;"
     >
       <template #header>
         <n-space align="center" :size="8">
@@ -679,27 +646,18 @@
           {{ t('self_deploy.progress.timeout') }}
         </n-tag>
       </template>
-      <div style="position: relative; width: 100%; height: calc(80vh - 90px);">
-        <iframe
-          v-if="progressUrl"
-          ref="progressIframe"
-          :src="progressUrl"
-          style="width: 100%; height: 100%; border: 0; background: #0f1318;"
-          @load="onIframeLoad"
-          @error="onIframeError"
-        />
-        <div
-          v-if="progressIframeFailed"
-          class="sd-iframe-fallback"
-        >
-          <p>
-            {{ iframeFallbackMessage }}
-          </p>
-          <p v-if="progressUrl">
-            <a :href="progressUrl" target="_blank" rel="noopener">{{ progressUrl }}</a>
-          </p>
+      <n-space vertical :size="12" style="padding: 8px 4px;">
+        <div style="font-size: 14px; line-height: 1.5">
+          {{ progressDescription }}
         </div>
-      </div>
+        <div class="sd-muted" style="font-size: 13px">
+          {{ progressStatus }}
+          <span v-if="progressElapsed" style="margin-left: 8px; opacity: 0.7">({{ progressElapsed }})</span>
+        </div>
+        <div v-if="currentJobId" class="sd-muted" style="font-size: 12px">
+          {{ t('self_deploy.status.job_id') }}: <code>{{ currentJobId }}</code>
+        </div>
+      </n-space>
     </n-modal>
 
     <x-panel
@@ -1056,10 +1014,6 @@ const canEditSelfDeploy = computed(() => store.getters.allow('self_deploy.edit')
 // so the form is never empty on first mount.
 const selfDeploy = ref<SelfDeployConfig>({ ...sdDefaultConfig })
 
-// Textarea-backed plain string for recoveryAllow; split/join at the
-// backend boundary.
-const recoveryAllowText = ref('')
-
 const sdSaving = ref(false)
 const sdSaveError = ref('')
 
@@ -1073,49 +1027,21 @@ const sdStatus = ref<SelfDeployStatus | null>(null)
 const sdResetting = ref(false)
 let sdPollTimer: number | null = null
 
-// Live-progress iframe modal — reused from the composable, shared
-// with compose_stack/Edit.vue so the exact same modal opens there
-// when the operator clicks Auto-Deploy.
+// Progress modal (v3-simplified: spinner + status text, no iframe).
 const {
   progressOpen,
-  progressUrl,
-  progressIframe,
-  progressIframeFailed,
+  progressStatus,
+  progressDescription,
+  progressElapsed,
   progressTimedOut,
-  iframeFallbackMessage,
+  currentJobId,
   resumeFromSession,
-  onIframeLoad,
-  onIframeError,
 } = useAutoDeployProgress()
-
-const recoveryAllowWarn = computed(() => {
-  return (selfDeploy.value.recoveryAllow || []).some(
-    (c: string) => c.trim() === '0.0.0.0/0'
-  )
-})
-
-const recoveryLink = computed(() => {
-  const port = selfDeploy.value.recoveryPort
-  if (!port) return ''
-  return `${window.location.protocol}//${window.location.hostname}:${port}/`
-})
 
 const logTailText = computed(() => {
   if (!sdStatus.value?.logTail || sdStatus.value.logTail.length === 0) return ''
   return sdStatus.value.logTail.slice(-20).join('\n')
 })
-
-// Keep selfDeploy.recoveryAllow in sync with the textarea.
-watch(recoveryAllowText, (v) => {
-  selfDeploy.value.recoveryAllow = splitLines(v)
-})
-
-function splitLines(v: string): string[] {
-  return (v || '')
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-}
 
 function phaseTagType(phase: string): 'default' | 'info' | 'success' | 'warning' | 'error' {
   switch (phase) {
@@ -1144,20 +1070,12 @@ async function loadSelfDeploy() {
     const r = await selfDeployApi.loadConfig()
     if (r?.data) {
       const cfg = r.data
-      // Merge with defaults to protect against missing fields. v3
-      // silently drops legacy template/placeholders fields because
-      // the TypeScript interface no longer names them.
       selfDeploy.value = {
         enabled: !!cfg.enabled,
         sourceStackId: cfg.sourceStackId || '',
         autoRollback: cfg.autoRollback ?? true,
         deployTimeout: cfg.deployTimeout || 300,
-        recoveryPort: cfg.recoveryPort || 8002,
-        recoveryAllow: (cfg.recoveryAllow && cfg.recoveryAllow.length)
-          ? cfg.recoveryAllow
-          : ['127.0.0.1/32'],
       }
-      recoveryAllowText.value = (selfDeploy.value.recoveryAllow || []).join('\n')
     }
   } catch (e: any) {
     sdSaveError.value = e?.message || t('self_deploy.errors.save_failed')
@@ -1186,8 +1104,6 @@ async function saveSelfDeploy() {
   sdSaving.value = true
   sdSaveError.value = ''
   try {
-    // Sync textarea one last time in case the watch is still debouncing.
-    selfDeploy.value.recoveryAllow = splitLines(recoveryAllowText.value)
     if (selfDeploy.value.enabled && !selfDeploy.value.sourceStackId) {
       sdSaveError.value = t('self_deploy.errors.source_stack_required')
       return

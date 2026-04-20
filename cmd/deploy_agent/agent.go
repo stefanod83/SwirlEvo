@@ -24,26 +24,30 @@ import (
 // first CLI argument is `deploy-agent`. Run returns an exit code that
 // main passes straight to os.Exit.
 //
-// Phase 4 behaviour:
+// v3 simplified:
 //   - `--help` / `-h` → prints a short banner and exits 0.
 //   - missing EnvJobPath → writes a one-line error to stderr and exits 2.
-//   - otherwise → loads job.json, seeds state.json, spawns the
-//     runDeploy pipeline, and exits with 0 on success / 3 on recovery-
-//     or-failure terminal states.
+//   - otherwise → loads job.json, seeds state.json, runs the deploy
+//     pipeline, writes the terminal state, releases the lock, rotates
+//     history, and exits 0 on success / 3 on any non-success terminal.
 //
-// Signal handling: SIGINT/SIGTERM cancels the deploy context, marks
-// the state as failed, releases the lock, and exits 130. The sidekick
-// is designed to be killable — the rename-based safety pivot means a
-// hard kill mid-deploy never leaves the operator container-less: the
-// previous container still exists (possibly renamed back).
+// No HTTP progress server. No recovery UI. No allow-list. The main
+// Swirl UI tracks progress by polling `/api/system/mode` (primary
+// comes back up) and reading state.json via `/api/self-deploy/status`
+// once the new primary is alive. If a deploy ends in `recovery` or
+// `failed` the operator runs the manual-rollback snippet documented
+// in `docs/self-deploy.md`.
+//
+// Signal handling: SIGINT/SIGTERM cancels the deploy context, flushes
+// state, releases the lock, and exits 130. The rename-based safety
+// pivot means a hard kill mid-deploy never leaves the operator
+// container-less: the previous container still exists (possibly
+// renamed back).
 func Run() int {
 	return runWithIO(os.Args[2:], os.Stdout, os.Stderr)
 }
 
-// runWithIO is the testable inner loop. It takes the argument slice
-// that follows the `deploy-agent` subcommand (i.e. os.Args[2:]) plus
-// explicit stdout/stderr writers so the behaviour is observable from
-// unit tests without touching the process globals.
+// runWithIO is the testable inner loop.
 func runWithIO(args []string, stdout, stderr io.Writer) int {
 	flagSet := flag.NewFlagSet("swirl deploy-agent", flag.ContinueOnError)
 	flagSet.SetOutput(stderr)
@@ -51,7 +55,6 @@ func runWithIO(args []string, stdout, stderr io.Writer) int {
 	flagSet.BoolVar(help, "h", false, "print this message and exit (short)")
 
 	if err := flagSet.Parse(args); err != nil {
-		// flag.ContinueOnError already wrote the usage line to stderr.
 		return ExitUsage
 	}
 
@@ -72,9 +75,6 @@ func runWithIO(args []string, stdout, stderr io.Writer) int {
 		return ExitUsage
 	}
 
-	// Derive the state file path from the job file's directory so the
-	// primary and the sidekick stay in lockstep without hardcoding the
-	// state filename twice.
 	stateDir := filepath.Dir(jobPath)
 	statePath := filepath.Join(stateDir, DefaultStateFile)
 	lockPath := filepath.Join(stateDir, DefaultLockFile)
@@ -93,9 +93,6 @@ func runWithIO(args []string, stdout, stderr io.Writer) int {
 		return ExitRuntime
 	}
 
-	// Install signal handlers BEFORE runDeploy so SIGTERM during the
-	// very first Docker call gets a graceful shutdown (lock released,
-	// state flushed) instead of a naked exit.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigCh := make(chan os.Signal, 1)
@@ -110,28 +107,8 @@ func runWithIO(args []string, stdout, stderr io.Writer) int {
 			cancel()
 			close(interrupted)
 		case <-ctx.Done():
-			// normal completion; unblock the goroutine
 		}
 	}()
-
-	// Always-on progress server: start the HTTP server at the BEGINNING
-	// of the deploy so the main Swirl UI can embed it via iframe and
-	// show the operator real-time logs + phase. Previously this server
-	// spawned ONLY on failure; keeping the same HTTP surface alive for
-	// the happy path means operators don't stare at a banner while the
-	// deploy is running.
-	//
-	// If startProgressServer fails (port busy, docker unreachable from
-	// sidekick's perspective, …) we log a warning and keep going — the
-	// deploy itself does NOT depend on the UI being up.
-	port := selectRecoveryPort(job)
-	allow := selectRecoveryAllow(job)
-	trustProxy := selectRecoveryTrustProxy()
-	progress, progressErr := startProgressServer(ctx, job, sw, port, allow, trustProxy)
-	if progressErr != nil {
-		logger.Warnf("deploy-agent: could not start progress server (deploy continues): %v", progressErr)
-		sw.Logf("warning: progress UI unavailable: %v", progressErr)
-	}
 
 	runErr := runDeploy(ctx, job, sw)
 
@@ -147,100 +124,26 @@ func runWithIO(args []string, stdout, stderr io.Writer) int {
 		logger.Warnf("deploy-agent: history rotation failed: %v", err)
 	}
 
-	// Check interrupted BEFORE deciding the exit code so a
-	// cancel-triggered failure is distinguishable from a deploy that
-	// legitimately failed.
 	select {
 	case <-interrupted:
-		if progress != nil {
-			progress.shutdown()
-		}
 		sw.Close()
 		logger.Warn("deploy-agent: exiting with code 130 after signal")
 		return 130
 	default:
 	}
 
+	sw.Close()
+
 	if runErr == nil {
-		// Happy path — new Swirl is up. Shut the progress UI down so
-		// the port is free (and the JS in the iframe sees the server
-		// going away as a success signal via its polling error path).
-		if progress != nil {
-			sw.Logf("deploy succeeded; shutting down progress UI")
-			progress.shutdown()
-		}
-		sw.Close()
 		logger.Infof("deploy-agent: job %s completed successfully", job.ID)
 		return ExitOK
 	}
-
-	// Recovery / rolled-back / failed — the progress server (started
-	// above) remains alive and seamlessly serves the recovery UI: same
-	// HTTP handlers, same state.json. The JS embedded in index.html
-	// flips button visibility based on state.phase, so no server-side
-	// mode switch is required.
 	logger.Errorf("deploy-agent: job %s did not succeed: %v", job.ID, runErr)
-
-	// Already-rolled-back is a non-interactive terminal state: the
-	// previous Swirl is healthy again, there is nothing for the
-	// operator to do from the recovery UI. Exit straight away.
-	finalPhase := ""
-	sw.mu.Lock()
-	finalPhase = sw.st.Phase
-	sw.mu.Unlock()
-	if finalPhase == biz.SelfDeployPhaseRolledBack {
-		if progress != nil {
-			// On rollback success the main UI is back up — shut the
-			// progress server so the previous Swirl can reclaim any
-			// shared port and the operator sees the normal UI again.
-			sw.Logf("rollback succeeded; shutting down progress UI")
-			progress.shutdown()
-		}
-		sw.Close()
-		logger.Warnf("deploy-agent: job %s rolled back to previous version; exiting", job.ID)
-		return ExitDeployErr
-	}
-
-	// Failure without rollback (or rollback failed): keep the server
-	// alive and wait for operator action. awaitRecovery blocks until
-	// Retry/Rollback succeeds OR ctx is cancelled.
-	if progress == nil {
-		// Couldn't even start the server earlier — nothing else to do.
-		sw.Close()
-		logger.Errorf("deploy-agent: recovery UI unavailable; exiting with failure")
-		fmt.Fprintf(stderr, "swirl deploy-agent: recovery UI unavailable\n")
-		return ExitDeployErr
-	}
-
-	sw.Logf("entering recovery mode on port %d (allow-list: %s)", port, strings.Join(allow, ","))
-	recErr := progress.awaitRecovery(ctx)
-
-	// Re-check interrupted now — awaitRecovery blocks until either
-	// ctx cancel, success, or a server error. A SIGINT during the
-	// recovery server should surface as 130 the same way as during
-	// runDeploy.
-	select {
-	case <-interrupted:
-		sw.Close()
-		logger.Warn("deploy-agent: exiting with code 130 after signal during recovery")
-		return 130
-	default:
-	}
-
-	sw.Close()
-
-	if recErr == nil {
-		logger.Infof("deploy-agent: job %s recovered via operator action", job.ID)
-		return ExitOK
-	}
-	logger.Errorf("deploy-agent: recovery ended with error: %v", recErr)
-	fmt.Fprintf(stderr, "swirl deploy-agent: recovery exited: %v\n", recErr)
+	fmt.Fprintf(stderr, "swirl deploy-agent: %v\n", runErr)
 	return ExitDeployErr
 }
 
 // loadJob reads and unmarshals the JSON job descriptor from disk.
-// Surfaces clear errors so the operator can tell whether the file is
-// missing, empty, or malformed.
 func loadJob(path string) (*biz.SelfDeployJob, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -262,9 +165,8 @@ func loadJob(path string) (*biz.SelfDeployJob, error) {
 // rotateHistory copies the current job.json + state.json into a
 // per-job directory under history/ so past deploys remain auditable
 // after the next job overwrites them. Caps the history at 20 entries
-// (FIFO by directory mtime).
-//
-// Non-fatal — failure here does not change the deploy outcome.
+// (FIFO by directory mtime). Non-fatal — failure here does not change
+// the deploy outcome.
 func rotateHistory(stateDir string, job *biz.SelfDeployJob, sw *stateWriter) error {
 	if job == nil || job.ID == "" {
 		return errors.New("nil job or empty id")
@@ -278,7 +180,6 @@ func rotateHistory(stateDir string, job *biz.SelfDeployJob, sw *stateWriter) err
 		return fmt.Errorf("mkdir %s: %w", target, err)
 	}
 
-	// Flush state so the copy reflects the final phase.
 	sw.mu.Lock()
 	_ = sw.flushLocked()
 	sw.mu.Unlock()
@@ -295,9 +196,6 @@ func rotateHistory(stateDir string, job *biz.SelfDeployJob, sw *stateWriter) err
 	return nil
 }
 
-// copyFileIfExists is a small helper that copies src to dst preserving
-// the 0600 mode; missing src is not an error (so rotation on a fresh
-// install is safe).
 func copyFileIfExists(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -318,8 +216,6 @@ func copyFileIfExists(src, dst string) error {
 	return nil
 }
 
-// pruneHistory enforces the FIFO cap on history/ by deleting the
-// oldest directories once the count exceeds `keep`.
 func pruneHistory(root string, keep int) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -361,11 +257,6 @@ Usage:
 
 Required environment:
   ` + EnvJobPath + `   path to the JSON job descriptor
-
-Optional environment:
-  ` + EnvRecoveryPort + `       recovery UI listen port override
-  ` + EnvRecoveryAllow + `      recovery UI CIDR allow-list override
-  ` + EnvRecoveryTrustProxy + `  honour X-Forwarded-For when "1"/"true"
 
 State directory default: ` + DefaultStateDir + `
 

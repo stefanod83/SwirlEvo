@@ -871,6 +871,51 @@ deploys. Commit covers all of the following:
   the self-deploy layer since the YAML is whatever the stack
   editor shows.
 
+### Self-deploy v3 cleanup: drop the HTTP server + iframe entirely
+
+Follow-up to the hardening series. The recovery HTTP server embedded
+in the sidekick (the "live progress" iframe with CSRF + IP allow-list)
+proved impossible to reach in real-world deployments: Traefik in
+front, `ports:` intentionally unpublished on Swirl, `RecoveryAllow`
+defaulting to 127.0.0.1/32. Operators saw **only the fallback message
+or a Bad Gateway**, never the live logs. Removed entirely:
+
+* **Deleted files**: `cmd/deploy_agent/recovery.go`,
+  `recovery_middleware.go`, `recovery_test.go`, the entire
+  `cmd/deploy_agent/ui/` directory (index.html / script.js / style.css).
+* **`agent.go` simplified**: no more `startProgressServer`,
+  `awaitRecovery`, `shutdown()`. Just load job → run deploy → flush
+  state → release lock → rotate history → exit.
+* **Removed config fields**: `SelfDeployConfig.RecoveryPort`,
+  `RecoveryAllow`. `SelfDeployJob.RecoveryPort`, `RecoveryAllow`.
+  `misc.SelfDeployRecoveryPort`, `SelfDeployDefaultRecoveryCIDR`.
+  Old persisted records round-trip cleanly — `json.Unmarshal` drops
+  unknown keys.
+* **Removed env passthrough**: `SWIRL_RECOVERY_PORT` /
+  `SWIRL_RECOVERY_ALLOW` / `SWIRL_RECOVERY_TRUST_PROXY` are no longer
+  set on the sidekick by `spawnSidekick`.
+* **Removed invariant**: the `RecoveryPort != ExposePort` check in
+  `validateInvariants` is gone (no port to collide).
+* **Frontend modal rewrite**: no iframe, no allow-list fallback
+  banner. A 520px modal with a spinner + status line ("Primary Swirl
+  unreachable — waiting for the new container to respond.") and the
+  elapsed time. Polls `/api/system/mode` every 3s via `fetch`; first
+  200 → full reload on `/`.
+* **Removed i18n keys**: `self_deploy.recovery_port`,
+  `.recovery_allow`, `.status.recovery_url`, `.progress.failed_to_connect`,
+  `.warnings.allow_any_ip`. New keys: `.progress.description`,
+  `.progress.waiting_initial`, `.waiting_restored`, `.waiting_connecting`,
+  `.waiting_503`.
+* **Docs + agent definition updated**: `docs/self-deploy.md`,
+  `~/.claude/agents/swirl-expert.md` now reflect the no-HTTP design.
+
+Net effect: fewer moving parts, no deployment-environment traps
+(Traefik reverse proxy, unpublished port, allow-list), no "Bad
+Gateway" during the restart window. The operator sees a small modal,
+the page reloads when the new Swirl answers. Terminal state + docker
+logs of the sidekick are visible from Settings once the new Swirl is
+online.
+
 ---
 
 ## v1.0.0 (2021-12-15)

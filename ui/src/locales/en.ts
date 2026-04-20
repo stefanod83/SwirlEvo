@@ -821,8 +821,6 @@ export default {
         "source_stack_hint": "The compose stack that Swirl is managed by.",
         "auto_rollback": "Auto-rollback on failure",
         "deploy_timeout": "Deploy timeout (seconds)",
-        "recovery_port": "Recovery UI port",
-        "recovery_allow": "Recovery IP allow-list (CIDR)",
         "actions": {
             "auto_deploy": "Auto-Deploy",
             "auto_deploy_confirm_title": "Auto-Deploy this Swirl stack?",
@@ -839,8 +837,7 @@ export default {
             "success": "Success",
             "failed": "Failed",
             "rolled_back": "Rolled back",
-            "recovery": "Recovery mode active",
-            "recovery_url": "Recovery UI",
+            "recovery": "Recovery required (manual rollback needed)",
             "job_id": "Job id",
             "log_tail": "Recent logs",
             "no_logs": "No logs yet.",
@@ -859,11 +856,12 @@ export default {
         },
         "progress": {
             "title": "Self-deploy in progress",
-            "failed_to_connect": "Cannot reach the sidekick UI. Open {url} in a new tab to see progress.",
-            "timeout": "Deploy is taking longer than expected. Check the live view for details."
-        },
-        "warnings": {
-            "allow_any_ip": "Security warning: the recovery allow-list contains 0.0.0.0/0 — the Recovery UI will accept connections from ANY source."
+            "description": "Swirl is being swapped out by the sidekick container. This page will auto-reload as soon as the new Swirl is online.",
+            "waiting_initial": "Waiting for the deploy to start…",
+            "waiting_restored": "Deploy already in progress — reconnecting…",
+            "waiting_connecting": "Primary Swirl unreachable — waiting for the new container to respond.",
+            "waiting_503": "New Swirl is coming up — holding for readiness.",
+            "timeout": "Deploy is taking longer than expected."
         },
         "errors": {
             "swarm_blocked": "Self-deploy is only available in standalone mode.",

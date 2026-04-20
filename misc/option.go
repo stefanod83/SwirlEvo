@@ -113,23 +113,21 @@ type Setting struct {
 		VaultPrefix string `json:"vault_prefix"`
 	} `json:"backup"`
 	// SelfDeploy carries the self-deploy feature configuration (v3
-	// paradigm: flag + sidekick options, no template/placeholders).
-	// The biz layer loads + saves this sub-struct through the Setting
-	// id "self_deploy". The YAML to deploy is read verbatim from the
-	// ComposeStack identified by SourceStackID.
+	// paradigm: flag + sidekick options, no template/placeholders,
+	// no recovery UI). The biz layer loads + saves this sub-struct
+	// through the Setting id "self_deploy". The YAML to deploy is
+	// read verbatim from the ComposeStack identified by SourceStackID.
 	//
-	// Retrocompat: older records with `template` and `placeholders`
-	// fields unmarshal cleanly thanks to json.Unmarshal ignoring
-	// unknown keys. LoadConfig fills zero-valued fields with safe
-	// defaults (AutoRollback=true, DeployTimeout=300,
-	// RecoveryPort=8002, RecoveryAllow=["127.0.0.1/32"]).
+	// Retrocompat: older records with `template`, `placeholders`,
+	// `recoveryPort`, `recoveryAllow` fields unmarshal cleanly thanks
+	// to json.Unmarshal ignoring unknown keys. LoadConfig fills
+	// zero-valued fields with safe defaults (AutoRollback=true,
+	// DeployTimeout=300).
 	SelfDeploy struct {
-		Enabled       bool     `json:"enabled"`
-		SourceStackID string   `json:"sourceStackId"`
-		AutoRollback  bool     `json:"autoRollback"`
-		DeployTimeout int      `json:"deployTimeout"` // seconds
-		RecoveryPort  int      `json:"recoveryPort"`
-		RecoveryAllow []string `json:"recoveryAllow"`
+		Enabled       bool   `json:"enabled"`
+		SourceStackID string `json:"sourceStackId"`
+		AutoRollback  bool   `json:"autoRollback"`
+		DeployTimeout int    `json:"deployTimeout"` // seconds
 	} `json:"self_deploy"`
 }
 

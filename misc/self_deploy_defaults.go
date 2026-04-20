@@ -6,19 +6,16 @@ import "time"
 // and the sidekick consume the exact same constants without creating
 // an import cycle.
 //
-// v3 paradigm: the template/placeholders machinery is gone. The YAML
-// to deploy is read verbatim from a ComposeStack; the operator edits
-// it through the normal Stack editor. Only runtime options that the
-// sidekick itself consumes live here.
+// v3 paradigm: the template/placeholders machinery is gone and the
+// recovery-UI server on the sidekick is gone too. The YAML to deploy
+// is read verbatim from a ComposeStack; progress is tracked by the
+// main Swirl UI via polling `/api/system/mode`. Only timing defaults
+// consumed by both sides live here.
 const (
 	// SelfDeployExposePort is the default HTTP port the primary Swirl
 	// listens on. The sidekick uses this to build the post-deploy
-	// health-check URL (`http://127.0.0.1:<port>/api/system/mode`).
+	// health-check URL when the new container's IP is resolved.
 	SelfDeployExposePort = 8001
-
-	// SelfDeployRecoveryPort is the default port the sidekick binds
-	// the Recovery UI to when a deploy fails.
-	SelfDeployRecoveryPort = 8002
 
 	// SelfDeployDefaultTimeoutSec mirrors SelfDeployDefaultTimeout as a
 	// plain number of seconds — convenient for JSON serialisation of
@@ -32,8 +29,3 @@ const (
 // 10 minutes covers large images on slow links without being so
 // large that a truly stuck deploy stays unnoticed.
 const SelfDeployDefaultTimeout = 10 * time.Minute
-
-// SelfDeployDefaultRecoveryCIDR is the fallback allow-list entry the
-// biz layer injects when the operator saves an empty list. Loopback
-// only — safe by default.
-const SelfDeployDefaultRecoveryCIDR = "127.0.0.1/32"

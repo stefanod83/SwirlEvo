@@ -188,12 +188,6 @@ func TestLoadConfigEmptyReturnsDefaults(t *testing.T) {
 	if cfg.DeployTimeout != misc.SelfDeployDefaultTimeoutSec {
 		t.Fatalf("expected default DeployTimeout %d, got %d", misc.SelfDeployDefaultTimeoutSec, cfg.DeployTimeout)
 	}
-	if cfg.RecoveryPort != misc.SelfDeployRecoveryPort {
-		t.Fatalf("expected default RecoveryPort %d, got %d", misc.SelfDeployRecoveryPort, cfg.RecoveryPort)
-	}
-	if len(cfg.RecoveryAllow) == 0 {
-		t.Fatalf("expected at least one default CIDR in RecoveryAllow")
-	}
 	if cfg.SourceStackID != "" {
 		t.Fatalf("expected empty SourceStackID on first load, got %q", cfg.SourceStackID)
 	}
@@ -226,8 +220,6 @@ func TestSaveConfigRoundTrip(t *testing.T) {
 		SourceStackID: "stk-123",
 		AutoRollback:  true,
 		DeployTimeout: 420,
-		RecoveryPort:  8005,
-		RecoveryAllow: []string{"10.0.0.0/8"},
 	}
 	if err := b.SaveConfig(context.Background(), cfg, nil); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
@@ -244,12 +236,6 @@ func TestSaveConfigRoundTrip(t *testing.T) {
 	}
 	if got.SourceStackID != "stk-123" {
 		t.Fatalf("expected SourceStackID round-trip, got %q", got.SourceStackID)
-	}
-	if got.RecoveryPort != 8005 {
-		t.Fatalf("expected RecoveryPort=8005, got %d", got.RecoveryPort)
-	}
-	if len(got.RecoveryAllow) != 1 || got.RecoveryAllow[0] != "10.0.0.0/8" {
-		t.Fatalf("expected RecoveryAllow round-trip, got %+v", got.RecoveryAllow)
 	}
 }
 
@@ -544,27 +530,12 @@ func TestValidateInvariantsRejectsEmptyStackName(t *testing.T) {
 	}
 }
 
-func TestValidateInvariantsRejectsPortCollision(t *testing.T) {
-	j := &SelfDeployJob{
-		PrimaryContainer: "swirl",
-		TargetImageTag:   "x/y:1",
-		ComposeYAML:      "services:\n  x:\n    image: x/y:1\n",
-		StackName:        "swirl",
-		RecoveryPort:     8001,
-		Placeholders:     SelfDeployJobPlaceholders{ExposePort: 8001},
-	}
-	if err := validateInvariants(j); err == nil {
-		t.Fatalf("expected error on port collision, got nil")
-	}
-}
-
 func TestValidateInvariantsHappyPath(t *testing.T) {
 	j := &SelfDeployJob{
 		PrimaryContainer: "swirl",
 		TargetImageTag:   "x/y:1",
 		ComposeYAML:      "services:\n  x:\n    image: x/y:1\n",
 		StackName:        "swirl-stack",
-		RecoveryPort:     8002,
 		Placeholders:     SelfDeployJobPlaceholders{ExposePort: 8001},
 	}
 	if err := validateInvariants(j); err != nil {
@@ -581,7 +552,6 @@ func TestValidateInvariantsRejectsSidekickNameCollision(t *testing.T) {
 			"    image: x/y:1\n" +
 			"    container_name: swirl-deploy-agent-helper\n",
 		StackName:    "swirl",
-		RecoveryPort: 8002,
 		Placeholders: SelfDeployJobPlaceholders{ExposePort: 8001},
 	}
 	err := validateInvariants(j)
@@ -602,7 +572,6 @@ func TestValidateSelfDeployJobExported(t *testing.T) {
 		TargetImageTag:   "x/y:1",
 		ComposeYAML:      "services:\n  x:\n    image: x/y:1\n",
 		StackName:        "swirl",
-		RecoveryPort:     8002,
 		Placeholders:     SelfDeployJobPlaceholders{ExposePort: 8001},
 	}
 	if err := ValidateSelfDeployJob(good); err != nil {

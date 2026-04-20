@@ -86,11 +86,9 @@ type SelfDeployJob struct {
 	// StackName is the compose-project name the sidekick must use when
 	// invoking StandaloneEngine.Deploy. Derived from the source
 	// ComposeStack.Name — no longer hardcoded to "swirl".
-	StackName     string   `json:"stackName"`
-	RecoveryPort  int      `json:"recoveryPort"`
-	RecoveryAllow []string `json:"recoveryAllow"`
-	TimeoutSec    int      `json:"timeoutSec"`
-	AutoRollback  bool     `json:"autoRollback"`
+	StackName    string `json:"stackName"`
+	TimeoutSec   int    `json:"timeoutSec"`
+	AutoRollback bool   `json:"autoRollback"`
 	// EnvVars carries the parsed ComposeStack.EnvFile. Serialised with
 	// the job so the sidekick can inject them back into the process
 	// env before the compose engine parses the YAML — otherwise
