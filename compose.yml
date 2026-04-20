@@ -1,3 +1,11 @@
+# Swarm-mode deployment. Run inside a Docker Swarm with
+# `docker stack deploy -c compose.yml swirl-dev`.
+#
+# This is the federation *target* variant: a standalone Swirl running
+# elsewhere can federate to this instance (HTTPS + bearer token minted
+# in the UI → Settings → Federation) to drive Swarm services, stacks,
+# configs and secrets. Standalone Swirl NEVER talks to a Swarm manager's
+# Docker socket directly — always through a Swirl-in-swarm like this one.
 services:
   mongodb:
     image: mongo:latest
@@ -82,10 +90,16 @@ services:
     ports:
       - "8001:8001"
     environment:
+      # MODE=swarm is the default; set explicitly so the same file is
+      # greppable against the standalone variants.
+      - MODE=swarm
       # USA i nomi reali dei servizi (stack prefissato)
       - AGENTS=swirl-dev_manager_agent,swirl-dev_worker_agent
       - DB_ADDRESS=mongodb://mongodb:27017/swirl
       - DOCKER_ENDPOINT=tcp://manager_agent:2375
+      # Backup at-rest encryption passphrase (>=16 chars). Leave empty
+      # and configure Vault → "Use Vault for backup key" in Settings to
+      # source it at runtime without exposing it in the env.
       - SWIRL_BACKUP_KEY=${SWIRL_BACKUP_KEY}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

@@ -1,21 +1,117 @@
 version: '3.8'
 
+# Swarm-mode example. Deploy inside a Docker Swarm with
+# `docker stack deploy -c compose.yml.example swirl`.
+#
+# This is the federation *target* variant: a standalone Swirl running
+# elsewhere can federate to this instance (HTTPS + bearer token minted
+# in the UI → Settings → Federation) to drive Swarm services, stacks,
+# configs and secrets. Standalone Swirl NEVER talks to a Swarm manager's
+# Docker socket directly — always through a Swirl-in-swarm like this one.
+#
+# For standalone deployments (no swarm, remote hosts via Hosts page) see
+# compose.standalone.yml or compose.standalone-bolt.yml instead.
+#
+# Note: BoltDB is NOT supported in swarm mode — a replicated service
+# sharing a file-based embedded DB fragments state across tasks. Use
+# Mongo (or a single-task swarm with careful placement, at your own risk).
+
 services:
+  # mongodb — in-stack database. If you run an external Mongo instead,
+  # remove this service and point DB_ADDRESS at your existing cluster.
+  mongodb:
+    image: mongo:latest
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - net
+    deploy:
+      replicas: 1
+      placement:
+        # Pin Mongo to a single manager so the data volume is stable.
+        constraints: [ node.role == manager ]
+    # Healthcheck uses mongosh (ships with mongo:5.0+ images). For older
+    # images (mongo:4.x) swap the command for:
+    #   mongo --quiet --eval "db.adminCommand('ping').ok"
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   swirl:
     image: cuigh/swirl
     environment:
-      DB_ADDRESS: mongodb://<database_address>
+      # MODE=swarm is the default; set explicitly so the same file is
+      # greppable against the standalone variants.
+      MODE: swarm
+      DB_ADDRESS: mongodb://mongodb:27017/swirl
       DOCKER_ENDPOINT: tcp://swirl_manager_agent:2375
       AGENTS: swirl_manager_agent,swirl_worker_agent
+      # Backup at-rest encryption passphrase (>=16 chars). Leave empty
+      # and configure Vault → "Use Vault for backup key" in Settings to
+      # source it at runtime without exposing it in the env.
       SWIRL_BACKUP_KEY: ${SWIRL_BACKUP_KEY}
     networks:
       - net
+      # Uncomment when routing through Traefik (see deploy.labels below).
+      # - traefik_proxy
     ports:
       - "8001:8001"
+    # NOTE: `docker stack deploy` (Swarm) IGNORES `depends_on` — the
+    # Swarm orchestrator starts all services in parallel and relies on
+    # `restart_policy` / `healthcheck` to converge. We keep this block
+    # because it IS honored by `docker compose up` for local testing.
+    # In swarm, Swirl will crash-loop until Mongo answers its ping;
+    # Swarm's default restart policy picks it back up every few seconds.
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    # Self-healthcheck: /api/system/mode is intentionally public
+    # (auth:"*") so it works before any user is logged in — see the
+    # swirl-expert memory "system_mode_public.md". `wget` is part of
+    # BusyBox in the Alpine base image used by the Dockerfile, so no
+    # extra package is required. If you switch to a distroless/scratch
+    # base, replace this probe with a CMD invoking the binary's own
+    # healthcheck or add `wget` / `curl` to the runtime stage.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8001/api/system/mode || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     deploy:
       replicas: 2
       placement:
         constraints: [ node.role == worker ]
+      # --- Optional: Traefik v2 ingress (Swarm) --------------------------
+      # In swarm mode, Traefik reads labels from `deploy.labels`, NOT from
+      # the service-level `labels:` key. Uncomment the whole block below,
+      # add `traefik_proxy` to the `networks:` list above, and declare the
+      # network at the bottom (external: true) to publish Swirl behind
+      # Traefik. Replace SWIRL_HOST in .env and adjust the certresolver
+      # name to match your Traefik static config.
+      #
+      # IMPORTANT for swarm: `traefik.docker.network` is MANDATORY so
+      # Traefik knows which attachment IP to route to — without it you
+      # get 502s on any swarm-routed service with multiple networks.
+      #
+      # labels:
+      #   - traefik.enable=true
+      #   - traefik.http.routers.swirl.rule=Host(`${SWIRL_HOST}`)
+      #   - traefik.http.routers.swirl.entrypoints=websecure
+      #   - traefik.http.routers.swirl.tls=true
+      #   # Replace `letsencrypt` with the name of YOUR certresolver as
+      #   # declared in traefik.yml / traefik static config.
+      #   - traefik.http.routers.swirl.tls.certresolver=letsencrypt
+      #   - traefik.http.services.swirl.loadbalancer.server.port=8001
+      #   # MANDATORY in swarm: must match the external network name below.
+      #   - traefik.docker.network=traefik_proxy
+      #   # Optional: sticky sessions (useful if running >1 replica).
+      #   - traefik.http.services.swirl.loadbalancer.sticky.cookie=true
+      #   - traefik.http.services.swirl.loadbalancer.sticky.cookie.name=swirl_sticky
+      #   - traefik.http.services.swirl.loadbalancer.sticky.cookie.secure=true
 
   manager_agent:
     image: cuigh/socat
@@ -79,7 +175,8 @@ services:
 #    deploy:
 #      mode: global
 
-#volumes:
+volumes:
+  mongo-data:
 #  prometheus:
 
 #configs:
@@ -90,3 +187,7 @@ networks:
 #  host:
 #    external: true
   net:
+  # Uncomment if routing via Traefik. The name must match the external
+  # Traefik network already created by your Traefik stack.
+  # traefik_proxy:
+  #   external: true

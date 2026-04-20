@@ -1,6 +1,15 @@
+# Standalone mode with embedded BoltDB — single-container deployment.
+# Simplest way to run Swirl: no MongoDB, all state in /data.
+#
+# Uses the published image `cuigh/swirl:latest`. For a locally-built image
+# (e.g. during active development) see docker-compose.standalone-bolt.yml.
+#
+# Copy `.env.example` to `.env` (same directory) and adjust before
+# `docker compose -f compose.standalone-bolt.yml up -d`.
+
 services:
   swirl:
-    image: cuigh/swirl:latest
+    image: cuigh/swirl:latest  # pin a tag: the standalone engine refuses `build:`
     restart: unless-stopped
     ports:
       - "8001:8001"
@@ -8,11 +17,68 @@ services:
       - MODE=standalone
       - DB_TYPE=bolt
       - DB_ADDRESS=/data
+      # Backup at-rest encryption passphrase (>=16 chars). Leave empty and
+      # configure Vault → "Use Vault for backup key" in Settings to source
+      # it at runtime without exposing it in the env.
       - SWIRL_BACKUP_KEY=${SWIRL_BACKUP_KEY:-}
+      # Override default backup directory (/data/swirl/backups). See biz/backup.go.
+      - SWIRL_BACKUP_DIR=${SWIRL_BACKUP_DIR:-/data/swirl/backups}
+      # Self-deploy (Auto-Deploy) container-ID guard. Docker sets the
+      # container hostname to the short container ID by default, so
+      # ${HOSTNAME} is the reliable value. Required for self-deploy to
+      # refuse to redeploy a stack that includes this Swirl instance
+      # unless it goes through the sidekick. See biz/self_deploy.go.
+      - SWIRL_CONTAINER_ID=${HOSTNAME}
       - TZ=${TZ:-UTC}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Named volume at /data is MANDATORY when Auto-Deploy is enabled:
+      # BoltDB file, self-deploy state (job, lock, logs) and backups
+      # (/data/swirl/backups by default — override with SWIRL_BACKUP_DIR)
+      # all live here and must survive the sidekick-driven recreation.
       - swirl-data:/data
+    # Uncomment when routing through Traefik (see labels block below).
+    # networks:
+    #   - traefik_proxy
+
+    # Self-healthcheck: /api/system/mode is intentionally public (auth:"*")
+    # so it works before any user is logged in — see the swirl-expert
+    # memory "system_mode_public.md". `wget` is part of BusyBox in the
+    # Alpine base image used by the Dockerfile, so no extra package is
+    # required. If you switch to a distroless/scratch base, replace this
+    # probe with a CMD that invokes the binary's own healthcheck or add
+    # `wget` / `curl` to the runtime stage.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8001/api/system/mode || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    # --- Optional: Traefik v2 ingress ------------------------------------
+    # Uncomment this `labels:` block AND the `networks:` block above (plus
+    # the top-level `networks:` declaration at the bottom) to publish
+    # Swirl behind Traefik. Set SWIRL_HOST in .env and adjust the
+    # certresolver name to match your Traefik static config.
+    #
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.routers.swirl.rule=Host(`${SWIRL_HOST}`)
+    #   - traefik.http.routers.swirl.entrypoints=websecure
+    #   - traefik.http.routers.swirl.tls=true
+    #   # Replace `letsencrypt` with the name of YOUR certresolver as
+    #   # declared in traefik.yml / traefik static config.
+    #   - traefik.http.routers.swirl.tls.certresolver=letsencrypt
+    #   - traefik.http.services.swirl.loadbalancer.server.port=8001
+    #   # Required when the Traefik container and Swirl share the external
+    #   # network; the name must match the network declaration below.
+    #   - traefik.docker.network=traefik_proxy
 
 volumes:
   swirl-data:
+
+# Uncomment if routing via Traefik. The name must match the external
+# Traefik network already created by your Traefik stack.
+# networks:
+#   traefik_proxy:
+#     external: true

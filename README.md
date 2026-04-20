@@ -380,8 +380,12 @@ References: [Keycloak OIDC clients](https://www.keycloak.org/docs/latest/server_
 No external DB, single volume for persistence.
 
 ```bash
-docker compose -f docker-compose.standalone-bolt.yml up -d
+docker compose -f compose.standalone-bolt.yml up -d
 ```
+
+(`docker-compose.standalone-bolt.yml` is the same layout but pinned to
+the locally-built `swirl:standalone` tag — use it only after a local
+`docker build -t swirl:standalone .`.)
 
 Or equivalently:
 

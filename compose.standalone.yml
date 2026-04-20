@@ -1,3 +1,13 @@
+# Standalone mode with MongoDB (a.k.a. compose.standalone-mongo.yml).
+#
+# Swirl manages remote Docker hosts registered via the Hosts page
+# (socket / tcp / tcp+tls / ssh). Self-deploy (Auto-Deploy) needs a
+# named volume at /data AND SWIRL_CONTAINER_ID set to the primary
+# container's own ID — see invariants below.
+#
+# Copy `.env.example` to `.env` (same directory) and adjust before
+# `docker compose -f compose.standalone.yml up -d`.
+
 services:
   mongodb:
     image: mongo:latest
@@ -8,9 +18,18 @@ services:
       - mongo-data:/data/db
     networks:
       - internal
+    # Healthcheck uses mongosh (ships with mongo:5.0+ images). For older
+    # images (mongo:4.x) swap the command for:
+    #   mongo --quiet --eval "db.adminCommand('ping').ok"
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   swirl:
-    image: cuigh/swirl:latest
+    image: cuigh/swirl:latest  # pin a tag: the standalone engine refuses `build:`
     restart: unless-stopped
     ports:
       - "8001:8001"
@@ -18,17 +37,73 @@ services:
       - MODE=standalone
       - DB_TYPE=mongo
       - DB_ADDRESS=mongodb://mongodb:27017/swirl
+      # Backup at-rest encryption passphrase (>=16 chars). Leave empty and
+      # configure Vault → "Use Vault for backup key" in Settings to source
+      # it at runtime without exposing it in the env.
       - SWIRL_BACKUP_KEY=${SWIRL_BACKUP_KEY:-}
+      # Override default backup directory (/data/swirl/backups). See biz/backup.go.
+      - SWIRL_BACKUP_DIR=${SWIRL_BACKUP_DIR:-/data/swirl/backups}
+      # Self-deploy (Auto-Deploy) container-ID guard. Docker sets the
+      # container hostname to the short container ID by default, so
+      # ${HOSTNAME} is the reliable value. Required for self-deploy to
+      # refuse to redeploy a stack that includes this Swirl instance
+      # unless it goes through the sidekick. See biz/self_deploy.go.
+      - SWIRL_CONTAINER_ID=${HOSTNAME}
       - TZ=${TZ:-UTC}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Named volume at /data is MANDATORY when Auto-Deploy is enabled:
+      # self-deploy state (job, lock, logs) is persisted here and must
+      # survive the container recreation performed by the sidekick.
+      # Default backup dir is /data/swirl/backups (override SWIRL_BACKUP_DIR).
+      - swirl-data:/data
     networks:
       - internal
+      # Uncomment when routing through Traefik (see labels block below).
+      # - traefik_proxy
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
+    # Self-healthcheck: /api/system/mode is intentionally public (auth:"*")
+    # so it works before any user is logged in — see the swirl-expert
+    # memory "system_mode_public.md". `wget` is part of BusyBox in the
+    # Alpine base image used by the Dockerfile, so no extra package is
+    # required. If you switch to a distroless/scratch base, replace this
+    # probe with a CMD that invokes the binary's own healthcheck or add
+    # `wget` / `curl` to the runtime stage.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8001/api/system/mode || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    # --- Optional: Traefik v2 ingress ------------------------------------
+    # Uncomment this `labels:` block AND the `traefik_proxy` network above
+    # (plus the network declaration at the bottom) to publish Swirl behind
+    # Traefik. Replace SWIRL_HOST in .env and adjust the certresolver name
+    # to match your Traefik static config.
+    #
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.routers.swirl.rule=Host(`${SWIRL_HOST}`)
+    #   - traefik.http.routers.swirl.entrypoints=websecure
+    #   - traefik.http.routers.swirl.tls=true
+    #   # Replace `letsencrypt` with the name of YOUR certresolver as
+    #   # declared in traefik.yml / traefik static config.
+    #   - traefik.http.routers.swirl.tls.certresolver=letsencrypt
+    #   - traefik.http.services.swirl.loadbalancer.server.port=8001
+    #   # Required when the Traefik container and Swirl share the external
+    #   # network; the name must match the network declaration below.
+    #   - traefik.docker.network=traefik_proxy
 
 volumes:
   mongo-data:
+  swirl-data:
 
 networks:
   internal:
+  # Uncomment if routing via Traefik. The name must match the external
+  # Traefik network already created by your Traefik stack.
+  # traefik_proxy:
+  #   external: true
