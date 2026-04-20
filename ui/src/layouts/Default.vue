@@ -181,7 +181,7 @@ const expandedKeys = ref([] as string[]);
 const isMobile = useIsMobile()
 const isTablet = useIsTablet()
 const darkTheme = computed(() => store.state.preference.theme === "dark")
-const menuOptions = computed(() => buildMenuOptions(store.state.mode))
+const menuOptions = computed(() => buildMenuOptions(store.state.mode, activeHost.value?.type))
 const menuValue = computed(() => findMenuValue(menuOptions.value, route))
 const version = ref({} as Version);
 

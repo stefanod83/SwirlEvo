@@ -7,7 +7,7 @@ rsync -av --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.g
 
 
 # Add cleaned bundle and build
-rm -rf /opt/DockerData/swirl/ui/dist /mnt/c/GitRepos/swirl/ui/dist 2>&1; 
+rm -rf /mnt/c/GitRepos/swirl/ui/dist 2>&1; 
 echo "---"; 
 rsync -av --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.git' --exclude='.planning' --exclude=.gocache --exclude=.claude /mnt/c/GitRepos/swirl/ /opt/DockerData/swirl/ && \
   cd /opt/DockerData/swirl && docker compose -f docker-compose.standalone-bolt.yml down && \

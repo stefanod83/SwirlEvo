@@ -871,6 +871,69 @@ deploys. Commit covers all of the following:
   the self-deploy layer since the YAML is whatever the stack
   editor shows.
 
+### Multi-cluster portal via Swirl federation (wave 1+2)
+
+A standalone-mode Swirl can now act as a portal that manages
+multiple Docker hosts — including **Swarm clusters** via federation
+to a Swirl instance deployed inside the cluster (`MODE=swarm`).
+Direct Docker socket access to a Swarm manager is **intentionally
+rejected** in favour of federation — the cluster's socket never
+leaves the cluster network.
+
+Wave 1 + 2 landed (5 phases of 10 — the remaining 5 are
+additive polish):
+
+* **Data model** — `Host.Type` (`standalone` / `swarm_via_swirl`),
+  `SwirlURL`, `SwirlToken`, `TokenExpiresAt`, `TokenAutoRefresh`,
+  `Immutable`. Mongo/Bolt updates + secret-mask preservation of
+  `swirl_token`. New `User.Type=federation` (non-human peer,
+  long-lived token, no password). New `dao.Event.OriginatingUser`
+  field. New permission resource `federation.admin`.
+* **Host probe** — `ProbeHost(endpoint)` classifies at Save/Update
+  time. HTTPS URL → `swarm_via_swirl`. TCP/unix/ssh → Docker
+  `Info()` classify. Swarm workers rejected with a
+  `WorkerRejectedError` carrying `SuggestedManagers` (from
+  `Info().Swarm.RemoteManagers`); the API returns 422 + structured
+  body so the UI can offer "register manager instead".
+* **Auto-register `local` host** — at boot in `MODE=standalone`,
+  Swirl creates an immutable Host entry pointing at
+  `unix:///var/run/docker.sock`. Edits/deletes return 403. Unblocks
+  zero-config local management + self-deploy.
+* **Federation endpoint** — `GET /api/federation/capabilities`
+  (handshake: mode, version, features, peer identity) + peer CRUD
+  under `/api/federation/peers`. Peer tokens are 32 random bytes
+  hex-encoded in `User.Tokens[federation-active]` with an expiry
+  sibling `User.Tokens[federation-expires-at]` (RFC3339). Rotation
+  replaces both in-place.
+* **Reverse-proxy middleware** — `security/federation_proxy.go`
+  registered as a web filter between identifier and authorizer.
+  Intercepts any `/api/*` request with `?node=<host-id>` pointing
+  at a `swarm_via_swirl` host, forwards it to `host.SwirlURL +
+  request.URI` with `Authorization: Bearer <SwirlToken>` and
+  `X-Swirl-Originating-User: <portal-user>`. WebSocket upgrades
+  are proxied via TCP hijack + bidirectional `io.Copy` through a
+  TLS tunnel (exec, streaming logs, stats work transparently).
+* **Dynamic Swarm menu** — `buildMenuOptions(mode, activeHostType)`
+  adds the Swarm group (Services/Tasks/Stacks/Configs/Secrets/
+  Nodes/Networks) in standalone mode when the selected host is
+  `swarm_via_swirl`. Router guard allows `/swarm/*` routes under
+  the same condition.
+* **Host Edit form** — federation fields appear when the endpoint
+  is HTTPS: `swirlToken` (password input), `tokenAutoRefresh`
+  switch, token status tag (valid / expiring / expired) with
+  absolute expiry date. The Auto Method picker is hidden for
+  federation (implicitly `swirl`).
+* **Docs** — new `docs/federation.md` with setup walkthrough,
+  security model, token lifecycle, limitations. README updated
+  with a link.
+
+Deferred to wave 3+ (all additive, portal works without them):
+* Global banner for expired tokens + periodic auto-refresh ticker
+* Biz-layer event-emitter migration to populate `OriginatingUser`
+* Settings → Federation UI panel to mint/rotate peers graphically
+* `Stack.HostID` + migration for multi-cluster Swarm stack authoring
+* `Immutable` disabled actions in the Hosts List UI
+
 ### VaultSecret is now standalone-only
 
 Swarm has native Docker Secrets (`docker secret create` + compose

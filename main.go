@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"io/fs"
@@ -50,7 +51,7 @@ func main() {
 	app.Version = "2.0.0rc1"
 	app.Desc = "A web management UI for Docker, focused on swarm cluster"
 	app.Action = func(ctx *app.Context) error {
-		return run.Pipeline(misc.LoadOptions, initSystem, initBackupKeyProvider, scaler.Start, backup.Start, startServer)
+		return run.Pipeline(misc.LoadOptions, initSystem, initBackupKeyProvider, initLocalHost, startFederationRotator, scaler.Start, backup.Start, startServer)
 	}
 	app.Flags.Register(flag.All)
 	app.Start()
@@ -64,7 +65,10 @@ func startServer() (err error) {
 	s.Static("/", http.FS(loadWebFS()), "index.html")
 
 	const prefix = "api."
-	g := s.Group("/api", findFilters("identifier", "authorizer")...)
+	// Filter order: identifier (attach user) → federation_proxy
+	// (short-circuit on federation hosts) → authorizer (permission
+	// check; skipped for federation because the request flies off).
+	g := s.Group("/api", findFilters("identifier", "federation_proxy", "authorizer")...)
 	container.Range(func(name string, service interface{}) bool {
 		if strings.HasPrefix(name, prefix) {
 			g.Handle("/"+name[len(prefix):], service)
@@ -117,6 +121,36 @@ func initSystem() error {
 		defer cancel()
 
 		return b.Init(ctx)
+	})
+}
+
+// initLocalHost auto-registers the system-managed `local` host entry
+// in standalone mode so self-deploy and zero-config local daemon
+// management work out of the box. No-op in swarm mode.
+// A failure here is NOT fatal — the rest of the app runs without the
+// pre-registered local entry (operator can create it manually).
+func initLocalHost() error {
+	return container.Call(func(hb biz.HostBiz) error {
+		ctx, cancel := misc.Context(10 * time.Second)
+		defer cancel()
+		if err := hb.EnsureLocal(ctx); err != nil {
+			// Degrade gracefully — log in the biz layer already.
+			return nil
+		}
+		return nil
+	})
+}
+
+// startFederationRotator launches the portal-side ticker that
+// auto-rotates federation tokens before they expire. No-op in swarm
+// mode (the rotator is a portal concern).
+func startFederationRotator() error {
+	return container.Call(func(r *biz.FederationRotator) {
+		// Background context — the ticker runs for the lifetime of
+		// the Swirl process. The auxo framework does not expose a
+		// shutdown hook, so we don't bother plumbing cancellation:
+		// process exit tears down the goroutine.
+		r.Start(context.Background())
 	})
 }
 

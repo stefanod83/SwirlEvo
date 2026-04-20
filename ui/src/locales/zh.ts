@@ -10,6 +10,7 @@ export default {
         "confirm": "确认",
         "cancel": "取消",
         "clear": "清除",
+        "close": "关闭",
         "search": "查询",
         "return": "返回",
         "deploy": "发布",
@@ -87,6 +88,13 @@ export default {
         "height": "高",
         "name": "名称",
         "color": "颜色",
+        "swirl_token": "Federation peer token",
+        "token_auto_refresh": "自动刷新 token",
+        "token_status": "Token 状态",
+        "token_expired": "已过期 — 操作仍然有效，请尽快轮换",
+        "token_expiring": "即将过期",
+        "token_valid": "有效",
+        "token_expires_at": "过期时间",
         "address": "地址",
         "url": "URL",
         "login_name": "登录名",
@@ -365,6 +373,8 @@ export default {
         "backup": "备份",
         "vault": "Vault",
         "vault_secret": "Vault 密钥",
+        "self_deploy": "自部署",
+        "federation": "联邦",
     },
     "titles": {
         "home": "首页",
@@ -493,6 +503,8 @@ export default {
     "tips": {
         "remove_anonymous_volumes": "同时删除镜像声明的匿名卷 (VOLUME 指令)。命名卷不会被此选项删除。",
         "host_color": "选中该主机时，header 下方会显示一条彩色条 — 一眼就能看出正在操作哪个 Docker 主机。",
+        "host_federation_detected": "已检测到 HTTPS 端点 — 此主机将通过 Swirl federation 管理。请将目标 Swirl 上生成的 peer token 粘贴到下方。",
+        "host_endpoint_types": "Standalone Docker 主机：使用 tcp://、unix:// 或 ssh://。Swarm 集群：在集群内部署 Swirl，然后使用其 HTTPS 地址（例如 https://swirl-swarm.example.com）—— 连接将通过 federation，而不会直接访问 manager 的 socket。",
         "registry_url": "镜像仓库地址，如: registry.com",
         "command": "启动命令",
         "command_empty": "启动命令不能为空",
@@ -874,6 +886,23 @@ export default {
             "deploy_failed": "启动自部署 sidekick 失败。",
             "status_failed": "读取部署状态失败。"
         }
+    },
+    "federation": {
+        "title": "Federation",
+        "subtitle": "管理允许远程 Swirl portal 通过 federation 访问本实例的 peer token。",
+        "create_peer": "创建 peer",
+        "ttl_days": "TTL（天）",
+        "ttl_hint": "0 或负数表示不过期（100 年）。90 天是合理默认值 — 开启自动刷新后 portal 会在过期前自动轮换。",
+        "generate": "生成",
+        "token_once_warning": "立即复制 token — 不会再显示。如果丢失，请轮换生成新的。",
+        "peer": "Peer",
+        "login_name": "登录名",
+        "rotate": "轮换",
+        "revoke": "撤销",
+        "revoke_confirm": "撤销此 peer？其 token 立即失效。",
+        "revoked": "Peer {name} 已撤销。",
+        "name_required": "请填写 peer 名称。",
+        "empty_hint": "尚无 federation peer。创建一个以允许远程 Swirl portal 管理本实例。"
     },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork)。保留所有权利。",
 }

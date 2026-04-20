@@ -261,8 +261,63 @@ function buildSwarmMenu(mode: string): MenuOption[] {
   ]
 }
 
-function buildStandaloneMenu(mode: string): MenuOption[] {
-  return [
+// swarmGroup builds the Swarm menu group. Rendered in MODE=swarm
+// unconditionally, and in MODE=standalone only when the active host
+// is of type `swarm_via_swirl` (i.e. a federated swarm cluster).
+function swarmGroup(): MenuOption {
+  return {
+    label: t('fields.swarm'),
+    key: "swarm",
+    icon: renderIcon(GridOutline),
+    children: [
+      {
+        label: t('objects.node'),
+        key: "nodes",
+        path: "/swarm/nodes",
+        icon: renderIcon(ServerOutline),
+      },
+      {
+        label: t('objects.network'),
+        key: "networks",
+        path: "/swarm/networks",
+        icon: renderIcon(GlobeOutline),
+      },
+      {
+        label: t('objects.service'),
+        key: "services",
+        path: "/swarm/services",
+        icon: renderIcon(ImageOutline),
+      },
+      {
+        label: t('objects.task'),
+        key: "tasks",
+        path: "/swarm/tasks",
+        icon: renderIcon(ImagesOutline),
+      },
+      {
+        label: t('objects.stack'),
+        key: "stacks",
+        path: "/swarm/stacks",
+        icon: renderIcon(AlbumsOutline),
+      },
+      {
+        label: t('objects.config'),
+        key: "configs",
+        path: "/swarm/configs",
+        icon: renderIcon(DocumentOutline),
+      },
+      {
+        label: t('objects.secret'),
+        key: "secrets",
+        path: "/swarm/secrets",
+        icon: renderIcon(DocumentLockOutline),
+      },
+    ],
+  }
+}
+
+function buildStandaloneMenu(mode: string, activeHostType?: string): MenuOption[] {
+  const items: MenuOption[] = [
     homeItem(),
     {
       label: t('fields.docker'),
@@ -283,47 +338,58 @@ function buildStandaloneMenu(mode: string): MenuOption[] {
         },
       ],
     },
-    {
-      label: t('fields.local'),
-      key: "local",
-      icon: renderIcon(CubeOutline),
-      children: [
-        {
-          label: t('objects.container'),
-          key: "std_container_list",
-          path: "/standalone/containers",
-          icon: containerIcon,
-        },
-        {
-          label: t('objects.stack'),
-          key: "std_stack_list",
-          path: "/standalone/stacks",
-          icon: renderIcon(AlbumsOutline),
-        },
-        {
-          label: t('objects.network'),
-          key: "std_network_list",
-          path: "/standalone/networks",
-          icon: renderIcon(GlobeOutline),
-        },
-        {
-          label: t('objects.image'),
-          key: "images",
-          path: "/local/images",
-          icon: renderIcon(LayersOutline),
-        },
-        {
-          label: t('objects.volume'),
-          key: "volumes",
-          path: "/local/volumes",
-          icon: renderIcon(FileTrayFullOutline),
-        },
-      ],
-    },
-    systemItem(mode),
   ]
+
+  // Federated swarm cluster? Add the Swarm group with the usual
+  // cluster-level resources. The API calls are proxied by the portal
+  // to the remote Swirl via `?node=<host-id>` — fully transparent to
+  // the handlers.
+  if (activeHostType === 'swarm_via_swirl') {
+    items.push(swarmGroup())
+  }
+
+  items.push({
+    label: t('fields.local'),
+    key: "local",
+    icon: renderIcon(CubeOutline),
+    children: [
+      {
+        label: t('objects.container'),
+        key: "std_container_list",
+        path: "/standalone/containers",
+        icon: containerIcon,
+      },
+      {
+        label: t('objects.stack'),
+        key: "std_stack_list",
+        path: "/standalone/stacks",
+        icon: renderIcon(AlbumsOutline),
+      },
+      {
+        label: t('objects.network'),
+        key: "std_network_list",
+        path: "/standalone/networks",
+        icon: renderIcon(GlobeOutline),
+      },
+      {
+        label: t('objects.image'),
+        key: "images",
+        path: "/local/images",
+        icon: renderIcon(LayersOutline),
+      },
+      {
+        label: t('objects.volume'),
+        key: "volumes",
+        path: "/local/volumes",
+        icon: renderIcon(FileTrayFullOutline),
+      },
+    ],
+  })
+
+  items.push(systemItem(mode))
+  return items
 }
 
-export function buildMenuOptions(mode: string): MenuOption[] {
-  return mode === 'standalone' ? buildStandaloneMenu(mode) : buildSwarmMenu(mode)
+export function buildMenuOptions(mode: string, activeHostType?: string): MenuOption[] {
+  return mode === 'standalone' ? buildStandaloneMenu(mode, activeHostType) : buildSwarmMenu(mode)
 }

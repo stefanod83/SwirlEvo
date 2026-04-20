@@ -471,6 +471,105 @@
         <n-button type="primary" @click="() => save('backup', setting.backup)">{{ t('buttons.save') }}</n-button>
       </n-form>
     </x-panel>
+    <!-- Federation panel: mint / rotate / revoke peer tokens that
+         authenticate remote Swirl portals federating against this
+         instance. Only meaningful on the target side (MODE=swarm) —
+         the standalone portal consumes these tokens, it does not
+         mint them, so the panel is hidden there. -->
+    <x-panel
+      v-if="canAdminFederation && store.state.mode === 'swarm'"
+      :title="t('federation.title')"
+      :subtitle="t('federation.subtitle')"
+      divider="bottom"
+      :collapsed="panel !== 'federation'"
+    >
+      <template #action>
+        <n-button
+          secondary
+          strong
+          class="toggle"
+          size="small"
+          @click="togglePanel('federation')"
+        >{{ panel === 'federation' ? t('buttons.collapse') : t('buttons.expand') }}</n-button>
+      </template>
+      <n-space vertical :size="12" style="padding: 4px 0 0 12px">
+        <n-space :size="8">
+          <n-button type="primary" size="small" @click="fedCreateOpen = true">
+            {{ t('federation.create_peer') }}
+          </n-button>
+          <n-button secondary size="small" @click="loadFederationPeers" :loading="fedLoading">
+            {{ t('buttons.refresh') }}
+          </n-button>
+        </n-space>
+        <n-data-table
+          v-if="fedPeers.length > 0"
+          :columns="fedColumns"
+          :data="fedPeers"
+          :row-key="(r: any) => r.id"
+          size="small"
+          :bordered="true"
+        />
+        <div v-else class="sd-muted" style="padding: 8px 4px; font-size: 13px">
+          {{ t('federation.empty_hint') }}
+        </div>
+      </n-space>
+    </x-panel>
+
+    <!-- Create peer modal: captures the one-time token. After save,
+         the body switches to a copy-once display — closing the modal
+         without copying means losing the token irrecoverably. -->
+    <n-modal
+      v-model:show="fedCreateOpen"
+      preset="card"
+      :title="t('federation.create_peer')"
+      style="max-width: 560px"
+      :mask-closable="!fedCreated"
+    >
+      <n-space vertical :size="12">
+        <div v-if="!fedCreated">
+          <n-form :model="fedCreateModel" label-placement="left" label-width="110">
+            <n-form-item :label="t('fields.name')" required>
+              <n-input v-model:value="fedCreateModel.name" placeholder="portal-1" />
+            </n-form-item>
+            <n-form-item :label="t('federation.ttl_days')">
+              <n-input-number v-model:value="fedCreateModel.ttlDays" :min="0" :max="3650" style="width: 100%" />
+            </n-form-item>
+          </n-form>
+          <div class="sd-muted" style="font-size: 12px">
+            {{ t('federation.ttl_hint') }}
+          </div>
+          <n-space style="margin-top: 12px" justify="end">
+            <n-button @click="fedCreateOpen = false">{{ t('buttons.cancel') }}</n-button>
+            <n-button type="primary" :loading="fedCreating" @click="submitCreatePeer">
+              {{ t('federation.generate') }}
+            </n-button>
+          </n-space>
+        </div>
+        <div v-else>
+          <n-alert type="warning" :show-icon="true">
+            {{ t('federation.token_once_warning') }}
+          </n-alert>
+          <div style="margin-top: 10px">
+            <div class="sd-muted" style="font-size: 12px">
+              {{ t('federation.peer') }}: <code>{{ fedCreated.name }}</code>
+              · {{ t('fields.token_expires_at') }}: {{ fedCreated.expiresAt ? new Date(fedCreated.expiresAt * 1000).toLocaleString() : '—' }}
+            </div>
+            <n-input
+              type="textarea"
+              :value="fedCreated.token"
+              readonly
+              :autosize="{ minRows: 3, maxRows: 3 }"
+              style="margin-top: 8px; font-family: monospace"
+            />
+          </div>
+          <n-space style="margin-top: 12px" justify="end">
+            <n-button @click="copyToken(fedCreated.token)">{{ t('buttons.copy') }}</n-button>
+            <n-button type="primary" @click="closeCreatePeerModal">{{ t('buttons.close') }}</n-button>
+          </n-space>
+        </div>
+      </n-space>
+    </n-modal>
+
     <x-panel
       :title="t('self_deploy.title')"
       :subtitle="t('self_deploy.subtitle')"
@@ -713,7 +812,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import {
   NGrid,
   NButton,
@@ -735,6 +834,7 @@ import {
   NModal,
   NPopconfirm,
   NSpin,
+  NDataTable,
 } from "naive-ui";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
@@ -798,6 +898,131 @@ const setting = ref({
   },
 } as Setting);
 const panel = ref('')
+
+// --- Federation peers management (target-side: Swirl in swarm mode
+//     typically, but the API accepts it in any mode; gating is via
+//     the `federation.admin` permission set on the user's role.) ---
+import { h as fedH } from 'vue'
+import { NPopconfirm as FedPopconfirm, NButton as FedButton, NTag as FedTag } from 'naive-ui'
+import federationApi from '@/api/federation'
+import type { FederationPeer, FederationPeerResult } from '@/api/federation'
+
+const canAdminFederation = computed(() => store.getters.allow('federation.admin'))
+const fedPeers = ref<FederationPeer[]>([])
+const fedLoading = ref(false)
+const fedCreateOpen = ref(false)
+const fedCreating = ref(false)
+const fedCreated = ref<FederationPeerResult | null>(null)
+const fedCreateModel = reactive({ name: '', ttlDays: 90 })
+
+const fedColumns = computed(() => [
+  { title: t('fields.name'), key: 'name' },
+  { title: t('federation.login_name'), key: 'loginName', render: (r: FederationPeer) => fedH('code', { style: 'font-size: 11px' }, r.loginName) },
+  {
+    title: t('fields.token_expires_at'), key: 'expiresAt',
+    render: (r: FederationPeer) => {
+      if (!r.expiresAt) return '—'
+      const d = new Date(r.expiresAt * 1000)
+      return fedH('span', { class: r.expired ? 'sd-muted' : '' }, d.toLocaleString())
+    },
+  },
+  {
+    title: t('fields.token_status'), key: 'status',
+    render: (r: FederationPeer) => fedH(FedTag, {
+      type: r.expired ? 'error' : 'success',
+      size: 'small',
+      round: true,
+    }, { default: () => r.expired ? t('fields.token_expired') : t('fields.token_valid') }),
+  },
+  {
+    title: t('fields.actions'), key: 'actions', width: 220,
+    render: (r: FederationPeer) => fedH('div', { style: 'display: flex; gap: 6px' }, [
+      fedH(FedButton, {
+        size: 'tiny',
+        quaternary: true,
+        type: 'warning',
+        onClick: () => rotateFederationPeer(r),
+      }, { default: () => t('federation.rotate') }),
+      fedH(FedPopconfirm, {
+        showIcon: false,
+        onPositiveClick: () => revokeFederationPeer(r),
+      }, {
+        default: () => t('federation.revoke_confirm'),
+        trigger: () => fedH(FedButton, { size: 'tiny', quaternary: true, type: 'error' },
+          { default: () => t('federation.revoke') }),
+      }),
+    ]),
+  },
+])
+
+async function loadFederationPeers() {
+  if (!canAdminFederation.value) return
+  fedLoading.value = true
+  try {
+    const r = await federationApi.listPeers()
+    fedPeers.value = (r.data?.items as FederationPeer[]) || []
+  } catch (e: any) {
+    window.message.error(e?.response?.data?.info || e?.message || String(e))
+  } finally {
+    fedLoading.value = false
+  }
+}
+
+async function submitCreatePeer() {
+  const name = (fedCreateModel.name || '').trim()
+  if (!name) {
+    window.message.error(t('federation.name_required'))
+    return
+  }
+  fedCreating.value = true
+  try {
+    const r = await federationApi.createPeer(name, fedCreateModel.ttlDays || 0)
+    fedCreated.value = r.data as FederationPeerResult
+    loadFederationPeers()
+  } catch (e: any) {
+    window.message.error(e?.response?.data?.info || e?.message || String(e))
+  } finally {
+    fedCreating.value = false
+  }
+}
+
+async function rotateFederationPeer(p: FederationPeer) {
+  try {
+    const r = await federationApi.rotatePeer(p.id, 90)
+    fedCreated.value = r.data as FederationPeerResult
+    fedCreateOpen.value = true
+    loadFederationPeers()
+  } catch (e: any) {
+    window.message.error(e?.response?.data?.info || e?.message || String(e))
+  }
+}
+
+async function revokeFederationPeer(p: FederationPeer) {
+  try {
+    await federationApi.revokePeer(p.id)
+    window.message.success(t('federation.revoked', { name: p.name }))
+    loadFederationPeers()
+  } catch (e: any) {
+    window.message.error(e?.response?.data?.info || e?.message || String(e))
+  }
+}
+
+function closeCreatePeerModal() {
+  fedCreateOpen.value = false
+  fedCreated.value = null
+  fedCreateModel.name = ''
+  fedCreateModel.ttlDays = 90
+}
+
+function copyToken(token: string) {
+  try {
+    navigator.clipboard.writeText(token)
+    window.message.success(t('texts.action_success'))
+  } catch {
+    window.message.error('copy failed')
+  }
+}
+
 const roleOptions = ref<{ label: string; value: string }[]>([])
 const groupRolePairs = ref<{ group: string; role: string }[]>([])
 const vaultTesting = ref(false)
@@ -1194,6 +1419,13 @@ onMounted(async () => {
   // sidekick swap), the sessionStorage-backed flag in the store is
   // still set — resume the live progress modal.
   resumeFromSession()
+  // Background-load the federation peers list only when the operator
+  // has permission AND this instance is the target (MODE=swarm). The
+  // standalone portal does not mint peers, so skipping avoids a useless
+  // API call on every Settings mount there.
+  if (canAdminFederation.value && store.state.mode === 'swarm') {
+    loadFederationPeers()
+  }
 })
 
 onUnmounted(() => {

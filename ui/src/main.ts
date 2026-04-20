@@ -30,6 +30,8 @@ async function loadHosts() {
       name: h.name,
       status: h.status,
       color: h.color || '',
+      type: h.type || '',
+      immutable: !!h.immutable,
     }))
     store.commit(Mutations.SetHosts, items)
   } catch { /* ignore */ }

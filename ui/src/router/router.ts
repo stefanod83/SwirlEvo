@@ -649,9 +649,18 @@ function createSiteRouter() {
       window.document.title = t(`titles.${to.name as string}`) + ' - Swirl'
     }
 
+    // Swarm routes are allowed in standalone mode when the active
+    // host is a federated swarm cluster (`type=swarm_via_swirl`) —
+    // the API calls are proxied to the remote Swirl swarm via
+    // federation. Without an active swarm-federated host, swarm-only
+    // routes are 404 (keeps legacy behaviour for pure standalone).
     if (store.state.mode === 'standalone' && typeof to.name === 'string' && swarmOnlyRoutes.test(to.name)) {
-      next({ name: '404' })
-      return
+      const hid = store.state.selectedHostId
+      const active = hid ? store.state.hosts.find((h: any) => h.id === hid) : null
+      if (!active || active.type !== 'swarm_via_swirl') {
+        next({ name: '404' })
+        return
+      }
     }
 
     if (store.state.mode !== 'standalone' && typeof to.name === 'string' && standaloneOnlyRoutes.test(to.name)) {

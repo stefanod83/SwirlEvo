@@ -1,6 +1,9 @@
 package api
 
 import (
+	"errors"
+	"net/http"
+
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/biz"
 	"github.com/cuigh/swirl/dao"
@@ -83,6 +86,9 @@ func hostDelete(b biz.HostBiz) web.HandlerFunc {
 
 			err = b.Delete(ctx, args.ID, args.Name, c.User())
 		}
+		if errors.Is(err, biz.ErrHostImmutable) {
+			return web.NewError(http.StatusForbidden, err.Error())
+		}
 		return ajax(c, err)
 	}
 }
@@ -100,6 +106,18 @@ func hostSave(b biz.HostBiz) web.HandlerFunc {
 			} else {
 				err = b.Update(ctx, h, c.User())
 			}
+		}
+		if errors.Is(err, biz.ErrHostImmutable) {
+			return web.NewError(http.StatusForbidden, err.Error())
+		}
+		// Surface worker-rejection as 422 with the manager suggestions
+		// embedded — the UI reads `.data.suggestedManagers` to offer a
+		// "switch to manager" action.
+		if werr, ok := err.(*biz.WorkerRejectedError); ok {
+			return c.Status(http.StatusUnprocessableEntity).Result(1, werr.Error(), map[string]interface{}{
+				"suggestedManagers": werr.SuggestedManagers,
+				"workerRejected":    true,
+			})
 		}
 		return ajax(c, err)
 	}

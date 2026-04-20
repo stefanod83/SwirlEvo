@@ -526,6 +526,8 @@ docker compose -f docker-compose.standalone-bolt.yml up -d
 
 - [docs/vault.md](docs/vault.md) — HashiCorp Vault integration: client/auth setup, `SWIRL_BACKUP_KEY` fallback, `VaultSecret` catalog, per-stack secret bindings (tmpfs / volume / init / env), drift check, troubleshooting.
 - [docs/backup.md](docs/backup.md) — Backup subsystem: storage layout, AES-256-GCM at-rest format, scheduling and retention, restore flow, raw vs portable download, **key recovery** (`backup.recover` permission) for archives encrypted under a previous master key.
+- [docs/self-deploy.md](docs/self-deploy.md) — Self-deploy feature: sidekick lifecycle, stale-lock recovery, preflight validations, progress modal, security considerations.
+- [docs/federation.md](docs/federation.md) — Multi-cluster portal via Swirl federation: deploy Swirl in a swarm cluster as target, mint federation tokens, register the cluster on a standalone portal, the reverse-proxy flow, and the security model.
 
 ## Architecture
 

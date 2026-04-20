@@ -73,4 +73,5 @@ func init() {
 	container.Put(NewVaultSecret, container.Name("api.vault-secret"))
 	container.Put(NewComposeStackSecret, container.Name("api.compose-stack-secret"))
 	container.Put(NewSelfDeploy, container.Name("api.self-deploy"))
+	container.Put(NewFederationAPI, container.Name("api.federation"))
 }

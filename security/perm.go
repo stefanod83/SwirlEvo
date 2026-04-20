@@ -42,6 +42,12 @@ var Resources = map[string]uint64{
 	// edit/execute split is granular: ops can review config without gaining
 	// the ability to actually trigger a deploy.
 	"self_deploy": 1 << 21,
+	// federation: controls who can mint / revoke / rotate the long-lived
+	// tokens that authenticate a Swirl portal against this Swirl swarm.
+	// Holding `federation.admin` is roughly equivalent to handing out
+	// cluster-wide access, so keep it separate from the bulk `setting`
+	// permission.
+	"federation": 1 << 22,
 }
 
 // Actions holds all actions requiring authorization. Up to 24 actions are supported.
@@ -97,6 +103,7 @@ var Perms = map[string][]string{
 	"vault":        {"admin"},
 	"vault_secret": {"view", "edit", "delete", "cleanup"},
 	"self_deploy":  {"view", "edit", "execute"},
+	"federation":   {"admin"},
 }
 
 type Authorizer struct {

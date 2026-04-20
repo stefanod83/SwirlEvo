@@ -51,8 +51,35 @@ func (c *Identifier) Apply(next web.HandlerFunc) web.HandlerFunc {
 			}
 			ctx.SetUser(user)
 		}
+		// Capture the X-Swirl-Originating-User header set by a
+		// federated portal so the biz layer can enrich audit events
+		// with the human operator identity ("peer=…, origin=alice").
+		// Stored directly on the request context so every downstream
+		// hop sees it without touching the web.User surface.
+		if orig := ctx.Header("X-Swirl-Originating-User"); orig != "" {
+			req := ctx.Request()
+			*req = *req.WithContext(context.WithValue(req.Context(), originatingUserContextKey{}, orig))
+		}
 		return next(ctx)
 	}
+}
+
+// originatingUserContextKey is the type-safe key the auth middleware
+// uses to propagate the federated portal's originating-user header.
+// Read via `OriginatingUserFromContext` from any biz call that needs
+// to enrich audit.
+type originatingUserContextKey struct{}
+
+// OriginatingUserFromContext pulls the forwarded `X-Swirl-Originating-User`
+// value out of a context. Empty string when absent — i.e. the request
+// came directly from a human via UI or via an un-federated portal.
+func OriginatingUserFromContext(ctx context.Context) string {
+	if v := ctx.Value(originatingUserContextKey{}); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 func (c *Identifier) Identify(ctx context.Context, loginName, password string) (identify Identity, err error) {

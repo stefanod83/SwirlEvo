@@ -24,12 +24,21 @@ func (d *Dao) HostUpdate(ctx context.Context, host *dao.Host) (err error) {
 		host.Arch = old.Arch
 		host.CPUs = old.CPUs
 		host.Memory = old.Memory
+		// Secrets: keep the old value when the new one is empty. The
+		// UI sends mask placeholders on GET, so an unchanged secret
+		// comes back empty on Save — we must preserve, not overwrite.
 		if host.TLSKey == "" {
 			host.TLSKey = old.TLSKey
 		}
 		if host.SSHKey == "" {
 			host.SSHKey = old.SSHKey
 		}
+		if host.SwirlToken == "" {
+			host.SwirlToken = old.SwirlToken
+		}
+		// `Immutable` stays whatever was set at create time — refuse
+		// to flip it via Update so the `local` host cannot be demoted.
+		host.Immutable = old.Immutable
 		return host
 	})
 }

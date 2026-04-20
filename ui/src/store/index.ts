@@ -20,6 +20,14 @@ export interface HostOption {
     // active selection — gives operators an immediate visual cue of
     // which daemon they're about to act on.
     color?: string;
+    // Type classifies how Swirl talks to this host — mirrors
+    // `dao.Host.Type`. Consumed by buildMenuOptions to add the
+    // Swarm group on swarm_via_swirl hosts, and by HostSelector to
+    // render the type icon.
+    type?: string;
+    // Immutable flag (for system-managed hosts like the local
+    // auto-registered entry). Disables edit/delete actions in the UI.
+    immutable?: boolean;
 }
 
 export interface State {
@@ -165,6 +173,8 @@ export const store = createStore<State>({
                     name: h.name,
                     status: h.status,
                     color: h.color || '',
+                    type: h.type || '',
+                    immutable: !!h.immutable,
                 }))
                 commit(Mutations.SetHosts, items)
             } catch { /* ignore */ }

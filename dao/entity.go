@@ -150,6 +150,13 @@ type Event struct {
 	Args     data.Map           `json:"args" bson:"args"`
 	UserID   string             `json:"userId" bson:"user_id"`
 	Username string             `json:"username" bson:"username"`
+	// OriginatingUser is populated on a Swirl swarm target when an
+	// incoming API request carries the `X-Swirl-Originating-User`
+	// header (set by a federated Swirl portal). `Username` is the
+	// federation peer identity; OriginatingUser records the human
+	// behind it — ~"peer=federation-peer-portal-1 origin=alice".
+	// Empty for direct (non-federated) requests.
+	OriginatingUser string `json:"originatingUser,omitempty" bson:"originating_user,omitempty"`
 	Time     Time               `json:"time" bson:"time"`
 }
 
@@ -250,8 +257,11 @@ func (cd *Dashboard) ID() string {
 type Host struct {
 	ID        string   `json:"id" bson:"_id"`
 	Name      string   `json:"name" bson:"name" valid:"required"`
-	Endpoint  string   `json:"endpoint" bson:"endpoint" valid:"required"` // unix://, tcp://, ssh://
-	AuthMethod string  `json:"authMethod" bson:"auth_method"`             // socket, tcp, tcp+tls, ssh, agent
+	// Endpoint accepts unix://, tcp://, tcp+tls://, ssh://, and
+	// https://... (the latter for `swarm_via_swirl` federation
+	// hosts — see `Type` below).
+	Endpoint  string   `json:"endpoint" bson:"endpoint" valid:"required"`
+	AuthMethod string  `json:"authMethod" bson:"auth_method"` // socket, tcp, tcp+tls, ssh, swirl
 	TLSCACert string   `json:"tlsCaCert,omitempty" bson:"tls_ca_cert,omitempty"`
 	TLSCert   string   `json:"tlsCert,omitempty" bson:"tls_cert,omitempty"`
 	TLSKey    string   `json:"-" bson:"tls_key,omitempty"`
@@ -266,6 +276,37 @@ type Host struct {
 	// no marker. Validated client-side; server stores whatever string
 	// is supplied (the UI constrains the picker output).
 	Color     string   `json:"color,omitempty" bson:"color,omitempty"`
+	// Type classifies how Swirl talks to this host:
+	//   - "standalone"      — direct Docker daemon (unix/tcp/tcp+tls/ssh)
+	//   - "swarm_via_swirl" — federation: HTTPS call to a remote Swirl
+	//                         running in MODE=swarm. Swirl proxies every
+	//                         request to the remote Swirl's REST API,
+	//                         authenticated by SwirlToken.
+	// Auto-detected by `probeHost` at Save/Sync time. Empty string on
+	// legacy records — a background migration upgrades them.
+	Type      string   `json:"type,omitempty" bson:"type,omitempty"`
+	// SwirlURL is the base URL of the federated Swirl swarm target
+	// (only when Type == "swarm_via_swirl"). Trailing slash stripped.
+	SwirlURL  string   `json:"swirlUrl,omitempty" bson:"swirl_url,omitempty"`
+	// SwirlToken is the long-lived API token of the federation peer
+	// user registered on the remote Swirl swarm instance. Never sent
+	// in cleartext to the UI (GET returns the mask placeholder) and
+	// never written to audit events. NEVER persisted to backup
+	// archives unmasked — sanitised like other secret fields.
+	SwirlToken string  `json:"swirlToken,omitempty" bson:"swirl_token,omitempty"`
+	// TokenExpiresAt is the informational expiry date of the
+	// federation token. Soft-expiry: operations continue to work past
+	// the date; a global UI banner warns the operator to rotate.
+	// Zero value means "no expiry tracked".
+	TokenExpiresAt Time  `json:"tokenExpiresAt,omitempty" bson:"token_expires_at,omitempty"`
+	// TokenAutoRefresh, when true, lets the portal Swirl call the
+	// federated Swirl's renewal endpoint periodically to extend the
+	// expiry without operator intervention.
+	TokenAutoRefresh bool `json:"tokenAutoRefresh,omitempty" bson:"token_auto_refresh,omitempty"`
+	// Immutable is set on system-managed entries (most notably the
+	// auto-registered `local` host pointing at Swirl's own docker
+	// socket). Prevents Edit/Delete via the API — returned as 403.
+	Immutable bool      `json:"immutable,omitempty" bson:"immutable,omitempty"`
 	EngineVer string   `json:"engineVersion,omitempty" bson:"engine_ver,omitempty"`
 	OS        string   `json:"os,omitempty" bson:"os,omitempty"`
 	Arch      string   `json:"arch,omitempty" bson:"arch,omitempty"`

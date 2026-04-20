@@ -17,6 +17,12 @@ const (
 	UserTypeLDAP = "ldap"
 	// UserTypeKeycloak is external user authenticated via Keycloak (OIDC)
 	UserTypeKeycloak = "keycloak"
+	// UserTypeFederation is a non-human peer account used to authenticate
+	// a Swirl portal federating against a Swirl swarm. No password,
+	// bearer-token only, typically long-lived. Listed in Users for
+	// audit visibility; flagged in the UI with a dedicated badge and
+	// cannot be converted to another type.
+	UserTypeFederation = "federation"
 )
 
 const (

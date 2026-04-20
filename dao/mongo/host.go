@@ -16,16 +16,23 @@ func (d *Dao) HostCreate(ctx context.Context, host *dao.Host) (err error) {
 func (d *Dao) HostUpdate(ctx context.Context, host *dao.Host) (err error) {
 	update := bson.M{
 		"$set": bson.M{
-			"name":        host.Name,
-			"endpoint":    host.Endpoint,
-			"auth_method": host.AuthMethod,
-			"tls_ca_cert": host.TLSCACert,
-			"tls_cert":    host.TLSCert,
-			"ssh_user":    host.SSHUser,
-			"color":       host.Color,
-			"updated_at":  host.UpdatedAt,
-			"updated_by":  host.UpdatedBy,
+			"name":               host.Name,
+			"endpoint":           host.Endpoint,
+			"auth_method":        host.AuthMethod,
+			"tls_ca_cert":        host.TLSCACert,
+			"tls_cert":           host.TLSCert,
+			"ssh_user":           host.SSHUser,
+			"color":              host.Color,
+			"type":               host.Type,
+			"swirl_url":          host.SwirlURL,
+			"token_expires_at":   host.TokenExpiresAt,
+			"token_auto_refresh": host.TokenAutoRefresh,
+			"updated_at":         host.UpdatedAt,
+			"updated_by":         host.UpdatedBy,
 		},
+	}
+	if host.SwirlToken != "" {
+		update["$set"].(bson.M)["swirl_token"] = host.SwirlToken
 	}
 	if host.TLSKey != "" {
 		update["$set"].(bson.M)["tls_key"] = host.TLSKey

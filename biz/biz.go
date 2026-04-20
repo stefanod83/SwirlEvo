@@ -138,4 +138,6 @@ func init() {
 	container.Put(NewHost)
 	container.Put(NewBackup)
 	container.Put(NewSelfDeploy)
+	container.Put(NewFederation)
+	container.Put(NewFederationRotator)
 }

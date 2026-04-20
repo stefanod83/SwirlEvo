@@ -87,4 +87,8 @@ export const perms = [
         key: 'self_deploy',
         actions: ['view', 'edit', 'execute'],
     },
+    {
+        key: 'federation',
+        actions: ['admin'],
+    },
 ]

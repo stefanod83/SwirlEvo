@@ -10,6 +10,7 @@ export default {
         "confirm": "Confirm",
         "cancel": "Cancel",
         "clear": "Clear",
+        "close": "Close",
         "search": "Search",
         "return": "Return",
         "deploy": "Deploy",
@@ -87,6 +88,13 @@ export default {
         "height": "Height",
         "name": "Name",
         "color": "Color",
+        "swirl_token": "Federation peer token",
+        "token_auto_refresh": "Auto-refresh token",
+        "token_status": "Token status",
+        "token_expired": "Expired — operations still work but please rotate",
+        "token_expiring": "Expiring soon",
+        "token_valid": "Valid",
+        "token_expires_at": "Expires at",
         "address": "Address",
         "url": "URL",
         "login_name": "Login name",
@@ -366,6 +374,8 @@ export default {
         "backup": "Backup | Backups",
         "vault": "Vault",
         "vault_secret": "Vault secret | Vault secrets",
+        "self_deploy": "Self-deploy",
+        "federation": "Federation",
     },
     "titles": {
         "home": "Home",
@@ -495,6 +505,8 @@ export default {
     "tips": {
         "remove_anonymous_volumes": "Also drops unnamed volumes declared by the image (VOLUME directives). Named volumes are never removed by this option.",
         "host_color": "Shown as a coloured bar under the header whenever this host is selected — a visual cue of which daemon you're acting on.",
+        "host_federation_detected": "HTTPS endpoint detected — this host will be managed via Swirl federation. Paste the federation peer token generated on the target Swirl instance below.",
+        "host_endpoint_types": "Standalone Docker host: use tcp://, unix://, or ssh://. Swarm cluster: deploy Swirl in the cluster and use its HTTPS URL (e.g. https://swirl-swarm.example.com) — the connection is then federated, never a direct socket to the manager.",
         "registry_url": "Registry address, e.g. registry.com",
         "command": "Startup command",
         "command_empty": "Command cannot be empty",
@@ -880,6 +892,23 @@ export default {
             "deploy_failed": "Failed to start the self-deploy sidekick.",
             "status_failed": "Failed to read deploy status."
         }
+    },
+    "federation": {
+        "title": "Federation",
+        "subtitle": "Manage the peer tokens that let remote Swirl portals federate against this instance.",
+        "create_peer": "Create peer",
+        "ttl_days": "TTL (days)",
+        "ttl_hint": "0 or negative means no expiry (100 years). 90 days is a reasonable default — the portal can rotate automatically before expiry when Auto-refresh is on.",
+        "generate": "Generate",
+        "token_once_warning": "Copy the token now — it will not be shown again. If you lose it, rotate to mint a new one.",
+        "peer": "Peer",
+        "login_name": "Login name",
+        "rotate": "Rotate",
+        "revoke": "Revoke",
+        "revoke_confirm": "Revoke this peer? Its token stops working immediately.",
+        "revoked": "Peer {name} revoked.",
+        "name_required": "Peer name is required.",
+        "empty_hint": "No federation peers yet. Create one to let a remote Swirl portal manage this instance."
     },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork). All rights reserved.",
 }

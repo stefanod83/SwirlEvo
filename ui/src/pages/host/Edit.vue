@@ -15,10 +15,45 @@
         <n-input v-model:value="model.name" placeholder="My Docker Host" />
       </n-form-item>
       <n-form-item label="Endpoint" required>
-        <n-input v-model:value="model.endpoint" placeholder="tcp://192.168.1.100:2375 or unix:///var/run/docker.sock" />
+        <div style="width: 100%">
+          <n-input v-model:value="model.endpoint"
+            placeholder="tcp://host:2375 · unix:///var/run/docker.sock · ssh://user@host · https://swirl-swarm.example.com"
+          />
+          <div class="host-endpoint-hint">
+            {{ t('tips.host_endpoint_types') }}
+          </div>
+        </div>
       </n-form-item>
-      <n-form-item label="Auth Method">
+      <n-alert v-if="isFederation" type="info" :show-icon="true" style="margin-bottom: 12px">
+        {{ t('tips.host_federation_detected') }}
+      </n-alert>
+      <n-form-item v-if="!isFederation" label="Auth Method">
         <n-select v-model:value="model.authMethod" :options="authOptions" />
+      </n-form-item>
+      <!-- Federation-specific fields -->
+      <n-form-item v-if="isFederation" :label="t('fields.swirl_token')" required>
+        <n-input
+          v-model:value="model.swirlToken"
+          type="password"
+          show-password-on="click"
+          placeholder="Paste the federation peer token generated on the target Swirl"
+        />
+      </n-form-item>
+      <n-form-item v-if="isFederation" :label="t('fields.token_auto_refresh')">
+        <n-switch v-model:value="model.tokenAutoRefresh" />
+      </n-form-item>
+      <n-form-item v-if="isFederation && isEdit" :label="t('fields.token_status')">
+        <n-space :size="8" align="center">
+          <n-tag
+            :type="tokenExpired ? 'error' : (tokenExpiringSoon ? 'warning' : 'success')"
+            size="small"
+          >
+            {{ tokenExpired ? t('fields.token_expired') : (tokenExpiringSoon ? t('fields.token_expiring') : t('fields.token_valid')) }}
+          </n-tag>
+          <span v-if="model.tokenExpiresAt" class="muted">
+            {{ t('fields.token_expires_at') }}: {{ formatDate(model.tokenExpiresAt) }}
+          </span>
+        </n-space>
       </n-form-item>
       <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS CA Cert">
         <n-input v-model:value="model.tlsCaCert" type="textarea" :rows="3" placeholder="CA certificate (PEM)" />
@@ -80,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, reactive } from "vue";
+import { computed, onMounted, ref, reactive } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   NForm,
@@ -92,6 +127,8 @@ import {
   NAlert,
   NColorPicker,
   NIcon,
+  NSwitch,
+  NTag,
 } from "naive-ui";
 import { ArrowBackCircleOutline as ArrowBackIcon } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
@@ -119,7 +156,36 @@ const model = reactive({
   sshUser: '',
   sshKey: '',
   color: '',
+  // Federation (swarm_via_swirl) fields.
+  swirlToken: '',
+  tokenAutoRefresh: false,
+  tokenExpiresAt: 0,
+  type: '',
 })
+
+const isEdit = computed(() => !!route.params.id)
+
+// Classify the endpoint to decide which form fields to render:
+// https:// URLs are federation targets; the rest go through the
+// standard direct-socket auth flow.
+const isFederation = computed(() => {
+  const ep = (model.endpoint || '').toLowerCase()
+  return ep.startsWith('http://') || ep.startsWith('https://') || model.type === 'swarm_via_swirl'
+})
+
+const tokenExpired = computed(() => {
+  if (!model.tokenExpiresAt) return false
+  return model.tokenExpiresAt * 1000 < Date.now()
+})
+const tokenExpiringSoon = computed(() => {
+  if (!model.tokenExpiresAt || tokenExpired.value) return false
+  const days = (model.tokenExpiresAt * 1000 - Date.now()) / 86400_000
+  return days < 7
+})
+function formatDate(ts: number): string {
+  if (!ts) return ''
+  return new Date(ts * 1000).toLocaleString()
+}
 
 // Curated palette — Naive UI's default colour picker exposes a
 // rainbow that is too broad for a "pick a tag colour" UX. These 8
@@ -210,5 +276,11 @@ onMounted(fetchData);
   font-size: 12px;
   color: var(--n-text-color-3, #888);
   line-height: 1.4;
+}
+.host-endpoint-hint {
+  font-size: 12px;
+  color: var(--n-text-color-3, #888);
+  line-height: 1.4;
+  margin-top: 6px;
 }
 </style>
