@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/cuigh/auxo/data"
@@ -222,7 +223,7 @@ func newContainerMount(m container.MountPoint) *ContainerMount {
 func newContainerSummary(c *container.Summary) *Container {
 	ctr := &Container{
 		ID:          c.ID,
-		Name:        c.Names[0],
+		Name:        strings.TrimPrefix(c.Names[0], "/"),
 		Image:       normalizeImage(c.Image),
 		Command:     c.Command,
 		CreatedAt:   formatTime(time.Unix(c.Created, 0)),
@@ -252,7 +253,7 @@ func newContainerDetail(c *container.InspectResponse) *Container {
 	startedAt, _ := time.Parse(time.RFC3339Nano, c.State.StartedAt)
 	ctr := &Container{
 		ID:          c.ID,
-		Name:        c.Name,
+		Name:        strings.TrimPrefix(c.Name, "/"),
 		Image:       c.Image,
 		CreatedAt:   formatTime(created),
 		Labels:      mapToOptions(c.Config.Labels),

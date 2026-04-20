@@ -4,7 +4,8 @@
       "WebSearch",
       "Bash(command -v go)",
       "Bash(grep)",
-      "Bash(docker)"
+      "Bash(docker)",
+      "Bash(git -C /mnt/c/GitRepos/swirl show)"
     ]
   }
 }

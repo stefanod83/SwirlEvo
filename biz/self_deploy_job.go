@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/cuigh/auxo/log"
+	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 )
 
 // selfDeployStateDir is the filesystem path where the primary Swirl
@@ -86,6 +91,12 @@ type SelfDeployJob struct {
 	RecoveryAllow []string `json:"recoveryAllow"`
 	TimeoutSec    int      `json:"timeoutSec"`
 	AutoRollback  bool     `json:"autoRollback"`
+	// EnvVars carries the parsed ComposeStack.EnvFile. Serialised with
+	// the job so the sidekick can inject them back into the process
+	// env before the compose engine parses the YAML — otherwise
+	// `${VAR}` references in volumes/ports expand to empty and the
+	// deploy fails with a YAML parse error.
+	EnvVars map[string]string `json:"envVars,omitempty"`
 }
 
 // SelfDeployState is the mutable record updated by the sidekick as the
@@ -248,6 +259,123 @@ func acquireSelfDeployLock() (release func(), err error) {
 	_, _ = fmt.Fprintln(f, time.Now().UTC().Format(time.RFC3339))
 	_ = f.Close()
 	return func() { _ = os.Remove(lockPath) }, nil
+}
+
+// reclaimStaleLock inspects the on-disk `.lock` + `state.json` pair and,
+// if the sidekick container is missing or exited, removes the lock and
+// rewrites state.json as Failed("abandoned"). Returns true when a
+// reclaim was performed.
+//
+// Safety rules:
+//   - If `.lock` is absent, nothing to do — return (false, nil).
+//   - If the state points at a terminal phase (success/failed/rolled_back)
+//     we simply drop the stale lock file (should not happen, but defensive).
+//   - If the state points at an in-progress phase, we look up the expected
+//     sidekick container name derived from job.id. If it is Running we do
+//     NOT touch anything — a second caller racing with a genuine deploy
+//     must never kill the lock out from under the real sidekick.
+//   - If the container is NotFound / Exited / Dead, we declare the deploy
+//     abandoned, rewrite state.json with Phase=Failed + a diagnostic
+//     message, and remove the lock file.
+//
+// The function is safe to call concurrently: the lock file removal is a
+// single syscall, and writeSelfDeployState uses the atomic rename pattern.
+func reclaimStaleLock(ctx context.Context, cli *dockerclient.Client, logger log.Logger) (bool, error) {
+	_, statePath, lockPath := selfDeployPaths()
+	if _, err := os.Stat(lockPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("self-deploy: stat lock: %w", err)
+	}
+	st, err := readSelfDeployState()
+	if err != nil {
+		// Unreadable state but lock exists — treat as stale.
+		if logger != nil {
+			logger.Warnf("self-deploy: stale lock reclaim: state.json unreadable (%v); clearing anyway", err)
+		}
+		_ = os.Remove(lockPath)
+		return true, nil
+	}
+	if st == nil {
+		// Lock without state (very rare) — definitely stale.
+		if logger != nil {
+			logger.Warn("self-deploy: stale lock reclaim: state.json missing; clearing lock")
+		}
+		_ = os.Remove(lockPath)
+		return true, nil
+	}
+	if !isInProgressPhase(st.Phase) {
+		// Terminal phase — lock must not still be here. Clear it.
+		if logger != nil {
+			logger.Warnf("self-deploy: stale lock reclaim: phase=%s; clearing lock", st.Phase)
+		}
+		_ = os.Remove(lockPath)
+		return true, nil
+	}
+	// State says a deploy is in progress. Verify the sidekick.
+	if st.JobID == "" || cli == nil {
+		// Without a jobID or a docker client we cannot verify — err on
+		// the side of safety and do NOT touch the lock.
+		if logger != nil {
+			logger.Warnf("self-deploy: stale lock reclaim: cannot verify sidekick (jobID=%q, client=%v); skipping", st.JobID, cli != nil)
+		}
+		return false, nil
+	}
+	name := sidekickContainerName(st.JobID)
+	inspectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	info, ierr := cli.ContainerInspect(inspectCtx, name)
+	cancel()
+	if ierr == nil && info.State != nil && info.State.Running {
+		// Sidekick is actually working — do not touch anything.
+		return false, nil
+	}
+	reason := "abandoned (sidekick missing or exited)"
+	if ierr == nil && info.State != nil {
+		switch {
+		case info.State.Status == "exited":
+			if info.State.ExitCode != 0 {
+				reason = fmt.Sprintf("abandoned (sidekick %s exited with code %d — see `docker logs %s`)", name, info.State.ExitCode, name)
+			} else {
+				reason = fmt.Sprintf("abandoned (sidekick %s exited cleanly without reporting state — check image entrypoint)", name)
+			}
+		case info.State.Status == "dead", info.State.Status == "removing":
+			reason = fmt.Sprintf("abandoned (sidekick %s is in state %q)", name, info.State.Status)
+		}
+	} else if ierr != nil && errdefs.IsNotFound(ierr) {
+		reason = fmt.Sprintf("abandoned (sidekick %s not found on daemon)", name)
+	}
+
+	now := time.Now().UTC()
+	newState := &SelfDeployState{
+		JobID:          st.JobID,
+		Phase:          SelfDeployPhaseFailed,
+		StartedAt:      st.StartedAt,
+		FinishedAt:     now,
+		Error:          "self-deploy: " + reason,
+		LogTail:        appendLogLine(st.LogTail, now.Format(time.RFC3339)+" "+reason),
+		EventPublished: false,
+	}
+	if werr := writeSelfDeployState(newState); werr != nil {
+		return false, fmt.Errorf("self-deploy: rewrite state.json: %w", werr)
+	}
+	if rerr := os.Remove(lockPath); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+		return false, fmt.Errorf("self-deploy: remove stale lock: %w", rerr)
+	}
+	if logger != nil {
+		logger.Warnf("self-deploy: reclaimed stale lock for job %s (%s); state.json=%s", st.JobID, reason, statePath)
+	}
+	return true, nil
+}
+
+// appendLogLine appends a single line to the LogTail ring, capping at
+// 200 entries so state.json does not grow unbounded.
+func appendLogLine(tail []string, line string) []string {
+	tail = append(tail, line)
+	if len(tail) > 200 {
+		tail = tail[len(tail)-200:]
+	}
+	return tail
 }
 
 // atomicWriteFile writes b to path via a temp file in the same

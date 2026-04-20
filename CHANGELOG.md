@@ -735,6 +735,142 @@ back automatically or exposes a tiny allow-listed recovery UI.
 * **i18n**: new keys `events.type.self_deploy`,
   `events.action.self_deploy_start|success|failure` in en / it / zh.
 
+### Self-deploy v2 (simplified: source stack flag)
+
+Commit `521b7df`. Pivot from the "template + placeholders" model to a
+stack-as-source-of-truth model:
+
+* **Source stack flag**: Settings → Self-deploy now asks for a
+  ComposeStack to flag as the one that runs Swirl. The compose YAML is
+  read verbatim from the stack record at trigger time — no templating,
+  no placeholder substitution.
+* **Auto-Deploy button**: on `compose_stack/Edit.vue`, when editing the
+  flagged stack the standard Deploy button flips to **Auto-Deploy**
+  (warning-colored) and routes through `/api/self-deploy/deploy`.
+* **Shared composable**: `ui/src/composables/useAutoDeployProgress.ts`
+  encapsulates the live-progress modal + polling logic. Used by both
+  Settings and the stack editor.
+* **Retrocompat**: the legacy `template` / `placeholders` fields on
+  persisted `misc.Setting.SelfDeploy` records are silently dropped on
+  load — no migration.
+
+### Self-deploy v3 hardening (mega-commit)
+
+Series of fixes to make the v2 flow actually survive real-world
+deploys. Commit covers all of the following:
+
+* **Sidekick Cmd fix**: `Cmd: ["deploy-agent"]` instead of
+  `["/swirl", "deploy-agent"]`. The Dockerfile ENTRYPOINT is
+  `/app/swirl`, so a prefixed Cmd produced `/app/swirl /swirl
+  deploy-agent` — Swirl saw `os.Args[1] == "/swirl"` (not
+  `"deploy-agent"`), started as a full server, and hung trying to
+  connect to a MongoDB that wasn't there.
+* **Stale lock reclaim**: `reclaimStaleLock` in `biz/self_deploy_job.go`
+  detects a sidekick that's gone (NotFound / exited / dead), rewrites
+  `state.json` as `Failed("abandoned: …")`, and removes `.lock`. Runs
+  in a boot-hook goroutine (`NewSelfDeploy`) and right before every
+  `TriggerDeploy` acquire. NEVER touches a running sidekick.
+* **Sidekick watchdog**: 90s after spawn, if phase is still
+  `Pending`, the main Swirl declares the sidekick dead, marks the
+  job Failed, and frees the lock so a retry is possible without
+  operator intervention.
+* **Reset endpoint + UI**: `POST /api/self-deploy/reset` +
+  **Clear stuck lock** button in Settings. Refused with
+  `ErrSelfDeployBlocked` if the sidekick is still running. New audit
+  action `EventActionSelfDeployReset`.
+* **Sidekick logs in Status**: the `/status` response now includes
+  `sidekickContainer`, `sidekickAlive`, `sidekickLogs` (tail 200 lines
+  via `cli.ContainerLogs` with stdcopy demux), and `canReset`. The
+  Settings panel renders sidekick logs inline so operators can
+  diagnose a crashed agent without leaving the UI.
+* **Orphan sidekick sweep**: `cleanupExitedSidekicks` removes all
+  `swirl-deploy-agent-*` containers that are not currently running
+  (label `com.swirl.self-deploy=deploy-agent`). Runs at boot and
+  before every spawn. Operators stop accumulating dead agents after
+  dozens of deploys.
+* **`PreserveContainerNames` for the engine**: new
+  `DeployOptions.PreserveContainerNames` field + new
+  `StandaloneEngine.RemoveExcept` method. The sidekick passes
+  `["swirl-previous"]` on both deploy and rollback cleanup so the
+  renamed backup (which still carries the project label) is not
+  destroyed by the engine's own `removeProjectContainers` sweep.
+* **DNS alias on shorthand networks**: `createAndStart` now prepends
+  `svc.Name` to the network aliases for every attached network,
+  matching Docker Compose v2. Without this, services listed with
+  shorthand (`- swirlevo-net`) attach without a DNS alias — peers
+  calling `mongodb:27017` got NXDOMAIN.
+* **Label-based health probe**: `findSwirlContainerIP` in
+  `cmd/deploy_agent/engine.go` looks up the new swirl container by
+  compose labels (`project` + `service` containing "swirl") and
+  returns its IP. `waitHealthyResolver` re-resolves the URL on every
+  probe so an in-flight container restart (new IP) is tolerated. The
+  host-mode sidekick reaches any container IP without requiring the
+  YAML to publish `8001` on the host.
+* **EnvFile interpolation**: the source stack's `.env`-style EnvFile
+  is parsed (`parseEnvFile`) and injected into `os.Environ` before
+  `compose.Parse` — primary-side for preflight and sidekick-side via
+  `opts.EnvVars`. `${VAR}` references in volumes/ports/env now
+  resolve correctly.
+* **Preflight: `/data` persistent volume required**: the swirl
+  service YAML must declare a mount at `/data` (named or bind).
+  Without it, the sidekick's state file is lost on every restart,
+  leading to "No logs yet" + stale-lock symptoms. Blocks with
+  `{"code":1007, "info":"service … does not declare a persistent
+  volume at /data — add volumes: [<name>:/data]…"}`.
+* **Preflight: network-sharing between peers**: if a primary env
+  references a service host (`DB_ADDRESS=mongodb://mongodb:…`), that
+  service must share at least one network with the swirl service in
+  the target YAML. Blocks with a human-readable message.
+* **Source stack error cleanup**: `clearSourceStackError` zeroes
+  `ComposeStack.ErrorMessage` at `TriggerDeploy` time so the "cannot
+  deploy a stack that includes this Swirl instance" banner from a
+  previous normal-deploy attempt disappears as soon as auto-deploy
+  starts.
+* **Gate Deploy button on `sdConfigLoaded`**: the Deploy button on
+  `compose_stack/Edit.vue` is disabled until `loadSelfDeployConfig()`
+  resolves, preventing a race where the first click falls through to
+  the normal deploy path and produces the "cannot deploy" error.
+* **Auto-Deploy saves before deploying**: `confirmAutoDeploy` now
+  calls `composeStackApi.save(model)` before `selfDeployApi.deploy()`
+  so in-editor changes (e.g. bumped image tag) actually reach the
+  sidekick — previously the deploy read the stale DB copy and the
+  user saw no effect.
+* **Session survival during restart**: new Vuex state
+  `selfDeployInProgress` (persisted in sessionStorage, TTL 10min) +
+  router guard that pins the operator to Settings during a deploy +
+  axios interceptor that SILENCES transient 401/403/404/500 responses
+  (resolved with a `{code:-1}` sentinel) so no redirect to login
+  happens while the old container is being swapped out. Full-reload
+  triggered by the axios interceptor during restart now restores the
+  progress modal via `resumeFromSession()`.
+* **Memory leak fix**: the axios interceptor previously returned
+  `new Promise(() => {})` on every silenced error. Polling loops
+  (e.g. Setting.vue's 3s-interval `refreshSelfDeployStatus`) were
+  accumulating never-completing async closures — hundreds of
+  kilobytes retained per minute when the server was unreachable.
+  Replaced with `Promise.resolve({data: {code: -1, info: …}})` so
+  awaits complete and closures are released.
+* **Polling gate**: Setting.vue's `refreshSelfDeployStatus` skips
+  the `/status` call entirely when `selfDeployInProgress=true`. The
+  modal's `fetch('/api/system/mode')` poll already covers "is the
+  new Swirl up?".
+* **Sidekick container logs directly in UI**: the Settings panel
+  now renders the sidekick's docker logs inline when present, gated
+  behind `sdStatus.sidekickLogs`. Operators no longer need to SSH to
+  the host + `docker logs` to diagnose a crashed agent.
+* **Container name display strips the Docker API leading `/`**:
+  `newContainerSummary`, `newContainerDetail`, and
+  `compose_stack` container mapping all `strings.TrimPrefix(name,
+  "/")` so the UI shows `xyz` instead of `/xyz`.
+* **Dropped files**: `biz/self_deploy_template.go`,
+  `biz/self_deploy_template_test.go`, `biz/templates/self-stack.yml`,
+  `compose.self-stack.yml.example`. The template machinery is gone
+  entirely — source stack editing happens through the normal
+  compose-stack editor.
+* **`/preview` endpoint removed**. There is nothing to preview at
+  the self-deploy layer since the YAML is whatever the stack
+  editor shows.
+
 ---
 
 ## v1.0.0 (2021-12-15)

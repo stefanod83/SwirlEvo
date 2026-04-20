@@ -636,6 +636,15 @@ function createSiteRouter() {
       return
     }
 
+    // If a self-deploy is in flight, keep the operator on Settings so
+    // the progress modal stays visible. The store flag is populated
+    // from sessionStorage so this works even after a full page reload
+    // triggered by the Swirl container swap.
+    if (store.state.selfDeployInProgress && to.name !== 'setting' && to.name !== 'login' && to.name !== 'init') {
+      next({ name: 'setting' })
+      return
+    }
+
     const auth = to.meta.auth || '*'
     if (auth !== '*') {
       if (store.getters.anonymous) {

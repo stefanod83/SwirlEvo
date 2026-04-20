@@ -21,6 +21,17 @@ export interface SelfDeployStatus {
     logTail?: string[];
     recoveryActive: boolean;
     recoveryUrl?: string;
+    // Sidekick introspection (populated by the biz layer at every
+    // /status poll via docker inspect + docker logs — lets the UI show
+    // sidekick output even when the sidekick crashed before writing any
+    // state.json update).
+    sidekickContainer?: string;
+    sidekickAlive?: boolean;
+    sidekickLogs?: string;
+    // canReset is true when the on-disk state points at an in-progress
+    // phase but the sidekick is missing/exited. The UI surfaces a
+    // "Clear stuck lock" button gated on this flag.
+    canReset?: boolean;
 }
 
 export interface SelfDeployDeployResult {
@@ -57,6 +68,12 @@ export class SelfDeployApi {
 
     status() {
         return ajax.get<SelfDeployStatus>('/self-deploy/status')
+    }
+
+    // reset clears a stuck `.lock` + abandoned state.json. Refused with
+    // code 1007 when the sidekick is still running.
+    reset() {
+        return ajax.post<{ reclaimed: boolean }>('/self-deploy/reset')
     }
 }
 

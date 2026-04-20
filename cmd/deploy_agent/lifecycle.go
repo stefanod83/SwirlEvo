@@ -105,16 +105,30 @@ func runDeploy(ctx context.Context, j *biz.SelfDeployJob, sw *stateWriter) error
 	// the source ComposeStack is already tracked under.
 	sw.SetPhase(biz.SelfDeployPhaseStarting)
 	sw.Logf("deploying stack (project=%s)", j.StackName)
-	if err := deployNew(deployCtx, cli, j.StackName, j.ComposeYAML); err != nil {
+	if err := deployNew(deployCtx, cli, j.StackName, j.ComposeYAML, j.EnvVars); err != nil {
 		return handleDeployFailure(deployCtx, cli, j, sw, logger, originalName, fmt.Errorf("deploy new stack: %w", err))
 	}
 
 	// Step 5 — wait for the new container to answer /api/system/mode.
+	// The sidekick runs with `network_mode: host`, which means
+	// 127.0.0.1:<port> only works when the YAML publishes the port to
+	// the host. With Traefik fronting Swirl, the YAML typically omits
+	// `ports:` on purpose. Resolve the target container by compose
+	// labels (project + service containing "swirl") on every probe so
+	// the check survives an in-flight container restart (e.g. Swirl
+	// crashes once while warming up DB connection, restarts, comes up
+	// healthy on a new bridge IP).
 	sw.SetPhase(biz.SelfDeployPhaseHealthCheck)
-	healthURL := buildHealthURL(j)
 	healthBudget := splitHealthBudget(timeout, pullBudget)
-	sw.Logf("waiting for new Swirl to answer GET %s (budget %s)", healthURL, healthBudget)
-	if err := waitHealthy(deployCtx, healthURL, healthBudget); err != nil {
+	resolver := func(rctx context.Context) (string, error) {
+		return resolveHealthURL(rctx, cli, j)
+	}
+	if initial, _ := resolver(deployCtx); initial != "" {
+		sw.Logf("waiting for new Swirl to answer GET %s (budget %s, resolved by label)", initial, healthBudget)
+	} else {
+		sw.Logf("waiting for new Swirl to answer /api/system/mode (budget %s, awaiting container registration)", healthBudget)
+	}
+	if err := waitHealthyResolver(deployCtx, resolver, healthBudget); err != nil {
 		return handleDeployFailure(deployCtx, cli, j, sw, logger, originalName, fmt.Errorf("health check: %w", err))
 	}
 
@@ -162,6 +176,30 @@ func buildHealthURL(j *biz.SelfDeployJob) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/api/system/mode", port)
 }
 
+// resolveHealthURL finds the IP of the newly-deployed Swirl container
+// on its primary network and returns an http:// URL pointing at it.
+// Falls back to buildHealthURL (127.0.0.1:port) when the container
+// cannot be located — preserves the original behaviour on edge cases.
+//
+// We search for the container by compose labels
+// (com.docker.compose.project=<stack> AND service=<service-with-swirl>).
+// The sidekick's host network mode means any container IP routes via
+// the daemon's docker0 bridge, so this works without any extra port
+// publication in the target YAML.
+func resolveHealthURL(ctx context.Context, cli *client.Client, j *biz.SelfDeployJob) (string, error) {
+	port := j.Placeholders.ExposePort
+	if port == 0 {
+		port = misc.SelfDeployExposePort
+	}
+	ip, err := findSwirlContainerIP(ctx, cli, j.StackName)
+	if err != nil || ip == "" {
+		// Best-effort fallback — avoids breaking deploys where the
+		// YAML DOES publish 8001 on the host.
+		return buildHealthURL(j), nil
+	}
+	return fmt.Sprintf("http://%s:%d/api/system/mode", ip, port), nil
+}
+
 func stopPrimary(ctx context.Context, cli *client.Client, containerID string, grace time.Duration) error {
 	return stopContainer(ctx, cli, containerID, grace)
 }
@@ -196,9 +234,22 @@ func pullImage(ctx context.Context, cli *client.Client, ref string, budget time.
 	return pullImageRaw(pullCtx, cli, ref)
 }
 
-func deployNew(ctx context.Context, cli *client.Client, projectName, composeYAML string) error {
+func deployNew(ctx context.Context, cli *client.Client, projectName, composeYAML string, envVars map[string]string) error {
 	engine := compose.NewStandaloneEngine(cli)
-	opts := compose.DeployOptions{PullImages: false}
+	// PreserveContainerNames: the sidekick renamed the previous swirl
+	// container to "swirl-previous" but kept all its labels — including
+	// the compose-project label. Without this exclusion the engine's
+	// own removeProjectContainers would destroy the backup on the first
+	// line of the deploy, leaving nothing to roll back to.
+	//
+	// EnvVars: the ComposeStack's .env file values, carried through the
+	// job descriptor. The engine Setenv's them around the compose
+	// parse so `${VAR}` references in volumes/ports/env resolve.
+	opts := compose.DeployOptions{
+		PullImages:             false,
+		PreserveContainerNames: []string{previousContainerName},
+		EnvVars:                envVars,
+	}
 	if _, err := engine.DeployWithResult(ctx, projectName, composeYAML, opts); err != nil {
 		return err
 	}
@@ -229,11 +280,14 @@ func handleDeployFailure(ctx context.Context, cli *client.Client, j *biz.SelfDep
 func rollback(ctx context.Context, j *biz.SelfDeployJob, sw *stateWriter, cli *client.Client, originalName string) error {
 	sw.Logf("attempting auto-rollback")
 
-	// Step 1 — tear down the partially-deployed new stack.
+	// Step 1 — tear down the partially-deployed new stack. Preserve
+	// the "swirl-previous" backup so the rename-back step below can
+	// find it: it carries the original compose-project label and
+	// would otherwise be destroyed by the engine's own cleanup.
 	engine := compose.NewStandaloneEngine(cli)
 	rmCtx, rmCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer rmCancel()
-	if err := engine.Remove(rmCtx, j.StackName, false); err != nil {
+	if err := engine.RemoveExcept(rmCtx, j.StackName, false, []string{previousContainerName}); err != nil {
 		sw.Logf("rollback: cleanup of new stack failed (continuing): %v", err)
 	} else {
 		sw.Logf("rollback: removed partial new stack")

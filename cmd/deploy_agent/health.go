@@ -36,8 +36,17 @@ const minHealthTimeout = 30 * time.Second
 // including the last observed HTTP status (or network error) so the
 // operator has context about why the new container never came up.
 func waitHealthy(ctx context.Context, url string, total time.Duration) error {
-	if url == "" {
-		return errors.New("deploy-agent: waitHealthy: empty URL")
+	return waitHealthyResolver(ctx, func(context.Context) (string, error) { return url, nil }, total)
+}
+
+// waitHealthyResolver is the name-based variant: the URL is re-resolved
+// on every probe attempt so a container that restarts mid-loop (and
+// thus picks up a new IP) is still reachable. Used by runDeploy so the
+// health check survives transient container churn without requiring
+// the YAML to publish any port on the host.
+func waitHealthyResolver(ctx context.Context, resolve func(context.Context) (string, error), total time.Duration) error {
+	if resolve == nil {
+		return errors.New("deploy-agent: waitHealthy: nil resolver")
 	}
 	if total < minHealthTimeout {
 		total = minHealthTimeout
@@ -47,17 +56,28 @@ func waitHealthy(ctx context.Context, url string, total time.Duration) error {
 	client := &http.Client{Timeout: healthRequestTimeout}
 	var lastErr error
 	var lastStatus int
+	var lastURL string
 	attempts := 0
 
 	// Loop: probe → wait → repeat until deadline or ctx cancelled.
 	for {
 		attempts++
-		status, err := probeOnce(ctx, client, url)
-		if err == nil && status >= 200 && status < 300 {
-			return nil
+		url, rerr := resolve(ctx)
+		if rerr != nil || url == "" {
+			lastErr = rerr
+			lastStatus = 0
+			goto wait
 		}
-		lastErr = err
-		lastStatus = status
+		lastURL = url
+		{
+			status, err := probeOnce(ctx, client, url)
+			if err == nil && status >= 200 && status < 300 {
+				return nil
+			}
+			lastErr = err
+			lastStatus = status
+		}
+	wait:
 
 		// Has the deadline passed? (Do the check AFTER the probe so we
 		// always try at least once even with a zero-ish timeout.)
@@ -82,9 +102,9 @@ func waitHealthy(ctx context.Context, url string, total time.Duration) error {
 	// Format the failure with the most informative of (last HTTP
 	// status, last network error).
 	if lastErr != nil {
-		return fmt.Errorf("deploy-agent: health check %q did not succeed within %s after %d attempts: %w", url, total, attempts, lastErr)
+		return fmt.Errorf("deploy-agent: health check %q did not succeed within %s after %d attempts: %w", lastURL, total, attempts, lastErr)
 	}
-	return fmt.Errorf("deploy-agent: health check %q did not return 2xx within %s after %d attempts (last status=%d)", url, total, attempts, lastStatus)
+	return fmt.Errorf("deploy-agent: health check %q did not return 2xx within %s after %d attempts (last status=%d)", lastURL, total, attempts, lastStatus)
 }
 
 // probeOnce performs a single GET, returning the HTTP status (or 0 on

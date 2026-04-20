@@ -843,7 +843,19 @@ export default {
             "recovery_url": "UI di recovery",
             "job_id": "Id job",
             "log_tail": "Log recenti",
-            "no_logs": "Nessun log ancora."
+            "no_logs": "Nessun log ancora.",
+            "sidekick_container": "Container sidekick",
+            "sidekick_alive": "in esecuzione",
+            "sidekick_dead": "terminato",
+            "sidekick_logs": "Log del container sidekick"
+        },
+        "reset": {
+            "button": "Sblocca lock",
+            "hint": "Un self-deploy è bloccato: il sidekick non esiste più ma il file di lock è ancora presente. Sbloccalo per permettere un nuovo deploy.",
+            "confirm": "Verrà rimosso /data/self-deploy/.lock e l'ultimo job sarà marcato Fallito(abbandonato). Proseguire?",
+            "success": "Lock bloccato rimosso.",
+            "nothing_to_clear": "Nulla da ripulire.",
+            "failed": "Impossibile rimuovere il lock bloccato."
         },
         "progress": {
             "title": "Auto-deploy in corso",

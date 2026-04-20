@@ -42,18 +42,35 @@ class Ajax {
                 return response;
             },
             (error: any) => {
-                if (this.handleError(error)) {
-                    // Stop Promise chain
-                    return new Promise(() => { })
-                } else {
-                    return Promise.reject(error)
+                const handled = this.handleError(error)
+                if (handled === 'silence') {
+                    // Deploy in progress — return a synthetic empty
+                    // success so the caller's `await` resolves cleanly
+                    // (no hanging promise = no leaked closures).
+                    return Promise.resolve({ data: { code: -1, info: 'self-deploy-in-progress' } })
                 }
+                if (handled === true) {
+                    // Keep the legacy "stop the chain" semantics for
+                    // 401/403/404 navigations where the router has
+                    // already taken over; the component will unmount
+                    // and GC will release the hanging closure shortly.
+                    return new Promise(() => { })
+                }
+                return Promise.reject(error)
             }
         )
     }
 
-    private handleError(error: any): boolean {
+    private handleError(error: any): boolean | 'silence' {
         if (error.response) {
+            // During an active self-deploy the old Swirl container is
+            // being swapped out; transient 401/403/404/500 responses
+            // from the reverse proxy are expected. Do NOT redirect to
+            // login or blow up the page — the progress modal + polling
+            // on /api/system/mode will recover on its own.
+            if (store.state.selfDeployInProgress) {
+                return 'silence'
+            }
             switch (error.response.status) {
                 case 401:
                     store.commit(Mutations.Logout);
@@ -78,6 +95,11 @@ class Ajax {
                     this.showError(error)
             }
         } else {
+            if (store.state.selfDeployInProgress) {
+                // Network error during deploy — sidekick is restarting
+                // the primary; swallow so the progress modal handles it.
+                return 'silence'
+            }
             window.message.error(error.message, { duration: 5000 });
         }
         return false

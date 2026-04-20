@@ -1,6 +1,8 @@
 import { computed, ref, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SelfDeployDeployResult } from '@/api/self-deploy'
+import { store } from '@/store'
+import { Mutations } from '@/store/mutations'
 
 // useAutoDeployProgress encapsulates the "live progress" iframe modal
 // that opens when an Auto-Deploy is triggered. Two pages consume it
@@ -70,6 +72,33 @@ export function useAutoDeployProgress() {
         progressTimedOut.value = false
         progressOpen.value = true
 
+        // Signal: a self-deploy is in flight. Axios interceptor
+        // suppresses redirect-to-login on the 401 storm that hits while
+        // the old Swirl container is being swapped out.
+        store.commit(Mutations.SetSelfDeployInProgress, {
+            jobId: result?.jobId || null,
+            inProgress: true,
+        })
+
+        startProgressPolling()
+        addProgressPostMessageListener()
+        startProgressLoadGuard()
+        startProgressTimeoutGuard()
+    }
+
+    // resumeFromSession is called by any page that mounts while the
+    // store flag indicates a deploy is still in flight (typically the
+    // Settings page after an accidental full-reload). It reopens the
+    // modal pointing at the *last known* recovery port — best-effort
+    // so the operator keeps seeing progress without re-triggering.
+    function resumeFromSession() {
+        if (!store.state.selfDeployInProgress) return
+        const port = lastRecoveryPort || 8002
+        progressUrl.value = buildProgressUrl('', port)
+        progressIframeFailed.value = false
+        progressIframeLoaded.value = false
+        progressTimedOut.value = false
+        progressOpen.value = true
         startProgressPolling()
         addProgressPostMessageListener()
         startProgressLoadGuard()
@@ -160,6 +189,10 @@ export function useAutoDeployProgress() {
             progressLoadGuardTimer = null
         }
         progressOpen.value = false
+        // Release the self-deploy guard BEFORE the reload so subsequent
+        // requests on the fresh page follow the normal 401-redirect
+        // logic again.
+        store.commit(Mutations.SetSelfDeployInProgress, { jobId: null, inProgress: false })
         // Full reload so Vuex and the live setting snapshot are fresh.
         window.location.assign('/')
     }
@@ -187,6 +220,7 @@ export function useAutoDeployProgress() {
         progressTimedOut,
         iframeFallbackMessage,
         openProgressFromDeployResult,
+        resumeFromSession,
         onIframeLoad,
         onIframeError,
         cleanup,

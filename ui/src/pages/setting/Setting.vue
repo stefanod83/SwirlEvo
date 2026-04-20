@@ -606,8 +606,55 @@
             :show-icon="true"
             style="margin-bottom: 8px"
           >{{ sdStatus.error }}</n-alert>
+          <!-- Reset (Clear stuck lock) — visible when the on-disk state
+               is in a stale in-progress phase but the sidekick is dead. -->
+          <n-space
+            v-if="sdStatus.canReset && canEditSelfDeploy"
+            :size="8"
+            align="center"
+            style="margin-bottom: 8px"
+          >
+            <n-alert type="warning" :show-icon="true" style="flex: 1">
+              {{ t('self_deploy.reset.hint') }}
+            </n-alert>
+            <n-popconfirm
+              :positive-text="t('self_deploy.reset.button')"
+              :negative-text="t('buttons.cancel')"
+              @positive-click="resetSelfDeploy"
+            >
+              <template #trigger>
+                <n-button type="warning" :loading="sdResetting">
+                  {{ t('self_deploy.reset.button') }}
+                </n-button>
+              </template>
+              {{ t('self_deploy.reset.confirm') }}
+            </n-popconfirm>
+          </n-space>
+          <!-- Sidekick info -->
+          <div v-if="sdStatus.sidekickContainer" class="sd-muted" style="margin-bottom: 6px">
+            {{ t('self_deploy.status.sidekick_container') }}:
+            <code>{{ sdStatus.sidekickContainer }}</code>
+            <span v-if="sdStatus.sidekickAlive" style="margin-left: 8px; color: var(--n-text-color-3, #999)">
+              · {{ t('self_deploy.status.sidekick_alive') }}
+            </span>
+            <span v-else style="margin-left: 8px; color: var(--n-text-color-3, #999)">
+              · {{ t('self_deploy.status.sidekick_dead') }}
+            </span>
+          </div>
           <div class="sd-block-title">{{ t('self_deploy.status.log_tail') }}</div>
           <pre class="sd-log">{{ logTailText || t('self_deploy.status.no_logs') }}</pre>
+          <!-- Docker logs of the sidekick container: captured by the
+               biz layer on every status poll. Useful when the sidekick
+               crashed before writing any state.json update. -->
+          <div
+            v-if="sdStatus.sidekickLogs"
+            class="sd-block-title"
+            style="margin-top: 10px"
+          >{{ t('self_deploy.status.sidekick_logs') }}</div>
+          <pre
+            v-if="sdStatus.sidekickLogs"
+            class="sd-log"
+          >{{ sdStatus.sidekickLogs }}</pre>
         </div>
       </n-space>
     </x-panel>
@@ -709,6 +756,7 @@ import {
   NSelect,
   NTag,
   NModal,
+  NPopconfirm,
   NSpin,
 } from "naive-ui";
 import XPageHeader from "@/components/PageHeader.vue";
@@ -1022,6 +1070,7 @@ const sourceStackOptions = ref<{ label: string; value: string }[]>([])
 const sdSourceStackLoading = ref(false)
 
 const sdStatus = ref<SelfDeployStatus | null>(null)
+const sdResetting = ref(false)
 let sdPollTimer: number | null = null
 
 // Live-progress iframe modal — reused from the composable, shared
@@ -1034,6 +1083,7 @@ const {
   progressIframeFailed,
   progressTimedOut,
   iframeFallbackMessage,
+  resumeFromSession,
   onIframeLoad,
   onIframeError,
 } = useAutoDeployProgress()
@@ -1151,7 +1201,30 @@ async function saveSelfDeploy() {
   }
 }
 
+async function resetSelfDeploy() {
+  sdResetting.value = true
+  try {
+    const r = await selfDeployApi.reset()
+    if (r?.data?.reclaimed) {
+      window.message.success(t('self_deploy.reset.success'))
+    } else {
+      window.message.info(t('self_deploy.reset.nothing_to_clear'))
+    }
+    await refreshSelfDeployStatus()
+  } catch (e: any) {
+    window.message.error(e?.response?.data?.info || e?.message || t('self_deploy.reset.failed'))
+  } finally {
+    sdResetting.value = false
+  }
+}
+
 async function refreshSelfDeployStatus() {
+  // Skip during an active deploy — Swirl itself is being swapped out,
+  // so any /status poll either hangs or is silenced by the interceptor.
+  // The composable's fetch-based poll on /api/system/mode already
+  // covers "is the new Swirl up yet?" and triggers the modal close on
+  // success.
+  if (store.state.selfDeployInProgress) return
   try {
     const r = await selfDeployApi.status()
     sdStatus.value = r?.data || null
@@ -1178,6 +1251,10 @@ onMounted(async () => {
   await loadSelfDeploy()
   loadSourceStacks()
   startSelfDeployPolling()
+  // If we landed here mid-deploy (e.g. the browser reloaded during the
+  // sidekick swap), the sessionStorage-backed flag in the store is
+  // still set — resume the live progress modal.
+  resumeFromSession()
 })
 
 onUnmounted(() => {

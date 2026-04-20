@@ -843,7 +843,19 @@ export default {
             "recovery_url": "Recovery UI",
             "job_id": "Job id",
             "log_tail": "Recent logs",
-            "no_logs": "No logs yet."
+            "no_logs": "No logs yet.",
+            "sidekick_container": "Sidekick container",
+            "sidekick_alive": "running",
+            "sidekick_dead": "exited",
+            "sidekick_logs": "Sidekick container logs"
+        },
+        "reset": {
+            "button": "Clear stuck lock",
+            "hint": "A self-deploy is stuck: the sidekick is gone but the lock file is still present. Clear it to allow a new deploy.",
+            "confirm": "This clears /data/self-deploy/.lock and marks the last job as Failed(abandoned). Proceed?",
+            "success": "Stuck lock cleared.",
+            "nothing_to_clear": "Nothing to clear.",
+            "failed": "Failed to clear the stuck lock."
         },
         "progress": {
             "title": "Self-deploy in progress",

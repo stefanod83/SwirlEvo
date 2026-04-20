@@ -58,6 +58,7 @@
       <n-button
         :type="isSelfDeployStack ? 'warning' : 'primary'"
         :loading="submitting"
+        :disabled="!sdConfigLoaded"
         @click="isSelfDeployStack ? autoDeployStack() : deployStack()"
       >
         <template #icon>
@@ -559,6 +560,13 @@ async function deployStack() {
 // (shared composable) opens immediately.
 
 const sdConfig = ref<SelfDeployConfig | null>(null)
+// sdConfigLoaded gates the Deploy button so clicking it before the
+// /api/self-deploy/load-config roundtrip resolves cannot accidentally
+// fall through to the normal composeStack.deploy path — that path
+// refuses to deploy a stack that contains the running Swirl instance
+// and would leave a spurious "cannot deploy a stack that includes this
+// Swirl instance" error on the record. See biz/compose_stack.go:~390.
+const sdConfigLoaded = ref(false)
 const autoDeployConfirm = ref(false)
 
 const isSelfDeployStack = computed(() => {
@@ -583,6 +591,10 @@ async function loadSelfDeployConfig() {
     sdConfig.value = r?.data || null
   } catch {
     sdConfig.value = null
+  } finally {
+    // Flip the gate regardless of success/failure — a 403 still unlocks
+    // the Deploy button in normal (non-auto) mode.
+    sdConfigLoaded.value = true
   }
 }
 
@@ -593,6 +605,17 @@ function autoDeployStack() {
 async function confirmAutoDeploy() {
   submitting.value = true
   try {
+    // Persist the editor state first: /api/self-deploy/deploy reads the
+    // source stack's YAML from the DB, not from the browser. If the
+    // operator edited (e.g. bumped the image tag) without clicking
+    // Save, the sidekick would deploy the stale DB copy and the user
+    // would see the unchanged tag redeploy. Saving before triggering
+    // avoids that footgun entirely.
+    if (!await validate()) {
+      submitting.value = false
+      return
+    }
+    await composeStackApi.save(model)
     const r = await selfDeployApi.deploy()
     autoDeployConfirm.value = false
     openProgressFromDeployResult(r?.data)
@@ -914,6 +937,9 @@ onMounted(async () => {
     await Promise.all([loadVaultSecrets(), reloadBindings(), loadSelfDeployConfig()])
   } else {
     model.content = '# Paste or author your docker-compose YAML here\n# example:\n# services:\n#   web:\n#     image: nginx:alpine\n#     ports:\n#       - "8080:80"\n'
+    // A new stack cannot be the self-deploy source (no id yet) — flip
+    // the gate so the Deploy button is clickable immediately.
+    sdConfigLoaded.value = true
   }
 })
 </script>

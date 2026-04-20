@@ -6,4 +6,5 @@ export enum Mutations {
     SetMode = "SET_MODE",
     SetSelectedHost = "SET_SELECTED_HOST",
     SetHosts = "SET_HOSTS",
+    SetSelfDeployInProgress = "SET_SELF_DEPLOY_IN_PROGRESS",
 }

@@ -57,6 +57,15 @@ type DeployOptions struct {
 	// about Vault. The engine calls the hook methods at well-defined points
 	// in the Deploy lifecycle.
 	Hook DeployHook
+
+	// PreserveContainerNames is a set of container names that must NOT
+	// be removed by the pre-deploy cleanup, even when they carry the
+	// project label. The self-deploy sidekick uses this to preserve
+	// its renamed backup ("swirl-previous") across the engine's
+	// removeProjectContainers call — without this, the backup is
+	// destroyed before the new deploy is even attempted and any
+	// rollback is impossible.
+	PreserveContainerNames []string
 }
 
 // DeployResult summarises the non-fatal observations produced by a deploy.
@@ -188,7 +197,7 @@ func (e *StandaloneEngine) DeployWithResult(ctx context.Context, projectName, co
 		}
 	}
 
-	if err := e.removeProjectContainers(ctx, projectName, false); err != nil {
+	if err := e.removeProjectContainers(ctx, projectName, false, opts.PreserveContainerNames...); err != nil {
 		return result, err
 	}
 
@@ -372,7 +381,19 @@ func (e *StandaloneEngine) Stop(ctx context.Context, projectName string) error {
 // The optional hook lets callers run cleanup tasks (e.g. drop secret volumes)
 // after the project containers are gone.
 func (e *StandaloneEngine) Remove(ctx context.Context, projectName string, removeVolumes bool, hook ...DeployHook) error {
-	if err := e.removeProjectContainers(ctx, projectName, true); err != nil {
+	return e.removeWithPreserve(ctx, projectName, removeVolumes, nil, hook...)
+}
+
+// RemoveExcept is Remove but skips the given container names during the
+// project container cleanup. Used by the self-deploy sidekick rollback
+// so the "swirl-previous" backup container is preserved long enough to
+// be renamed back to its original name.
+func (e *StandaloneEngine) RemoveExcept(ctx context.Context, projectName string, removeVolumes bool, preserveContainerNames []string, hook ...DeployHook) error {
+	return e.removeWithPreserve(ctx, projectName, removeVolumes, preserveContainerNames, hook...)
+}
+
+func (e *StandaloneEngine) removeWithPreserve(ctx context.Context, projectName string, removeVolumes bool, preserveNames []string, hook ...DeployHook) error {
+	if err := e.removeProjectContainers(ctx, projectName, true, preserveNames...); err != nil {
 		return err
 	}
 	// remove project networks
@@ -505,12 +526,32 @@ func (e *StandaloneEngine) listProjectContainers(ctx context.Context, project st
 	})
 }
 
-func (e *StandaloneEngine) removeProjectContainers(ctx context.Context, project string, removeAll bool) error {
+func (e *StandaloneEngine) removeProjectContainers(ctx context.Context, project string, removeAll bool, preserveNames ...string) error {
 	list, err := e.listProjectContainers(ctx, project, true)
 	if err != nil {
 		return err
 	}
+	preserve := map[string]struct{}{}
+	for _, n := range preserveNames {
+		n = strings.TrimPrefix(n, "/")
+		if n != "" {
+			preserve[n] = struct{}{}
+		}
+	}
 	for _, c := range list {
+		if len(preserve) > 0 {
+			skip := false
+			for _, cn := range c.Names {
+				stripped := strings.TrimPrefix(cn, "/")
+				if _, match := preserve[stripped]; match {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+		}
 		if c.State == "running" {
 			_ = e.cli.ContainerStop(ctx, c.ID, container.StopOptions{})
 		}
@@ -701,6 +742,16 @@ func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, c
 	}
 	if len(networksOrder) == 0 {
 		networksOrder = []string{"default"}
+	}
+	// Compose v2 parity: the service name is ALWAYS a DNS alias on
+	// every network the service attaches to. Without this, a peer
+	// looking up `mongodb` on `swirlevo-net` gets NXDOMAIN and the
+	// application blows up mid-handshake — classic compose behaviour
+	// the standalone engine used to drop.
+	for _, n := range networksOrder {
+		if !containsStr(aliases[n], svc.Name) {
+			aliases[n] = append([]string{svc.Name}, aliases[n]...)
+		}
 	}
 	primaryNet = qualifyNetwork(project, cfg.Networks, networksOrder[0])
 

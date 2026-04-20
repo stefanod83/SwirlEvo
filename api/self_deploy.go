@@ -18,6 +18,7 @@ import (
 //   - /save-config  (edit)    persist the config
 //   - /deploy       (execute) trigger the sidekick against the source stack
 //   - /status       (view)    poll the deploy state
+//   - /reset        (edit)    clear a stuck .lock + abandoned state.json
 //
 // v2 endpoints removed: /preview, /import-from-stack. The YAML is now
 // edited in the normal compose_stack pages; there is nothing to preview
@@ -27,6 +28,7 @@ type SelfDeployHandler struct {
 	SaveConfig web.HandlerFunc `path:"/save-config" method:"post" auth:"self_deploy.edit" desc:"save self-deploy config"`
 	Deploy     web.HandlerFunc `path:"/deploy" method:"post" auth:"self_deploy.execute" desc:"trigger self-deploy"`
 	Status     web.HandlerFunc `path:"/status" auth:"self_deploy.view" desc:"get last deploy status"`
+	Reset      web.HandlerFunc `path:"/reset" method:"post" auth:"self_deploy.edit" desc:"clear a stuck self-deploy lock"`
 }
 
 // NewSelfDeploy wires the handler against the SelfDeployBiz singleton
@@ -37,6 +39,7 @@ func NewSelfDeploy(b biz.SelfDeployBiz) *SelfDeployHandler {
 		SaveConfig: selfDeploySaveConfig(b),
 		Deploy:     selfDeployDeploy(b),
 		Status:     selfDeployStatus(b),
+		Reset:      selfDeployReset(b),
 	}
 }
 
@@ -103,11 +106,28 @@ func selfDeployStatus(b biz.SelfDeployBiz) web.HandlerFunc {
 		}
 		recoveryActive := st.Phase == biz.SelfDeployPhaseRecovery
 		return success(c, data.Map{
-			"phase":          st.Phase,
-			"jobId":          st.JobID,
-			"error":          st.Error,
-			"logTail":        st.LogTail,
-			"recoveryActive": recoveryActive,
+			"phase":             st.Phase,
+			"jobId":             st.JobID,
+			"error":             st.Error,
+			"logTail":           st.LogTail,
+			"recoveryActive":    recoveryActive,
+			"sidekickContainer": st.SidekickContainer,
+			"sidekickAlive":     st.SidekickAlive,
+			"sidekickLogs":      st.SidekickLogs,
+			"canReset":          st.CanReset,
 		})
+	}
+}
+
+func selfDeployReset(b biz.SelfDeployBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+
+		reclaimed, err := b.ResetLock(ctx, c.User())
+		if err != nil {
+			return err
+		}
+		return success(c, data.Map{"reclaimed": reclaimed})
 	}
 }

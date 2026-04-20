@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	dockercontainer "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
@@ -133,6 +135,50 @@ func containerExists(ctx context.Context, cli *client.Client, id string) (bool, 
 		return false, nil
 	}
 	return false, err
+}
+
+// findSwirlContainerIP locates the running Swirl container that belongs
+// to the given compose project and returns its IP address on the first
+// non-empty network it is attached to. Looks up by compose labels so
+// the resolution works even when the container name uses the v1
+// underscore pattern (`<project>_<service>_1`) or a custom
+// `container_name:`.
+//
+// Returns ("", nil) when no swirl-flavoured container is found — the
+// caller falls back to the legacy localhost probe.
+func findSwirlContainerIP(ctx context.Context, cli *client.Client, projectName string) (string, error) {
+	list, err := cli.ContainerList(ctx, dockercontainer.ListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", "com.docker.compose.project="+projectName),
+		),
+	})
+	if err != nil {
+		return "", err
+	}
+	var candidate *dockercontainer.Summary
+	for i, c := range list {
+		svc := c.Labels["com.docker.compose.service"]
+		if strings.Contains(strings.ToLower(svc), "swirl") {
+			candidate = &list[i]
+			break
+		}
+	}
+	if candidate == nil {
+		return "", nil
+	}
+	info, err := cli.ContainerInspect(ctx, candidate.ID)
+	if err != nil {
+		return "", err
+	}
+	if info.NetworkSettings != nil {
+		for _, n := range info.NetworkSettings.Networks {
+			if n != nil && n.IPAddress != "" {
+				return n.IPAddress, nil
+			}
+		}
+	}
+	return "", nil
 }
 
 // pullImageRaw is the daemon-side pull. Drains the NDJSON stream to

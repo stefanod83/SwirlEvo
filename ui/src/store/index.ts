@@ -26,6 +26,15 @@ export interface State {
     mode: string;
     selectedHostId: string | null;   // null = "All"
     hosts: HostOption[];
+    // selfDeployInProgress: true while an auto-deploy is in flight. The
+    // ajax 401 interceptor uses this to skip the normal redirect-to-
+    // login behaviour — Swirl's own container is being swapped out and
+    // transient 401/connection-refused are expected. Persisted in
+    // sessionStorage with a 10-minute TTL so a page reload during the
+    // swap restores the progress modal instead of booting the operator
+    // back to home.
+    selfDeployInProgress: boolean;
+    selfDeployJobId: string | null;
 }
 
 function loadObject(key: string) {
@@ -41,6 +50,26 @@ function initState(): State {
     const user = Object.assign({}, loadObject('user'))
     const locale = navigator.language.startsWith('zh') ? 'zh' : 'en'
     const savedHost = localStorage.getItem('selectedHost')
+    // Read self-deploy progress from sessionStorage. TTL is 10 minutes —
+    // long enough to cover a typical deploy (<~3 min), short enough that
+    // a crashed tab does not lock future sessions into the "in progress"
+    // branch of the interceptor forever.
+    let sdInProgress = false
+    let sdJobId: string | null = null
+    try {
+        const raw = sessionStorage.getItem('swirl.selfDeploy')
+        if (raw) {
+            const rec = JSON.parse(raw) as { jobId: string; expiresAt: number }
+            if (rec && rec.expiresAt && rec.expiresAt > Date.now()) {
+                sdInProgress = true
+                sdJobId = rec.jobId || null
+            } else {
+                sessionStorage.removeItem('swirl.selfDeploy')
+            }
+        }
+    } catch {
+        sessionStorage.removeItem('swirl.selfDeploy')
+    }
     return {
         user: { perms: new Set(user.perms), name: user.name, token: user.token },
         preference: Object.assign({ theme: 'light', locale: locale }, loadObject('preference')),
@@ -48,6 +77,8 @@ function initState(): State {
         mode: 'swarm',
         selectedHostId: savedHost && savedHost !== 'null' ? savedHost : null,
         hosts: [],
+        selfDeployInProgress: sdInProgress,
+        selfDeployJobId: sdJobId,
     }
 }
 
@@ -87,6 +118,20 @@ export const store = createStore<State>({
                 localStorage.removeItem('selectedHost');
             } else {
                 localStorage.setItem('selectedHost', hostId);
+            }
+        },
+        [Mutations.SetSelfDeployInProgress](state, payload: { jobId: string | null; inProgress: boolean }) {
+            state.selfDeployInProgress = !!payload?.inProgress
+            state.selfDeployJobId = payload?.jobId || null
+            if (payload?.inProgress) {
+                try {
+                    sessionStorage.setItem('swirl.selfDeploy', JSON.stringify({
+                        jobId: payload.jobId || '',
+                        expiresAt: Date.now() + 10 * 60 * 1000,
+                    }))
+                } catch { /* quota-exceeded: best-effort only */ }
+            } else {
+                sessionStorage.removeItem('swirl.selfDeploy')
             }
         },
         [Mutations.SetHosts](state, hosts: HostOption[]) {

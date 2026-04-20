@@ -837,7 +837,19 @@ export default {
             "recovery_url": "恢复 UI",
             "job_id": "任务 ID",
             "log_tail": "最近日志",
-            "no_logs": "暂无日志。"
+            "no_logs": "暂无日志。",
+            "sidekick_container": "辅助容器",
+            "sidekick_alive": "运行中",
+            "sidekick_dead": "已退出",
+            "sidekick_logs": "辅助容器日志"
+        },
+        "reset": {
+            "button": "清除卡住的锁",
+            "hint": "自部署已卡住：辅助容器已不存在但锁文件仍存在。请清除以允许新的部署。",
+            "confirm": "将删除 /data/self-deploy/.lock 并将上一个任务标记为 失败(已放弃)。继续吗？",
+            "success": "已清除卡住的锁。",
+            "nothing_to_clear": "无需清理。",
+            "failed": "清除卡住的锁失败。"
         },
         "progress": {
             "title": "自部署进行中",

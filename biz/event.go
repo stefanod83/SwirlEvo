@@ -63,9 +63,11 @@ const (
 	// Self-deploy lifecycle actions. Emitted by SelfDeployBiz.TriggerDeploy
 	// (Start at the moment the sidekick is spawned) and by the sidekick
 	// itself (Success/Failure) — the latter wires in during Phase 4.
+	// Reset is emitted when an operator forces a stuck lock to be cleared.
 	EventActionSelfDeployStart   EventAction = "Start"
 	EventActionSelfDeploySuccess EventAction = "Success"
 	EventActionSelfDeployFailure EventAction = "Failure"
+	EventActionSelfDeployReset   EventAction = "Reset"
 )
 
 type EventBiz interface {

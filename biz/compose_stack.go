@@ -576,7 +576,9 @@ func (b *composeStackBiz) FindDetail(ctx context.Context, hostID, name string) (
 	for _, c := range pd.Containers {
 		cname := ""
 		if len(c.Names) > 0 {
-			cname = c.Names[0]
+			// Docker returns names with a leading "/" — strip it so
+			// the UI displays "xyz" instead of "/xyz".
+			cname = strings.TrimPrefix(c.Names[0], "/")
 		}
 		svc := c.Labels[compose.LabelService]
 		brief := ComposeContainerBrief{
