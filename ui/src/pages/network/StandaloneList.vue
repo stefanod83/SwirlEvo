@@ -58,7 +58,7 @@ import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
 import NetworkTopology from "./Topology.vue";
 import networkApi from "@/api/network";
 import type { Network } from "@/api/network";
-import { renderButton, renderTag } from "@/utils/render";
+import { renderButton, renderTag, renderLink } from "@/utils/render";
 import { useStore } from "vuex";
 import { useI18n } from 'vue-i18n'
 
@@ -110,7 +110,14 @@ const columns: any[] = [
     sorter: (a: Network, b: Network) => (a.name || '').localeCompare(b.name || ''),
     render: (r: Network) => h(NSpace, { size: 6, inline: true, align: 'center' }, {
       default: () => [
-        r.name,
+        // Link the name to the standalone detail view. `renderLink`
+        // honours the current host selection via route params so the
+        // target page's `networkApi.find(name, host)` call hits the
+        // right daemon.
+        renderLink({
+          name: 'std_network_detail',
+          params: { host: selectedHostId.value || '', name: r.name },
+        }, r.name),
         r.unused ? renderTag(t('fields.unused'), 'warning') : null,
       ],
     }),

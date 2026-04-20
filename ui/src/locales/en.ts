@@ -433,6 +433,8 @@ export default {
         "std_stack_edit": "Edit Stack",
         "std_stack_detail": "Stack Detail",
         "std_network_list": "Networks",
+        "std_network_new": "New Network",
+        "std_network_detail": "Network detail",
         "std_stack_external_detail": "External Stack Details",
         "vault_secret_list": "Vault Secrets",
         "vault_secret_new": "New Vault Secret",

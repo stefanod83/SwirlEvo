@@ -81,8 +81,8 @@ export class NetworkApi {
         return ajax.post<Result<Object>>('/network/delete', { id, name, node })
     }
 
-    disconnect(networkId: string, networkName: string, container: string) {
-        return ajax.post<Result<Object>>('/network/disconnect', { networkId, networkName, container })
+    disconnect(networkId: string, networkName: string, container: string, node = '') {
+        return ajax.post<Result<Object>>('/network/disconnect', { node, networkId, networkName, container })
     }
 
     topology(hostId: string, all: boolean = false) {

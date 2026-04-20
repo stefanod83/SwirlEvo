@@ -118,6 +118,21 @@ func (d *Docker) NetworkDisconnect(ctx context.Context, net, ctr string) error {
 	})
 }
 
+// NetworkDisconnectOnNode disconnects a container from a network on
+// the given standalone host. When `node` is empty falls back to the
+// primary's swarm client — matches the NetworkRemoveOnNode /
+// NetworkInspectOnNode pattern.
+func (d *Docker) NetworkDisconnectOnNode(ctx context.Context, node, net, ctr string) error {
+	if node == "" {
+		return d.NetworkDisconnect(ctx, net, ctr)
+	}
+	c, err := d.agent(node)
+	if err != nil {
+		return err
+	}
+	return c.NetworkDisconnect(ctx, net, ctr, false)
+}
+
 // NetworkInspect return network information.
 func (d *Docker) NetworkInspect(ctx context.Context, name string) (net network.Inspect, raw []byte, err error) {
 	var c *client.Client

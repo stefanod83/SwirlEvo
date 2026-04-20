@@ -117,6 +117,7 @@ func networkTopology(nb biz.NetworkBiz) web.HandlerFunc {
 
 func networkDisconnect(nb biz.NetworkBiz) web.HandlerFunc {
 	type Args struct {
+		Node        string `json:"node"`
 		NetworkID   string `json:"networkId"`
 		NetworkName string `json:"networkName"`
 		Container   string `json:"container"`
@@ -129,7 +130,7 @@ func networkDisconnect(nb biz.NetworkBiz) web.HandlerFunc {
 			ctx, cancel := misc.Context(defaultTimeout)
 			defer cancel()
 
-			err = nb.Disconnect(ctx, args.NetworkID, args.NetworkName, args.Container, c.User())
+			err = nb.Disconnect(ctx, args.Node, args.NetworkID, args.NetworkName, args.Container, c.User())
 		}
 		return ajax(c, err)
 	}

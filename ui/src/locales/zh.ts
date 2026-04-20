@@ -410,6 +410,8 @@ export default {
         "std_stack_edit": "编辑堆栈",
         "std_stack_detail": "堆栈详情",
         "std_network_list": "网络",
+        "std_network_new": "新建网络",
+        "std_network_detail": "网络详情",
         "std_stack_external_detail": "外部堆栈详情",
         "vault_secret_list": "Vault 密钥",
         "vault_secret_new": "新建 Vault 密钥",

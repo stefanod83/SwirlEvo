@@ -359,6 +359,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    // Standalone network detail — reuses the rich Swarm view. The
+    // host parameter is mandatory (the UI always passes it from the
+    // global host selector) and flows through to /api/network/find
+    // via the `node` query.
+    name: 'std_network_detail',
+    path: "/standalone/networks/:host/:name",
+    component: () => import('../pages/network/View.vue'),
+    meta: {
+      auth: 'network.view',
+    }
+  },
+  {
     name: 'host_detail',
     path: "/standalone/hosts/:id",
     component: () => import('../pages/host/View.vue'),

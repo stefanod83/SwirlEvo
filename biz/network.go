@@ -16,7 +16,7 @@ type NetworkBiz interface {
 	Find(ctx context.Context, node, name string) (network *Network, raw string, err error)
 	Delete(ctx context.Context, node, id, name string, user web.User) (err error)
 	Create(ctx context.Context, node string, n *Network, user web.User) (err error)
-	Disconnect(ctx context.Context, networkId, networkName, container string, user web.User) (err error)
+	Disconnect(ctx context.Context, node, networkId, networkName, container string, user web.User) (err error)
 	Topology(ctx context.Context, node string, all bool) (*NetworkTopology, error)
 }
 
@@ -124,10 +124,10 @@ func (b *networkBiz) Delete(ctx context.Context, node, id, name string, user web
 	return
 }
 
-func (b *networkBiz) Disconnect(ctx context.Context, networkId, networkName, container string, user web.User) (err error) {
-	err = b.d.NetworkDisconnect(ctx, networkName, container)
+func (b *networkBiz) Disconnect(ctx context.Context, node, networkId, networkName, container string, user web.User) (err error) {
+	err = b.d.NetworkDisconnectOnNode(ctx, node, networkName, container)
 	if err == nil {
-		b.eb.CreateNetwork(EventActionDisconnect, "", networkId, networkName, user)
+		b.eb.CreateNetwork(EventActionDisconnect, node, networkId, networkName, user)
 	}
 	return
 }

@@ -21,7 +21,16 @@ async function loadHosts() {
   try {
     const r = await hostApi.search('', '', 1, 1000)
     const data = r.data as any
-    const items = (data?.items || []).map((h: any) => ({ id: h.id, name: h.name, status: h.status }))
+    // NOTE: keep in sync with store/index.ts::reloadHosts — both must
+    // map the same fields. `color` drives the header bar + dropdown
+    // strip + list tag; omitting it here left bootstrap loads with no
+    // colour until the user re-saved a host.
+    const items = (data?.items || []).map((h: any) => ({
+      id: h.id,
+      name: h.name,
+      status: h.status,
+      color: h.color || '',
+    }))
     store.commit(Mutations.SetHosts, items)
   } catch { /* ignore */ }
 }

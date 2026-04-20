@@ -1,7 +1,7 @@
 <template>
   <x-page-header :subtitle="model.name">
     <template #action>
-      <n-button secondary size="small" @click="$router.push({ name: 'network_list' })">
+      <n-button secondary size="small" @click="onReturn">
         <template #icon>
           <n-icon>
             <back-icon />
@@ -138,7 +138,7 @@
                 <tr v-for="c in model.containers">
                   <td>
                     <x-anchor
-                      :url="{ name: 'container_detail', params: { node: '-', id: c.id } }"
+                      :url="{ name: 'container_detail', params: { node: host || '-', id: c.id } }"
                     >{{ c.name }}</x-anchor>
                   </td>
                   <td>{{ c.ipv4 }}</td>
@@ -151,6 +151,12 @@
                       </template>
                       {{ t('prompts.disconnect') }}
                     </n-popconfirm>
+                    <n-button
+                      size="tiny"
+                      quaternary
+                      style="margin-left: 4px"
+                      @click="goContainer(c.id)"
+                    >{{ t('buttons.view') }}</n-button>
                   </td>
                 </tr>
               </tbody>
@@ -185,24 +191,46 @@ import XPanel from "@/components/Panel.vue";
 import { XDescription, XDescriptionItem } from "@/components/description";
 import networkApi from "@/api/network";
 import type { Network } from "@/api/network";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const route = useRoute();
+const router = useRouter();
 const model = ref({} as Network);
 const raw = ref('');
 const loading = ref(false);
 
+// Dual-mode route params:
+//   Swarm      → /swarm/networks/:name           (host empty)
+//   Standalone → /standalone/networks/:host/:name
+// The `host` field becomes the `node` query param on every API call.
+const host = (route.params.host as string) || ''
+const isStandalone = !!host
+
 async function disconnect(container: string) {
-  await networkApi.disconnect(model.value.id, model.value.name, container);
+  await networkApi.disconnect(model.value.id, model.value.name, container, host);
+  await fetchData();
+}
+
+function onReturn() {
+  if (isStandalone) {
+    router.push({ name: 'std_network_list' })
+  } else {
+    router.push({ name: 'network_list' })
+  }
+}
+
+function goContainer(containerId: string) {
+  const node = host || '-'
+  router.push({ name: 'container_detail', params: { node, id: containerId } })
 }
 
 async function fetchData() {
   loading.value = true;
   try {
     const name = route.params.name as string;
-    let r = await networkApi.find(name);
+    let r = await networkApi.find(name, host);
     model.value = r.data?.network as Network;
     raw.value = r.data?.raw as string;
   } finally {
