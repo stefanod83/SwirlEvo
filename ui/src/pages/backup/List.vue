@@ -333,9 +333,18 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 
+// Component list must mirror biz/backup.go::allComponents. Adding a
+// component here without adding it to the backend (or vice versa)
+// means operators either miss a checkbox or see one that does nothing
+// on restore. Keep the two in lock-step.
 const allComponents = [
   'settings', 'roles', 'users', 'registries',
   'stacks', 'composeStacks', 'hosts', 'charts', 'events',
+  // VaultSecret catalog + per-stack bindings carry only REFERENCES
+  // (path/field/labels + stack→secret mapping), never the values
+  // themselves. Restoring them preserves the stack-secret wiring so
+  // the next deploy resolves values fresh from Vault.
+  'vaultSecrets', 'composeStackSecretBindings',
 ]
 
 const status = ref<BackupStatus>({ keyConfigured: true })

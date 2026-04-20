@@ -664,6 +664,8 @@ export default {
         "component_hosts": "Host",
         "component_charts": "Chart",
         "component_events": "Eventi (audit log)",
+        "component_vaultSecrets": "Catalogo Vault secret (solo riferimenti, nessun valore)",
+        "component_composeStackSecretBindings": "Binding stack ↔ Vault secret",
         "key_status": "Chiave",
         "key_compatible": "Chiave corrente",
         "key_incompatible": "Incompatibile",

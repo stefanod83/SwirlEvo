@@ -658,6 +658,8 @@ export default {
         "component_hosts": "Docker 主机",
         "component_charts": "图表",
         "component_events": "事件日志",
+        "component_vaultSecrets": "Vault secret 目录（仅引用，不含值）",
+        "component_composeStackSecretBindings": "Compose stack 与 Vault secret 的绑定",
         "key_status": "密钥",
         "key_compatible": "当前密钥",
         "key_incompatible": "不兼容",
