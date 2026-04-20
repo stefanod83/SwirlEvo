@@ -8,6 +8,10 @@ export interface Host {
   tlsCaCert?: string
   tlsCert?: string
   sshUser?: string
+  // Optional hex colour (#rrggbb). Shown as a tag in the Hosts list,
+  // as a 3px-wide strip in the HostSelector dropdown, and as a 4px
+  // bar under the page header when this host is the active selection.
+  color?: string
   status: string
   error?: string
   engineVersion?: string

@@ -259,6 +259,13 @@ type Host struct {
 	SSHKey    string   `json:"-" bson:"ssh_key,omitempty"`
 	Status    string   `json:"status" bson:"status"`       // connected, disconnected, error
 	Error     string   `json:"error,omitempty" bson:"error,omitempty"`
+	// Color is an optional hex string (e.g. "#4b91ff") the operator can
+	// associate with the host so the UI renders a visible marker (a
+	// horizontal bar under the page header) whenever the host is the
+	// active selection. Empty string means "no colour" — the UI draws
+	// no marker. Validated client-side; server stores whatever string
+	// is supplied (the UI constrains the picker output).
+	Color     string   `json:"color,omitempty" bson:"color,omitempty"`
 	EngineVer string   `json:"engineVersion,omitempty" bson:"engine_ver,omitempty"`
 	OS        string   `json:"os,omitempty" bson:"os,omitempty"`
 	Arch      string   `json:"arch,omitempty" bson:"arch,omitempty"`

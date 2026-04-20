@@ -22,6 +22,7 @@ func (d *Dao) HostUpdate(ctx context.Context, host *dao.Host) (err error) {
 			"tls_ca_cert": host.TLSCACert,
 			"tls_cert":    host.TLSCert,
 			"ssh_user":    host.SSHUser,
+			"color":       host.Color,
 			"updated_at":  host.UpdatedAt,
 			"updated_by":  host.UpdatedBy,
 		},

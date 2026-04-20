@@ -26,7 +26,16 @@
   <div class="page-body" v-if="model.id">
     <n-space vertical :size="16">
       <x-description label-placement="left" label-align="right" :column="2" :label-width="120">
-        <x-description-item :label="t('fields.name')">{{ model.name }}</x-description-item>
+        <x-description-item :label="t('fields.name')">
+          <n-space :size="8" align="center" inline>
+            <span
+              v-if="model.color"
+              :style="`display:inline-block;width:12px;height:12px;border-radius:3px;background:${model.color};flex-shrink:0`"
+              :title="t('fields.color') + ': ' + model.color"
+            />
+            <span>{{ model.name }}</span>
+          </n-space>
+        </x-description-item>
         <x-description-item label="Endpoint"><code>{{ model.endpoint }}</code></x-description-item>
         <x-description-item :label="t('fields.status')">
           <n-tag :type="statusType(model.status || '')" size="small">{{ model.status }}</n-tag>

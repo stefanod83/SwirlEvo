@@ -14,6 +14,12 @@ export interface HostOption {
     id: string;
     name: string;
     status: string;
+    // Color is an optional hex string ("#4b91ff") associated with the
+    // host in the host editor. Consumed by Default.vue to draw a
+    // coloured bar under the page header whenever this host is the
+    // active selection — gives operators an immediate visual cue of
+    // which daemon they're about to act on.
+    color?: string;
 }
 
 export interface State {
@@ -154,7 +160,12 @@ export const store = createStore<State>({
             try {
                 const r = await hostApi.search('', '', 1, 1000)
                 const data = r.data as any
-                const items = (data?.items || []).map((h: any) => ({ id: h.id, name: h.name, status: h.status }))
+                const items = (data?.items || []).map((h: any) => ({
+                    id: h.id,
+                    name: h.name,
+                    status: h.status,
+                    color: h.color || '',
+                }))
                 commit(Mutations.SetHosts, items)
             } catch { /* ignore */ }
         },

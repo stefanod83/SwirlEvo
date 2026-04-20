@@ -9,6 +9,7 @@ export default {
         "delete": "删除",
         "confirm": "确认",
         "cancel": "取消",
+        "clear": "清除",
         "search": "查询",
         "return": "返回",
         "deploy": "发布",
@@ -85,6 +86,7 @@ export default {
         "width": "宽",
         "height": "高",
         "name": "名称",
+        "color": "颜色",
         "address": "地址",
         "url": "URL",
         "login_name": "登录名",
@@ -488,6 +490,7 @@ export default {
     },
     "tips": {
         "remove_anonymous_volumes": "同时删除镜像声明的匿名卷 (VOLUME 指令)。命名卷不会被此选项删除。",
+        "host_color": "选中该主机时，header 下方会显示一条彩色条 — 一眼就能看出正在操作哪个 Docker 主机。",
         "registry_url": "镜像仓库地址，如: registry.com",
         "command": "启动命令",
         "command_empty": "启动命令不能为空",

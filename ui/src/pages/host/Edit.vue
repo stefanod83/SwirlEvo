@@ -1,5 +1,14 @@
 <template>
-  <x-page-header />
+  <x-page-header>
+    <template #action>
+      <n-button secondary size="small" @click="onReturn">
+        <template #icon>
+          <n-icon><arrow-back-icon /></n-icon>
+        </template>
+        {{ t('buttons.return') }}
+      </n-button>
+    </template>
+  </x-page-header>
   <div class="page-body">
     <n-form :model="model" label-placement="left" label-width="120">
       <n-form-item :label="t('fields.name')" required>
@@ -25,6 +34,30 @@
       </n-form-item>
       <n-form-item v-if="model.authMethod === 'ssh'" label="SSH Key">
         <n-input v-model:value="model.sshKey" type="textarea" :rows="3" placeholder="SSH private key (PEM)" />
+      </n-form-item>
+      <n-form-item :label="t('fields.color')">
+        <div class="host-color-field">
+          <div class="host-color-row">
+            <n-color-picker
+              v-model:value="model.color"
+              :swatches="colorSwatches"
+              :show-alpha="false"
+              :modes="['hex']"
+              size="small"
+              class="host-color-picker"
+            />
+            <n-button
+              v-if="model.color"
+              size="small"
+              quaternary
+              @click="model.color = ''"
+              style="margin-left: 8px"
+            >{{ t('buttons.clear') }}</n-button>
+          </div>
+          <div class="host-color-hint">
+            {{ t('tips.host_color') }}
+          </div>
+        </div>
       </n-form-item>
       <n-form-item>
         <n-space>
@@ -57,12 +90,16 @@ import {
   NButton,
   NSpace,
   NAlert,
+  NColorPicker,
+  NIcon,
 } from "naive-ui";
+import { ArrowBackCircleOutline as ArrowBackIcon } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import * as hostApi from "@/api/host";
 import type { HostInfo } from "@/api/host";
 import { useStore } from "vuex";
 import { useI18n } from 'vue-i18n'
+import { returnTo } from "@/utils/nav";
 
 const { t } = useI18n()
 const route = useRoute();
@@ -81,7 +118,23 @@ const model = reactive({
   tlsKey: '',
   sshUser: '',
   sshKey: '',
+  color: '',
 })
+
+// Curated palette — Naive UI's default colour picker exposes a
+// rainbow that is too broad for a "pick a tag colour" UX. These 8
+// swatches cover the semantic spectrum (safe/dev/staging/prod) while
+// staying legible against both the light and dark layout themes.
+const colorSwatches = [
+  '#4b91ff', // blue — default development
+  '#2ecc71', // green — staging ok
+  '#f39c12', // orange — warning
+  '#e74c3c', // red — production, be careful
+  '#9b59b6', // purple — special-purpose hosts
+  '#1abc9c', // teal
+  '#34495e', // slate — infrastructure
+  '#e67e22', // bronze
+]
 
 const authOptions = [
   { label: 'Docker Socket', value: 'socket' },
@@ -89,6 +142,18 @@ const authOptions = [
   { label: 'TCP + TLS', value: 'tcp+tls' },
   { label: 'SSH', value: 'ssh' },
 ]
+
+function onReturn() {
+  // On edit, returnTo prefers history.back if available so the user
+  // lands on the exact list scroll position they came from. On new
+  // (no id), fall back to the list root. Matches the pattern used by
+  // compose_stack/Edit.vue::onReturn.
+  if (route.params.id) {
+    returnTo({ name: 'host_detail', params: { id: route.params.id as string } })
+  } else {
+    returnTo({ name: 'host_list' })
+  }
+}
 
 async function save() {
   await hostApi.save(model);
@@ -121,3 +186,29 @@ async function fetchData() {
 
 onMounted(fetchData);
 </script>
+
+<style scoped>
+/* Dedicated layout for the Color form row — previously the Clear
+   button + hint were jammed on the same line as the colour picker
+   input and overlapped at narrow widths. Vertical stack: row with
+   picker + Clear, then the hint underneath on its own line. */
+.host-color-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.host-color-row {
+  display: flex;
+  align-items: center;
+}
+.host-color-picker {
+  width: 180px;
+  min-width: 160px;
+}
+.host-color-hint {
+  font-size: 12px;
+  color: var(--n-text-color-3, #888);
+  line-height: 1.4;
+}
+</style>

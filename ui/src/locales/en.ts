@@ -9,6 +9,7 @@ export default {
         "delete": "Delete",
         "confirm": "Confirm",
         "cancel": "Cancel",
+        "clear": "Clear",
         "search": "Search",
         "return": "Return",
         "deploy": "Deploy",
@@ -85,6 +86,7 @@ export default {
         "width": "Width",
         "height": "Height",
         "name": "Name",
+        "color": "Color",
         "address": "Address",
         "url": "URL",
         "login_name": "Login name",
@@ -490,6 +492,7 @@ export default {
     },
     "tips": {
         "remove_anonymous_volumes": "Also drops unnamed volumes declared by the image (VOLUME directives). Named volumes are never removed by this option.",
+        "host_color": "Shown as a coloured bar under the header whenever this host is selected — a visual cue of which daemon you're acting on.",
         "registry_url": "Registry address, e.g. registry.com",
         "command": "Startup command",
         "command_empty": "Command cannot be empty",

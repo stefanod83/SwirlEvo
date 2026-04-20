@@ -82,10 +82,21 @@
         </n-tooltip>
       </n-space>
     </n-layout-header>
+    <!-- Host-colour marker bar: visible only when the global host
+         selector has an active selection AND that host has a custom
+         colour set. The bar sits just below the header so the
+         operator's eye catches it before clicking any destructive
+         action. Empty colour = no bar at all (no layout shift). -->
+    <div
+      v-if="activeHostColor"
+      class="host-color-bar"
+      :style="{ backgroundColor: activeHostColor }"
+      :title="activeHostName"
+    />
     <n-layout
       has-sider
       :position="isMobile ? 'static' : 'absolute'"
-      :style="isMobile ? '' : 'top: 56px; bottom: 64px'"
+      :style="layoutContentStyle"
     >
       <n-layout-sider
         v-if="!isMobile && !isTablet"
@@ -174,6 +185,28 @@ const menuOptions = computed(() => buildMenuOptions(store.state.mode))
 const menuValue = computed(() => findMenuValue(menuOptions.value, route))
 const version = ref({} as Version);
 
+// Active host + its colour (for the host-colour marker bar under the
+// header). Returns '' when no host is selected or when the selected
+// host has no custom colour — the bar is hidden accordingly, no
+// layout shift.
+const activeHost = computed(() => {
+  const id = store.state.selectedHostId
+  if (!id) return null
+  return store.state.hosts.find((h: any) => h.id === id) || null
+})
+const activeHostColor = computed(() => activeHost.value?.color || '')
+const activeHostName = computed(() => activeHost.value?.name || '')
+
+// The content layout starts below the header (56 px) + bar height
+// (4 px when present). Using a computed style lets the bar be
+// inserted/removed without a manual height recalculation.
+const BAR_HEIGHT = 4
+const layoutContentStyle = computed(() => {
+  if (isMobile.value) return ''
+  const top = 56 + (activeHostColor.value ? BAR_HEIGHT : 0)
+  return `top: ${top}px; bottom: 64px`
+})
+
 function updateExpandedKeys(data: any) {
   expandedKeys.value = data
 }
@@ -240,6 +273,22 @@ onMounted(async () => {
 }
 .header-right {
   width: 320px;
+}
+/* Host-colour marker bar: 4 px solid line under the header, same
+   width as the viewport. `position: absolute` with `top: 56px`
+   matches the header height so the bar renders in the narrow gap
+   between header and content. `z-index` keeps it above the content
+   but below any dropdowns. `transition` smooths colour changes when
+   the operator switches between hosts. */
+.host-color-bar {
+  position: absolute;
+  top: 56px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  z-index: 10;
+  transition: background-color 200ms ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 /* .n-layout-header {
   background-color: #363636;

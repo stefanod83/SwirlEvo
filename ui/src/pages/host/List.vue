@@ -90,6 +90,19 @@ async function fetchData() {
 
 const columns: any[] = [
   {
+    // Narrow colour column — left-most so the operator scans
+    // top-to-bottom and immediately maps colours to host names.
+    title: '',
+    key: 'color',
+    width: 8,
+    render: (r: Host) => h('div', {
+      style: r.color
+        ? `width:4px;height:22px;border-radius:2px;background:${r.color}`
+        : 'width:4px;height:22px',
+      title: r.color || undefined,
+    }),
+  },
+  {
     title: t('fields.name'),
     key: 'name',
     sorter: (a: Host, b: Host) => (a.name || '').localeCompare(b.name || ''),
