@@ -9,6 +9,9 @@ import (
 //	depends_on:
 //	  - postgres
 //	  - vault-init
+//
+// Short-form entries must produce ServiceDependency entries with empty
+// Condition (the deploy engine treats that as service_started).
 func TestParseDependsOnShortForm(t *testing.T) {
 	yaml := `version: "3.8"
 services:
@@ -27,27 +30,26 @@ services:
 	}
 	got := cfg.Services[0].DependsOn
 	if len(got) != 2 {
-		t.Fatalf("expected 2 deps, got %d: %v", len(got), got)
+		t.Fatalf("expected 2 deps, got %d: %+v", len(got), got)
 	}
-	found := map[string]bool{}
-	for _, s := range got {
-		found[s] = true
+	found := map[string]string{}
+	for _, d := range got {
+		found[d.Service] = d.Condition
 	}
-	if !found["postgres"] || !found["vault-init"] {
-		t.Fatalf("expected [postgres vault-init], got %v", got)
+	c, ok := found["postgres"]
+	if !ok {
+		t.Fatalf("missing postgres dep, got %+v", got)
+	}
+	if c != "" {
+		t.Fatalf("expected empty condition for short form, got %q", c)
+	}
+	if _, ok := found["vault-init"]; !ok {
+		t.Fatalf("missing vault-init dep, got %+v", got)
 	}
 }
 
-// TestParseDependsOnLongForm verifies the map form of depends_on:
-//
-//	depends_on:
-//	  vault:
-//	    condition: service_healthy
-//	  postgres:
-//	    condition: service_started
-//
-// Only the service names should survive — condition/restart/required are
-// discarded because Swirl's standalone engine does not enforce readiness.
+// TestParseDependsOnLongForm verifies the map form of depends_on keeps
+// the per-service condition so the deploy engine can honour it.
 func TestParseDependsOnLongForm(t *testing.T) {
 	yaml := `version: "3.8"
 services:
@@ -68,11 +70,14 @@ services:
 	}
 	got := cfg.Services[0].DependsOn
 	if len(got) != 2 {
-		t.Fatalf("expected 2 deps, got %d: %v", len(got), got)
+		t.Fatalf("expected 2 deps, got %d: %+v", len(got), got)
 	}
 	// Map form is sorted alphabetically for determinism.
-	if got[0] != "postgres" || got[1] != "vault" {
-		t.Fatalf("expected sorted [postgres vault], got %v", got)
+	if got[0].Service != "postgres" || got[0].Condition != "service_started" {
+		t.Fatalf("expected postgres/service_started first, got %+v", got[0])
+	}
+	if got[1].Service != "vault" || got[1].Condition != "service_healthy" {
+		t.Fatalf("expected vault/service_healthy second, got %+v", got[1])
 	}
 }
 
@@ -89,12 +94,12 @@ services:
 		t.Fatalf("Parse failed: %v", err)
 	}
 	if len(cfg.Services[0].DependsOn) != 0 {
-		t.Fatalf("expected no deps, got %v", cfg.Services[0].DependsOn)
+		t.Fatalf("expected no deps, got %+v", cfg.Services[0].DependsOn)
 	}
 }
 
-// TestParseDependsOnUserRegression reproduces the original user report:
-// a compose file using the long form for vault-init's depends_on on vault.
+// TestParseDependsOnUserRegression reproduces a compose file using the
+// long form with service_healthy — the original motivating scenario.
 func TestParseDependsOnUserRegression(t *testing.T) {
 	yaml := `version: "3.8"
 services:
@@ -110,21 +115,21 @@ services:
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
-	var init *struct {
-		Deps []string
-	}
+	var initDeps []string
+	var initConds []string
 	for _, s := range cfg.Services {
 		if s.Name == "vault-init" {
-			init = &struct {
-				Deps []string
-			}{Deps: []string(s.DependsOn)}
+			for _, d := range s.DependsOn {
+				initDeps = append(initDeps, d.Service)
+				initConds = append(initConds, d.Condition)
+			}
 			break
 		}
 	}
-	if init == nil {
-		t.Fatalf("vault-init service not found")
+	if len(initDeps) != 1 || initDeps[0] != "vault" {
+		t.Fatalf("expected [vault], got %v", initDeps)
 	}
-	if len(init.Deps) != 1 || init.Deps[0] != "vault" {
-		t.Fatalf("expected [vault], got %v", init.Deps)
+	if len(initConds) != 1 || initConds[0] != "service_healthy" {
+		t.Fatalf("expected condition service_healthy, got %v", initConds)
 	}
 }

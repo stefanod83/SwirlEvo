@@ -32,7 +32,7 @@
               <n-tag
                 round
                 size="small"
-                :type="model.state === 'running' ? 'success' : 'error'"
+                :type="stateTagType(model.state)"
               >{{ model.state }}</n-tag>
             </x-description-item>
             <x-description-item :label="t('fields.created_at')">{{ model.createdAt }}</x-description-item>
@@ -108,6 +108,22 @@ const model = ref({} as Container);
 const raw = ref('');
 const loading = ref(false);
 const node = route.params.node as string || '';
+
+// stateTagType mirrors ContainerTable.vue's healthcheck-aware mapping:
+// healthy/running → success, starting/paused → warning, everything
+// else (exited, unhealthy, dead, …) → error.
+function stateTagType(state: string): 'success' | 'warning' | 'error' {
+  switch (state) {
+    case 'healthy':
+    case 'running':
+      return 'success'
+    case 'starting':
+    case 'paused':
+      return 'warning'
+    default:
+      return 'error'
+  }
+}
 
 async function fetchData() {
   loading.value = true;

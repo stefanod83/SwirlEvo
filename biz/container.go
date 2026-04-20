@@ -220,6 +220,35 @@ func newContainerMount(m container.MountPoint) *ContainerMount {
 	}
 }
 
+// deriveContainerState promotes the healthcheck status over the raw
+// container state so the UI's State column makes the active
+// healthcheck visible at a glance. The Docker SDK's container.Summary
+// does not expose State.Health directly; the health annotation is
+// embedded in the human-readable Status text (e.g. "Up 5 seconds
+// (healthy)"). We parse that to decide:
+//
+//   - "(healthy)" → "healthy" (the running container's healthcheck
+//     is currently passing)
+//   - "(unhealthy)" → "unhealthy" (healthcheck is failing)
+//   - "(health: starting)" → "starting" (healthcheck warm-up window)
+//
+// When the container is not running or has no healthcheck marker we
+// return the raw state unchanged.
+func deriveContainerState(rawState, statusText string) string {
+	if rawState != "running" {
+		return rawState
+	}
+	switch {
+	case strings.Contains(statusText, "(healthy)"):
+		return "healthy"
+	case strings.Contains(statusText, "(unhealthy)"):
+		return "unhealthy"
+	case strings.Contains(statusText, "(health: starting)"):
+		return "starting"
+	}
+	return rawState
+}
+
 func newContainerSummary(c *container.Summary) *Container {
 	ctr := &Container{
 		ID:          c.ID,
@@ -230,7 +259,7 @@ func newContainerSummary(c *container.Summary) *Container {
 		SizeRw:      c.SizeRw,
 		SizeRootFs:  c.SizeRootFs,
 		Labels:      mapToOptions(c.Labels),
-		State:       c.State,
+		State:       deriveContainerState(c.State, c.Status),
 		Status:      c.Status,
 		NetworkMode: c.HostConfig.NetworkMode,
 	}
@@ -251,13 +280,28 @@ func newContainerSummary(c *container.Summary) *Container {
 func newContainerDetail(c *container.InspectResponse) *Container {
 	created, _ := time.Parse(time.RFC3339Nano, c.Created)
 	startedAt, _ := time.Parse(time.RFC3339Nano, c.State.StartedAt)
+	state := c.State.Status
+	if c.State.Health != nil {
+		// Promote the health status over the raw container state so
+		// operators immediately see which containers are actively
+		// passing/failing their healthcheck — matching `docker ps`'s
+		// "(healthy)" / "(unhealthy)" annotation.
+		switch c.State.Health.Status {
+		case "healthy":
+			state = "healthy"
+		case "unhealthy":
+			state = "unhealthy"
+		case "starting":
+			state = "starting"
+		}
+	}
 	ctr := &Container{
 		ID:          c.ID,
 		Name:        strings.TrimPrefix(c.Name, "/"),
 		Image:       c.Image,
 		CreatedAt:   formatTime(created),
 		Labels:      mapToOptions(c.Config.Labels),
-		State:       c.State.Status,
+		State:       state,
 		NetworkMode: string(c.HostConfig.NetworkMode),
 		PID:         c.State.Pid,
 		StartedAt:   formatTime(startedAt),

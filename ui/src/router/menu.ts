@@ -115,11 +115,8 @@ const homeItem = (): MenuOption => ({
   icon: renderIcon(HomeOutline),
 })
 
-const systemItem = (): MenuOption => ({
-  label: t('fields.system'),
-  key: "system",
-  icon: renderIcon(SettingsOutline),
-  children: [
+const systemItem = (mode: string): MenuOption => {
+  const children: MenuOption[] = [
     {
       label: t('objects.user'),
       key: "users",
@@ -156,16 +153,28 @@ const systemItem = (): MenuOption => ({
       path: "/system/backup",
       icon: renderIcon(CloudUploadOutline),
     },
-    {
+  ]
+  // Vault secret catalog is standalone-only: Swarm has native Docker
+  // Secrets so the catalog+bindings would duplicate functionality.
+  // Mirror the backend gate (api/vault_secret.go is wrapped with
+  // standaloneOnly) so there's no orphan menu item in swarm.
+  if (mode === 'standalone') {
+    children.push({
       label: t('objects.vault_secret', 2),
       key: "vault_secret_list",
       path: "/vault/secrets",
       icon: renderIcon(DocumentLockOutline),
-    },
-  ],
-})
+    })
+  }
+  return {
+    label: t('fields.system'),
+    key: "system",
+    icon: renderIcon(SettingsOutline),
+    children,
+  }
+}
 
-function buildSwarmMenu(): MenuOption[] {
+function buildSwarmMenu(mode: string): MenuOption[] {
   return [
     homeItem(),
     {
@@ -248,11 +257,11 @@ function buildSwarmMenu(): MenuOption[] {
         },
       ],
     },
-    systemItem(),
+    systemItem(mode),
   ]
 }
 
-function buildStandaloneMenu(): MenuOption[] {
+function buildStandaloneMenu(mode: string): MenuOption[] {
   return [
     homeItem(),
     {
@@ -311,10 +320,10 @@ function buildStandaloneMenu(): MenuOption[] {
         },
       ],
     },
-    systemItem(),
+    systemItem(mode),
   ]
 }
 
 export function buildMenuOptions(mode: string): MenuOption[] {
-  return mode === 'standalone' ? buildStandaloneMenu() : buildSwarmMenu()
+  return mode === 'standalone' ? buildStandaloneMenu(mode) : buildSwarmMenu(mode)
 }

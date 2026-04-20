@@ -32,6 +32,20 @@ func swarmOnly(h web.HandlerFunc) web.HandlerFunc {
 	}
 }
 
+// standaloneOnly wraps a handler so that it returns 404 when swirl runs
+// in swarm mode. Used for features that duplicate a native Swarm
+// capability (e.g. the VaultSecret catalog + per-stack bindings —
+// Swarm has its own Secrets primitive, so those endpoints are hidden
+// in swarm mode).
+func standaloneOnly(h web.HandlerFunc) web.HandlerFunc {
+	return func(c web.Context) error {
+		if !misc.IsStandalone() {
+			return web.NewError(http.StatusNotFound)
+		}
+		return h(c)
+	}
+}
+
 func init() {
 	container.Put(NewSystem, container.Name("api.system"))
 	container.Put(NewSetting, container.Name("api.setting"))

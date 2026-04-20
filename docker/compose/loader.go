@@ -803,35 +803,60 @@ func transformStringList(data interface{}) (interface{}, error) {
 //	  serviceB:
 //	    condition: service_started
 //
-// Only the service names are retained; condition/restart/required are
-// discarded because Swirl's standalone deploy does not enforce readiness.
-// Map keys are sorted for a deterministic result.
+// Both are normalised to []ServiceDependency so the standalone engine can
+// honour the per-dependency condition (service_started / service_healthy /
+// service_completed_successfully) before starting the dependent service.
+// Map entries are ordered alphabetically so the output is deterministic.
+// `restart` and `required` sub-keys are discarded — the engine has no
+// restart-on-demand mechanism and treats every listed dependency as
+// required.
 func transformDependsOnList(data interface{}) (interface{}, error) {
 	switch value := data.(type) {
 	case []interface{}:
-		result := make([]string, 0, len(value))
+		result := make([]composetypesServiceDep, 0, len(value))
 		for _, item := range value {
 			switch v := item.(type) {
 			case string:
-				result = append(result, v)
+				result = append(result, composetypesServiceDep{Service: v})
 			default:
 				return data, fmt.Errorf("invalid depends_on entry type %T", item)
 			}
 		}
 		return result, nil
 	case map[string]interface{}:
-		result := make([]string, 0, len(value))
-		for key := range value {
-			result = append(result, key)
+		// Sort keys for a deterministic order.
+		keys := make([]string, 0, len(value))
+		for k := range value {
+			keys = append(keys, k)
 		}
-		sort.Strings(result)
+		sort.Strings(keys)
+		result := make([]composetypesServiceDep, 0, len(value))
+		for _, k := range keys {
+			dep := composetypesServiceDep{Service: k}
+			switch cfg := value[k].(type) {
+			case nil:
+				// `serviceA:` with empty body — treat as short form.
+			case map[string]interface{}:
+				if c, ok := cfg["condition"].(string); ok {
+					dep.Condition = c
+				}
+			}
+			result = append(result, dep)
+		}
 		return result, nil
 	case nil:
-		return []string{}, nil
+		return []composetypesServiceDep{}, nil
 	default:
 		return data, fmt.Errorf("invalid type %T for depends_on", value)
 	}
 }
+
+// composetypesServiceDep is a local alias for the types.ServiceDependency
+// value the loader builds. We alias to avoid the types-package import cycle
+// (loader imports types, types imports nothing); the end-of-pipeline
+// mapstructure decoder converts this slice into []types.ServiceDependency
+// via reflect-based field matching.
+type composetypesServiceDep = composetypes.ServiceDependency
 
 func transformMappingOrListFunc(sep string, allowNil bool) func(interface{}) (interface{}, error) {
 	return func(data interface{}) (interface{}, error) {

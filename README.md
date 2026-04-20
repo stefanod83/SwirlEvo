@@ -27,7 +27,7 @@ Repository: <https://github.com/stefanod83/SwirlEvo>
 * **Settings secret masking**: Vault token, AppRole secret_id, and Keycloak client_secret are never round-tripped in cleartext through the UI — the backend sanitizes on GET and preserves on Save unless a new value is typed.
 * **User types**: Internal / LDAP / Keycloak, all editable from the user form with type-aware password handling.
 * **Keycloak OIDC login**: OpenID Connect flow with auto-create, group→role mapping (by name, portable across backup/restore), import from OpenID Configuration URL, diagnostic test, slash-tolerant group matching.
-* **Container management**: status filter (All/Running/Exited/Created/Paused), bulk actions (Start/Stop/Restart/Delete with checkbox selection).
+* **Container management**: status filter (All/Running/Exited/Created/Paused), bulk actions (Start/Stop/Restart/Delete with checkbox selection). The State column promotes the healthcheck status over the raw state (`healthy` / `unhealthy` / `starting`) so containers with an active healthcheck are immediately distinguishable from those without.
 * **Stack env file (.env)**: define KEY=VALUE variables substituted into the compose YAML via `${VAR}` at deploy time. Included in the stack download ZIP alongside `docker-compose.yml` and `.secret`.
 * **Deploy error persistence**: last deploy failure message stored on the stack and shown in the Overview tab — survives page reload, clears on successful redeploy.
 * LDAP and Keycloak (OIDC) authentication.
@@ -63,6 +63,179 @@ navigate inside it.
 Swarm-only endpoints (`/service/*`, `/task/*`, `/config/*`, `/secret/*`) return **404** in standalone mode. The auto-scaler is disabled. The router guard also blocks swarm-only routes from being reached by URL.
 
 Activate with `MODE=standalone`.
+
+## Feature comparison: Standalone vs Swarm
+
+Legend:
+
+- ✅ **available**
+- ❌ **not available** (hidden from UI + endpoint returns 404 or feature is disabled)
+- 🟡 **partial / different behaviour** (see row note)
+
+### Orchestration objects
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| Nodes list / detail / edit | ❌ | ✅ | `/swarm/nodes` — manager-reachable Swarm only |
+| Services (Docker Swarm services) | ❌ | ✅ | `/swarm/services` — `swarmOnly` 404 in standalone |
+| Tasks | ❌ | ✅ | `/swarm/tasks` — `swarmOnly` 404 in standalone |
+| Configs (Swarm configs) | ❌ | ✅ | `/swarm/configs` — `swarmOnly` 404 in standalone |
+| Secrets (Swarm secrets) | ❌ | ✅ | `/swarm/secrets` — `swarmOnly` 404 in standalone |
+| Swarm stacks (`docker stack deploy` style) | ❌ | ✅ | `/swarm/stacks` — compose-over-swarm |
+| Service auto-scaling (`swirl.scale` label) | ❌ | ✅ | `scaler/scaler.go` — disabled when `MODE=standalone` |
+| Service logs / restart / rollback | ❌ | ✅ | Service-specific actions |
+| Hosts (remote Docker endpoints) | ✅ | ❌ | `/standalone/hosts` — unix / tcp / tcp+tls / ssh |
+| Global host selector (header dropdown) | ✅ | ❌ | Drives every per-host page; auto-selects single host |
+
+### Compose stacks
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| Compose YAML editor (in-browser) | ✅ | ✅ | Stacks menu |
+| Deploy / Save / Start / Stop / Remove | ✅ | 🟡 | Swarm uses `docker stack deploy` semantics; Standalone uses `StandaloneEngine` direct container ops |
+| EnvFile (`.env`) injection at deploy | ✅ | 🟡 | Standalone: `parseEnvFile` + `os.Setenv` before compose.Parse; Swarm also supports `.env` but via the Swarm stack API |
+| `build:` support | ❌ | ❌ | Both engines reject `build:` up-front; pre-built `image:` only |
+| `depends_on` ordering + condition wait | ✅ | 🟡 | Standalone: topological sort + wait for `service_started`/`service_healthy`/`service_completed_successfully`. Cycle detection. `restart`/`required` ignored. Swarm: relies on Swarm's update ordering — no condition wait |
+| `healthcheck:` applied to container | ✅ | ✅ | Standalone via `buildHealthcheck`, Swarm via Swarm service config |
+| Import external stack (discovered) | ✅ | ❌ | `Stacks → Details → Import / Import & Redeploy`; reconstructs YAML from live containers |
+| Remove with volume deletion (+`force`) | ✅ | ❌ | `VolumesContainDataError` guard, second-confirm with force |
+| Cross-host migration (`Migrate`) | ✅ | ❌ | Standalone only — move managed inactive stack to another host |
+| Per-stack Vault secret bindings | ✅ | ❌ | Materializer hook: tmpfs / volume / init / env — standalone engine path |
+| Stack download ZIP (`docker-compose.yml` + `.env` + `.secret`) | ✅ | ❌ | `ui/src/utils/zip.ts` |
+| Deploy error persistence on stack | ✅ | ❌ | `ComposeStack.ErrorMessage` — Overview banner clears on success |
+| Stack list sorted + remote-pagination | ✅ | 🟡 | Both have list; remote-sort wired through `useDataTable` |
+
+### Container lifecycle (per-host)
+
+| Action | Standalone | Swarm | Notes |
+|---|---|---|---|
+| List (status filter + Stack filter) | ✅ | ✅ | Stack filter column in standalone only |
+| Healthcheck-aware State column | ✅ | ✅ | `healthy` / `unhealthy` / `starting` promoted over raw `running` so the tag colour reflects the active healthcheck |
+| Start / Stop / Restart | ✅ | ✅ | Shared `ContainerTable.vue` component |
+| Pause / Unpause | ✅ | ✅ | |
+| Kill | ✅ | ✅ | |
+| Rename | ✅ | ✅ | |
+| Logs (streamed) | ✅ | ✅ | |
+| Exec (WebSocket TTY) | ✅ | ✅ | |
+| Stats snapshot | ✅ | ✅ | |
+| Delete (disabled while running/paused) | ✅ | ✅ | |
+| Bulk Start/Stop/Restart/Delete | ✅ | ✅ | Checkbox column + aggregated errors |
+
+### Images
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| List (with Unused badge) | ✅ | ✅ | Unused recomputed server-side |
+| Delete | ✅ | ✅ | |
+| Force delete (untag all + prune children) | ✅ | ✅ | Red button + confirmation |
+| Bulk delete / bulk force delete | ✅ | ✅ | |
+| Tag + push to registry | ✅ | ✅ | `docker tag` + `docker push` via selected registry |
+
+### Volumes
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| List (with Unused badge) | ✅ | ✅ | Refcount recomputed from container mounts |
+| Create | ✅ | ✅ | |
+| Delete | ✅ | ✅ | |
+| Bulk delete | ✅ | ✅ | |
+
+### Networks
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| List | ✅ | ✅ | Standalone page filters by global host selector |
+| Create | ✅ | ✅ | Standalone form hides Swarm-only fields (overlay, scope, attachable, ingress) |
+| Delete (+ disconnect container) | ✅ | ✅ | |
+| Bulk delete | ✅ | ✅ | |
+| Topology view (interactive graph) | ✅ | 🟡 | Primary target is standalone (per-host); Swarm is supported but graph is shown at current-host scope |
+
+### Registries (remote registry browser)
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| Configured registry CRUD | ✅ | ✅ | Saved creds used for browse + push |
+| Browse catalog + tags (Docker Registry v2) | ✅ | ✅ | Self-signed TLS opt-in |
+| Image tag + push from UI | ✅ | ✅ | Uses daemon's `insecure-registries` for the actual push |
+
+### Self-deploy
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| Auto-Deploy from source ComposeStack | ✅ | ❌ | Blocked at biz level with `ErrSelfDeployBlocked`; UI hides the button |
+| Sidekick container lifecycle (`swirl-deploy-agent-*`) | ✅ | ❌ | |
+| Preflight: `/data` volume required + network compatibility | ✅ | ❌ | |
+| Stale-lock reclaim at boot + on trigger | ✅ | ❌ | |
+| Sidekick watchdog (90s) | ✅ | ❌ | |
+| Clear stuck lock (UI button + `POST /reset`) | ✅ | ❌ | |
+| Progress modal + sessionStorage restore | ✅ | ❌ | Polls `/api/system/mode`; no iframe, no recovery HTTP server |
+| EnvFile injection into sidekick | ✅ | ❌ | |
+| Auto-rollback on failure | ✅ | ❌ | Rename-back pivot, `PreserveContainerNames` |
+
+### System / Admin
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| Users (Internal / LDAP / Keycloak) | ✅ | ✅ | Type-aware password handling |
+| Roles (RBAC) | ✅ | ✅ | Bitmask perms, 22 resources × 16 actions |
+| Events / audit log | ✅ | ✅ | `Create*` emission gated by `err == nil` |
+| Charts (custom dashboards) | ✅ | ✅ | |
+| Settings panel | ✅ | ✅ | Mode-specific sections hidden when not applicable (e.g. Self-deploy panel hidden in Swarm) |
+| Backup (AES-256-GCM at-rest + scheduler) | ✅ | ✅ | Storage: filesystem OR Vault KVv2 |
+| Backup recover (re-encrypt under rotated key) | ✅ | ✅ | Dedicated `backup.recover` permission |
+| Vault connection settings + backup-key provider | ✅ | ✅ | Infrastructure — enables SWIRL_BACKUP_KEY fallback and Vault-backed backup storage in both modes |
+| Vault catalog (reference CRUD, write values) | ✅ | ❌ | Standalone-only. Swarm has native Docker Secrets — the VaultSecret catalog duplicates that functionality in swarm, so the menu is hidden and `/api/vault-secret/*` returns 404 |
+| Vault per-stack bindings | ✅ | ❌ | Standalone-only materializer (tmpfs/volume/init/env). Swarm stacks use `secrets:` in the compose YAML pointing at `docker secret` objects |
+
+### Monitoring
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| Prometheus/cAdvisor service-level metrics | ❌ | ✅ | Swarm-targeted; standalone has no Service abstraction |
+| Container stats (snapshot via Docker API) | ✅ | ✅ | |
+| Host / daemon info (via `Info()`) | ✅ | ✅ | Host detail page persists last snapshot in standalone |
+
+### Authentication
+
+| Feature | Standalone | Swarm | Notes |
+|---|---|---|---|
+| Internal (bcrypt in DB) | ✅ | ✅ | Default for the bootstrap admin |
+| LDAP (bind or simple) | ✅ | ✅ | Auto-provision on first login |
+| Keycloak OIDC (auto-create, group→role mapping) | ✅ | ✅ | Import OpenID Configuration, diagnostic test |
+| Session token in `Authorization: Bearer` | ✅ | ✅ | 24-char session id vs long-lived API token |
+
+### Permissions reference
+
+Bitmask encoding (`security/perm.go`). Not all combinations make sense in both modes — the table above clarifies visibility.
+
+**Vault-related nuance**: `vault.admin` gates `/api/vault/test` (the Settings → Vault connection test button). It stays available in both modes because Vault can be used in swarm for the `SWIRL_BACKUP_KEY` provider and for Vault-backed backup storage. `vault_secret.*` gates the separate VaultSecret catalog (standalone-only). The two permissions control different resources — the split is intentional.
+
+| Resource | Actions available | Standalone | Swarm |
+|---|---|---|---|
+| `node` | view / edit / delete | ❌ | ✅ |
+| `service` | view / edit / delete / deploy / restart / rollback / logs | ❌ | ✅ |
+| `task` | view / logs | ❌ | ✅ |
+| `stack` | view / edit / delete / deploy / shutdown | ✅ | ✅ |
+| `config` | view / edit / delete | ❌ | ✅ |
+| `secret` | view / edit / delete | ❌ | ✅ |
+| `network` | view / edit / delete / disconnect | ✅ | ✅ |
+| `container` | view / edit / delete / logs / execute | ✅ | ✅ |
+| `image` | view / edit / delete / push | ✅ | ✅ |
+| `volume` | view / edit / delete | ✅ | ✅ |
+| `registry` | view / edit / delete | ✅ | ✅ |
+| `host` | view / edit / delete | ✅ | ❌ |
+| `self_deploy` | view / edit / execute | ✅ | ❌ |
+| `chart` | view / edit / delete | ✅ | ✅ |
+| `dashboard` | edit | ✅ | ✅ |
+| `event` | view | ✅ | ✅ |
+| `user` | view / edit / delete | ✅ | ✅ |
+| `role` | view / edit / delete | ✅ | ✅ |
+| `setting` | view / edit | ✅ | ✅ |
+| `backup` | view / edit / delete / restore / download / recover | ✅ | ✅ |
+| `vault` | admin | ✅ | ✅ |
+| `vault_secret` | view / edit / delete / cleanup | ✅ | ❌ |
+
+---
 
 ## Standalone UX
 
@@ -253,8 +426,14 @@ docker service create \
 The standalone engine accepts a subset of `docker-compose.yml` v3 and deploys it to a single host:
 
 - **Supported** keys: `services` (image, command, entrypoint, environment, ports, volumes bind/named/tmpfs, networks, restart, labels, user, working_dir, privileged, read_only, cap_add/cap_drop, dns, dns_search, hostname, tty, stdin_open), `networks`, `volumes`.
-- **Parsed, ordering not enforced**: `depends_on` — both the short form (list of service names) and the long form (map keyed by service name with `condition` / `restart` / `required` sub-keys) are accepted by the parser. Only the service names are retained; `condition`, `restart` and `required` are **discarded silently** because the standalone engine does not enforce readiness between services (containers are created and started without a dependency-aware order).
-- **Not supported**: `build`, `healthcheck`, `secrets`, `configs`, `deploy`.
+- **Fully honoured**: `depends_on` — both the short form (list of service names) and the long form (map keyed by service name with `condition` sub-key) drive a topological sort at deploy time. Services are created and started in dependency order; before starting a service, Swirl waits for every listed dependency to reach the requested condition:
+  - `service_started` (default, or short form) — wait for `State.Running == true`. Timeout 30s.
+  - `service_healthy` — wait for `State.Health.Status == "healthy"`. Requires the dependency service to declare a `healthcheck:`. Timeout 2m.
+  - `service_completed_successfully` — wait for `State.Status == "exited"` with `ExitCode == 0`. Non-zero exit aborts the deploy. Timeout 5m.
+
+  `restart` and `required` sub-keys are still ignored (Swirl doesn't re-schedule services, and every dependency is implicitly required). A cycle in `depends_on` is detected up-front and aborts the deploy with a clear error.
+- **Healthcheck**: the `healthcheck:` block of a service IS applied to the created container (`test`, `interval`, `timeout`, `start_period`, `retries`, `disable`). Combined with `depends_on: condition: service_healthy`, this gives compose-CLI parity for startup ordering.
+- **Not supported**: `build`, `secrets`, `configs`, `deploy`.
 - **`build:` is an explicit error**: a service that declares `build.context` — with or without `image:` — is rejected up-front by `validateServices` before any container is created. The error message names the service and instructs the operator to pre-build the image and reference it via `image:` only. Previously such services reached `ContainerCreate` with an empty image reference and produced a confusing `"no command specified"` error from the Docker daemon. Services that declare neither `image:` nor `build:` are rejected with the same pattern.
 
 Containers are labelled with the standard `com.docker.compose.project=<stack-name>`, `com.docker.compose.service=<service>` and `com.swirl.compose.managed=true`. This means stacks created with the plain `docker compose` CLI appear in the Swirl Stacks list as **read-only, unmanaged** (you can see status, but can't Start/Stop/Remove without importing them first).

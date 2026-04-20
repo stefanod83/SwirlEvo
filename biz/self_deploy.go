@@ -301,18 +301,18 @@ func (b *selfDeployBiz) prepareJob(ctx context.Context) (*SelfDeployJob, error) 
 		return nil, misc.Error(misc.ErrSelfDeployBlocked, errors.New("no source stack configured; select one in Settings"))
 	}
 	if b.csb == nil {
-		return nil, errors.New("self-deploy: compose stack biz not wired")
+		return nil, misc.Error(misc.ErrSelfDeployBlocked, errors.New("compose stack service is not wired — internal configuration error"))
 	}
 	stack, err := b.csb.Find(ctx, cfg.SourceStackID)
 	if err != nil {
-		return nil, fmt.Errorf("self-deploy: find source stack: %w", err)
+		return nil, misc.Error(misc.ErrSelfDeployBlocked, fmt.Errorf("cannot load source stack %q: %v", cfg.SourceStackID, err))
 	}
 	if stack == nil {
-		return nil, errors.New("self-deploy: source stack not found or deleted")
+		return nil, misc.Error(misc.ErrSelfDeployBlocked, fmt.Errorf("source stack %q no longer exists — select a different stack in Settings → Self-deploy", cfg.SourceStackID))
 	}
 	yaml := strings.TrimSpace(stack.Content)
 	if yaml == "" {
-		return nil, errors.New("self-deploy: source stack has no compose content")
+		return nil, misc.Error(misc.ErrSelfDeployBlocked, fmt.Errorf("source stack %q has no compose content — open the stack editor and paste the YAML first", stack.Name))
 	}
 
 	// Inject the stack's EnvFile vars into process env BEFORE parsing
@@ -343,11 +343,11 @@ func (b *selfDeployBiz) prepareJob(ctx context.Context) (*SelfDeployJob, error) 
 
 	parsed, perr := compose.Parse(stack.Name, stack.Content)
 	if perr != nil {
-		return nil, fmt.Errorf("self-deploy: parse source stack YAML: %w", perr)
+		return nil, misc.Error(misc.ErrSelfDeployBlocked, fmt.Errorf("source stack YAML is invalid: %v", perr))
 	}
 	target, terr := detectTargetImage(parsed)
 	if terr != nil {
-		return nil, terr
+		return nil, misc.Error(misc.ErrSelfDeployBlocked, terr)
 	}
 	expose := detectExposePort(parsed)
 
@@ -355,7 +355,7 @@ func (b *selfDeployBiz) prepareJob(ctx context.Context) (*SelfDeployJob, error) 
 	// image tag (used for rollback).
 	cli, cerr := b.d.Client()
 	if cerr != nil {
-		return nil, fmt.Errorf("self-deploy: obtain docker client: %w", cerr)
+		return nil, misc.Error(misc.ErrSelfDeployBlocked, fmt.Errorf("Docker client unavailable: %v — check Swirl has /var/run/docker.sock mounted", cerr))
 	}
 	prevImage := ""
 	inspectCtx, inspectCancel := context.WithTimeout(ctx, 10*time.Second)
@@ -394,10 +394,10 @@ func (b *selfDeployBiz) prepareJob(ctx context.Context) (*SelfDeployJob, error) 
 	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pingCancel()
 	if _, perr := cli.Ping(pingCtx); perr != nil {
-		return nil, fmt.Errorf("self-deploy: docker daemon not reachable: %w", perr)
+		return nil, misc.Error(misc.ErrSelfDeployBlocked, fmt.Errorf("Docker daemon not reachable: %v", perr))
 	}
 	if err := validateInvariantsWithDaemon(ctx, cli, job); err != nil {
-		return nil, err
+		return nil, misc.Error(misc.ErrSelfDeployBlocked, err)
 	}
 
 	// Preflight: compare the currently-running stack (start state) with

@@ -8,11 +8,10 @@ import (
 	"github.com/cuigh/swirl/misc"
 )
 
-// ComposeStackSecretHandler exposes CRUD on compose stack ↔ Vault secret
-// bindings. These bindings are only meaningful in standalone mode (Swarm
-// has native docker-secret support), but the endpoints are registered in
-// both modes so the UI can be generic. The underlying biz layer does not
-// assume a Swarm/standalone context.
+// ComposeStackSecretHandler exposes CRUD on compose stack ↔ Vault
+// secret bindings. **Standalone mode only** — Swarm has native
+// docker-secret support. Every handler is wrapped with
+// `standaloneOnly`; swarm mode returns 404.
 type ComposeStackSecretHandler struct {
 	List   web.HandlerFunc `path:"/list" auth:"stack.view" desc:"list secret bindings of a compose stack"`
 	Find   web.HandlerFunc `path:"/find" auth:"stack.view" desc:"find binding by id"`
@@ -24,11 +23,11 @@ type ComposeStackSecretHandler struct {
 // NewComposeStackSecret is registered in api.init.
 func NewComposeStackSecret(b biz.ComposeStackSecretBiz) *ComposeStackSecretHandler {
 	return &ComposeStackSecretHandler{
-		List:   composeStackSecretList(b),
-		Find:   composeStackSecretFind(b),
-		Save:   composeStackSecretSave(b),
-		Delete: composeStackSecretDelete(b),
-		Drift:  composeStackSecretDrift(b),
+		List:   standaloneOnly(composeStackSecretList(b)),
+		Find:   standaloneOnly(composeStackSecretFind(b)),
+		Save:   standaloneOnly(composeStackSecretSave(b)),
+		Delete: standaloneOnly(composeStackSecretDelete(b)),
+		Drift:  standaloneOnly(composeStackSecretDrift(b)),
 	}
 }
 

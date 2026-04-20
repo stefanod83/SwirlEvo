@@ -624,6 +624,12 @@ function createSiteRouter() {
   // swarm-only route names (Service/Task/Config/Secret + swarm Node/Stack routes)
   // std_* routes are the standalone counterparts and are always allowed.
   const swarmOnlyRoutes = /^(service|task|config|secret|node|stack)_/
+  // standalone-only route names. VaultSecret catalog + bindings are
+  // standalone-only because Swarm has native Docker Secrets — the
+  // backend api/vault_secret.go + compose_stack_secret.go are wrapped
+  // with `standaloneOnly` and return 404. Blocking here keeps swarm
+  // users from hitting a dead endpoint via direct URL.
+  const standaloneOnlyRoutes = /^vault_secret_/
 
   router.beforeEach(function (to, from, next) {
     if (!from || to.path !== from.path) {
@@ -632,6 +638,11 @@ function createSiteRouter() {
     }
 
     if (store.state.mode === 'standalone' && typeof to.name === 'string' && swarmOnlyRoutes.test(to.name)) {
+      next({ name: '404' })
+      return
+    }
+
+    if (store.state.mode !== 'standalone' && typeof to.name === 'string' && standaloneOnlyRoutes.test(to.name)) {
       next({ name: '404' })
       return
     }

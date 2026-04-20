@@ -89,6 +89,22 @@
       <div>{{ t('self_deploy.actions.auto_deploy_confirm_body') }}</div>
     </n-modal>
 
+    <!-- Persistent Auto-Deploy error banner: populated when the
+         /api/self-deploy/deploy call fails (e.g. preflight block
+         because of an invalid stack YAML). Survives the toast fade
+         so the operator can read multi-line backend messages. -->
+    <n-alert
+      v-if="autoDeployError"
+      type="error"
+      :show-icon="true"
+      closable
+      :title="t('self_deploy.errors.deploy_failed')"
+      style="margin-top: 12px"
+      @close="autoDeployError = ''"
+    >
+      <pre style="margin: 0; white-space: pre-wrap; font-size: 12px">{{ autoDeployError }}</pre>
+    </n-alert>
+
     <!-- Deploy-in-progress modal (shared composable): spinner +
          status text, polls /api/system/mode. -->
     <n-modal
@@ -565,6 +581,10 @@ const sdConfig = ref<SelfDeployConfig | null>(null)
 // Swirl instance" error on the record. See biz/compose_stack.go:~390.
 const sdConfigLoaded = ref(false)
 const autoDeployConfirm = ref(false)
+// autoDeployError persists the last Auto-Deploy failure message so the
+// operator sees the actual backend explanation (e.g. "source stack
+// YAML is invalid: ...") instead of a brief toast that disappears.
+const autoDeployError = ref('')
 
 const isSelfDeployStack = computed(() => {
   return !!(sdConfig.value?.enabled && sdConfig.value?.sourceStackId === model.id)
@@ -599,6 +619,7 @@ function autoDeployStack() {
 
 async function confirmAutoDeploy() {
   submitting.value = true
+  autoDeployError.value = ''
   try {
     // Persist the editor state first: /api/self-deploy/deploy reads the
     // source stack's YAML from the DB, not from the browser. If the
@@ -615,7 +636,16 @@ async function confirmAutoDeploy() {
     autoDeployConfirm.value = false
     openProgressFromDeployResult(r?.data)
   } catch (e: any) {
-    message.error(e?.response?.data?.info || e?.message || String(e))
+    // Prefer the backend's `data.info` (coded errors include a clear
+    // reason) over the axios generic `error.message` ("Request failed
+    // with status code 500"). Persist the message so the operator can
+    // read it after the toast fades.
+    const info = e?.response?.data?.info
+    const msg = (typeof info === 'string' && info.length > 0)
+      ? info
+      : (e?.message || String(e))
+    autoDeployError.value = msg
+    autoDeployConfirm.value = false
   } finally {
     submitting.value = false
   }

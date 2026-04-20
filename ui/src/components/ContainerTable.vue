@@ -184,7 +184,22 @@ const columns = computed(() => {
       width: 90,
       sorter: (a: Container, b: Container) => (a.state || '').localeCompare(b.state || ''),
       render(c: Container) {
-        const type = c.state === 'running' ? 'success' : (c.state === 'paused' ? 'warning' : 'error')
+        // Healthcheck-aware state tag:
+        //   healthy   → green   (container passing its healthcheck)
+        //   running   → green   (running but no healthcheck)
+        //   starting  → warning (healthcheck warm-up window)
+        //   paused    → warning
+        //   unhealthy → red     (healthcheck failing)
+        //   everything else (exited, dead, …) → red
+        let type: 'success' | 'warning' | 'error' = 'error'
+        switch (c.state) {
+          case 'healthy':
+          case 'running':
+            type = 'success'; break
+          case 'starting':
+          case 'paused':
+            type = 'warning'; break
+        }
         return renderTag(c.state, type as any)
       }
     },
@@ -232,22 +247,31 @@ const columns = computed(() => {
       key: "actions",
       width: 260,
       render(c: Container) {
-        const running = c.state === 'running'
+        // State is healthcheck-aware (see deriveContainerState in biz/
+        // container.go): a running container can appear as "healthy",
+        // "unhealthy" or "starting" instead of "running". All four are
+        // variants of "alive" for the purpose of action gating —
+        // Start must be disabled, Stop/Restart/Kill enabled, etc.
+        const runningLike = c.state === 'running'
+          || c.state === 'healthy'
+          || c.state === 'unhealthy'
+          || c.state === 'starting'
         const paused = c.state === 'paused'
+        const alive = runningLike || paused
         const buttons = [
-          actionButton('success', PlayOutline, t('buttons.start'), running || paused,
+          actionButton('success', PlayOutline, t('buttons.start'), alive,
             () => runAction(() => containerApi.start(props.node, c.id, c.name), t('buttons.start'))),
-          actionButton('warning', StopOutline, t('buttons.stop'), !running,
+          actionButton('warning', StopOutline, t('buttons.stop'), !alive,
             () => runAction(() => containerApi.stop(props.node, c.id, c.name), t('buttons.stop'))),
-          actionButton('info', RefreshOutline, t('buttons.restart'), !running,
+          actionButton('info', RefreshOutline, t('buttons.restart'), !runningLike,
             () => runAction(() => containerApi.restart(props.node, c.id, c.name), t('buttons.restart'))),
-          actionButton('warning', PauseOutline, paused ? t('buttons.unpause') : t('buttons.pause'), !running && !paused,
+          actionButton('warning', PauseOutline, paused ? t('buttons.unpause') : t('buttons.pause'), !alive,
             () => runAction(() => paused ? containerApi.unpause(props.node, c.id, c.name) : containerApi.pause(props.node, c.id, c.name), paused ? t('buttons.unpause') : t('buttons.pause'))),
-          actionButton('error', FlashOffOutline, t('buttons.kill'), !running,
+          actionButton('error', FlashOffOutline, t('buttons.kill'), !runningLike,
             () => runAction(() => containerApi.kill(props.node, c.id, c.name), t('buttons.kill'))),
           actionButton('default', EyeOutline, t('buttons.view'), false,
             () => router.push({ name: 'container_detail', params: { id: c.id, node: props.node || '-' } })),
-          actionButton('error', TrashOutline, t('buttons.delete'), running || paused, () => confirmDelete(c)),
+          actionButton('error', TrashOutline, t('buttons.delete'), alive, () => confirmDelete(c)),
         ]
         return h(NButtonGroup, null, { default: () => buttons })
       },

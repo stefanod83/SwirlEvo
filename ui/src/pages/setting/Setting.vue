@@ -624,16 +624,16 @@
       </n-space>
     </x-panel>
 
-    <!-- Deploy-in-progress modal: no iframe. Just a spinner + status
-         line while `/api/system/mode` is polled. Closes + reloads the
-         page when the new Swirl answers 200. -->
+    <!-- Deploy-in-progress modal: no iframe. Polls /api/system/mode
+         for readiness + /api/self-deploy/status for live phase & logs.
+         Closes + reloads the page when the new Swirl answers 200. -->
     <n-modal
       v-model:show="progressOpen"
       :mask-closable="false"
       :closable="false"
       preset="card"
       :bordered="false"
-      style="max-width: 520px;"
+      style="max-width: 640px;"
     >
       <template #header>
         <n-space align="center" :size="8">
@@ -650,13 +650,32 @@
         <div style="font-size: 14px; line-height: 1.5">
           {{ progressDescription }}
         </div>
-        <div class="sd-muted" style="font-size: 13px">
-          {{ progressStatus }}
-          <span v-if="progressElapsed" style="margin-left: 8px; opacity: 0.7">({{ progressElapsed }})</span>
-        </div>
+        <n-space :size="8" align="center">
+          <n-tag
+            v-if="progressPhase"
+            :type="phaseTagType(progressPhase)"
+            round
+            size="small"
+          >
+            {{ progressPhaseLabel }}
+          </n-tag>
+          <span class="sd-muted" style="font-size: 13px">{{ progressStatus }}</span>
+          <span v-if="progressElapsed" class="sd-muted" style="font-size: 12px; opacity: 0.7">({{ progressElapsed }})</span>
+        </n-space>
         <div v-if="currentJobId" class="sd-muted" style="font-size: 12px">
           {{ t('self_deploy.status.job_id') }}: <code>{{ currentJobId }}</code>
         </div>
+        <n-alert
+          v-if="progressError"
+          type="error"
+          :show-icon="true"
+          style="font-size: 12px"
+        >{{ progressError }}</n-alert>
+        <pre
+          v-if="progressLogTail.length"
+          class="sd-log"
+          style="max-height: 260px; overflow: auto; font-size: 12px; margin: 0"
+        >{{ progressLogTail.join('\n') }}</pre>
       </n-space>
     </n-modal>
 
@@ -1034,6 +1053,10 @@ const {
   progressDescription,
   progressElapsed,
   progressTimedOut,
+  progressPhase,
+  progressPhaseLabel,
+  progressError,
+  progressLogTail,
   currentJobId,
   resumeFromSession,
 } = useAutoDeployProgress()

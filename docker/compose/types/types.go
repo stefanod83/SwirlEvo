@@ -229,12 +229,29 @@ type ShellCommand []string
 // StringList is a type for fields that can be a string or list of strings
 type StringList []string
 
-// DependsOnList is the list of services a service depends on. It supports both
-// the compose v3 short form (a plain list of service names) and the long form
-// (a map keyed by service name with {condition, restart, required} values);
-// only the service names are retained — condition and restart are not
-// enforced by Swirl's standalone engine.
-type DependsOnList []string
+// DependsOnList is the list of services a service depends on. It supports
+// both the compose v3 short form (a plain list of service names) and the
+// long form (a map keyed by service name with {condition, restart, required}
+// values).
+//
+// Short form entries get Condition="" and the deploy engine treats them as
+// `service_started` (the compose-spec default). Long-form entries keep the
+// explicit condition so the engine can wait for `service_healthy` or
+// `service_completed_successfully` before starting the dependent service.
+//
+// `restart` and `required` are still ignored — Swirl's standalone engine
+// does not re-schedule services on restart and treats every listed
+// dependency as required (the historical behaviour).
+type DependsOnList []ServiceDependency
+
+// ServiceDependency carries the parsed depends_on entry. Condition is one of
+// the compose-spec strings: "service_started" (default), "service_healthy",
+// "service_completed_successfully". Empty string means "not specified — use
+// service_started".
+type ServiceDependency struct {
+	Service   string `yaml:"service" json:"service"`
+	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
+}
 
 // StringOrNumberList is a type for fields that can be a list of strings or
 // numbers

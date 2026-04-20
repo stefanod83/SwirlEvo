@@ -871,6 +871,137 @@ deploys. Commit covers all of the following:
   the self-deploy layer since the YAML is whatever the stack
   editor shows.
 
+### VaultSecret is now standalone-only
+
+Swarm has native Docker Secrets (`docker secret create` + compose
+`secrets:` references). The VaultSecret catalog + per-stack
+bindings duplicated that functionality in Swarm with zero benefit.
+Gated behind mode:
+
+* **Backend**: new `standaloneOnly` wrapper in `api/api.go`, mirror
+  of the existing `swarmOnly`. Every `VaultSecretHandler` and
+  `ComposeStackSecretHandler` endpoint wrapped — swarm mode returns
+  404 on any `/api/vault-secret/*` or `/api/compose-stack-secret/*`.
+* **Frontend menu**: `systemItem(mode)` now includes the VaultSecret
+  menu item only when `mode === 'standalone'`. Swarm's System group
+  no longer carries an orphan entry.
+* **Router guard**: new `standaloneOnlyRoutes = /^vault_secret_/`
+  regex blocks direct-URL access to VaultSecret pages in swarm mode,
+  matching the existing `swarmOnlyRoutes` pattern.
+* **Permissions**: `vault_secret` resource stays defined (so older
+  role records don't break); it's just unreachable in swarm mode.
+  The Role editor in swarm hides the resource row via the frontend
+  perm map.
+* **What stays unchanged in swarm**: the Vault **connection**
+  (Settings → Vault panel) + the `SWIRL_BACKUP_KEY` fallback + the
+  Vault-backed backup storage toggle. These are Swirl's own
+  infrastructure — they don't duplicate any Swarm primitive.
+
+Net effect: the Swarm UI is cleaner, swarm operators stop seeing a
+feature that would compete with their native secret management, and
+the codebase still has a single `biz/vault_secret.go` implementation
+(same tests, same DAO) with mode-gating at the thin API layer.
+
+### Container state: promote healthcheck status over raw state
+
+The State column in the container list + detail page now shows
+`healthy` / `unhealthy` / `starting` when the container has an active
+healthcheck, so operators can immediately see which containers are
+actively passing/failing their check — the same information that
+`docker ps` embeds in its Status column as `Up 5 seconds (healthy)`.
+
+* **Backend**: `biz/container.go::deriveContainerState` parses the
+  Docker SDK's `container.Summary.Status` text for the
+  `(healthy)` / `(unhealthy)` / `(health: starting)` markers and
+  promotes the state accordingly. `newContainerDetail` uses the
+  richer `State.Health.Status` field from `ContainerInspect` directly.
+* **Frontend**: `ContainerTable.vue` + `container/View.vue` tag colors:
+  `healthy` + `running` → green (success), `starting` + `paused` →
+  yellow (warning), `unhealthy` + everything else → red (error).
+* **Effect**: a `mongo` with healthcheck shows up as `healthy` (green)
+  in the list. A service without any healthcheck keeps showing
+  `running` (green), making the distinction immediate at a glance.
+
+### Self-deploy: persistent error banner + live progress modal
+
+Two UX improvements that follow the v3 cleanup.
+
+* **Persistent error banner on Auto-Deploy** — previously a failed
+  `/api/self-deploy/deploy` surfaced as a toast that faded in 5 s,
+  leaving operators staring at a generic "Request failed with status
+  code 500" line. Now every preflight error is wrapped with
+  `misc.Error(misc.ErrSelfDeployBlocked, ...)` so the backend returns
+  a specific coded message, and `compose_stack/Edit.vue` renders the
+  message in a closable `n-alert` with `white-space: pre-wrap` right
+  below the Auto-Deploy button. Multi-line YAML parse errors stay
+  readable. Examples of the new messages:
+  - `source stack YAML is invalid: ...compose loader error...`
+  - `source stack "xyz" no longer exists — select a different stack in Settings → Self-deploy`
+  - `Docker daemon not reachable: ...`
+  - `Docker client unavailable: ... — check Swirl has /var/run/docker.sock mounted`
+* **Live progress modal rewrite** — the "deploy in progress" dialog
+  now polls `/api/self-deploy/status` every 2 s (via `fetch`, bypasses
+  axios) alongside the `/api/system/mode` readiness probe. Displays:
+  - Current phase tag (pending → stopping → pulling → starting →
+    health_check → success / failed / rolled_back / recovery), color-
+    coded via `phaseTagType`.
+  - Elapsed time ticking forward once a second (driven by a reactive
+    `nowTick` counter — the earlier version used a non-reactive
+    `let` variable and never updated).
+  - Last 10 log lines from `state.json.logTail`.
+  - Any `state.json.error` inline as a red `n-alert`.
+  - The 5-minute timeout tag is preserved.
+  Poll failures during the primary-swap window are silent — the
+  modal keeps the last-seen phase until the new primary is back.
+
+### Standalone compose: `depends_on` + condition wait
+
+Closed the biggest feature gap vs `docker compose up`. The standalone
+engine now honours `depends_on` exactly like the Compose CLI — up to
+and including `condition: service_healthy` with healthcheck polling.
+
+* **Topological sort** in `DeployWithResult`: services are created and
+  started in dependency order (Kahn's algorithm, alphabetical tiebreak).
+  Cycles are detected up-front and abort the deploy with a clear
+  "circular dependency involving services X, Y" error.
+* **Per-dependency condition wait** between create+start steps:
+  - `service_started` (default, or short form) — poll until
+    `State.Running == true`. Timeout 30 s.
+  - `service_healthy` — poll until `State.Health.Status == "healthy"`.
+    Requires the dependency service to declare a `healthcheck:`.
+    Timeout 2 min. Falls back to `service_started` with a log line
+    when the dependency service has no healthcheck (to avoid
+    regressions on stacks that were accepted before this change).
+  - `service_completed_successfully` — poll until
+    `State.Status == "exited"` with `ExitCode == 0`. Non-zero exit
+    aborts. Timeout 5 min.
+* **`healthcheck:` applied to the created container** — `buildHealthcheck`
+  already mapped compose `healthcheck` to
+  `container.HealthConfig`; nothing else was needed at the Docker
+  SDK level. Removed from the "not supported" section in README.
+* **Type change**: `composetypes.DependsOnList` went from
+  `[]string` to `[]ServiceDependency{Service, Condition}`. Short-form
+  entries get `Condition=""`; long-form keeps the parsed string.
+  `restart` and `required` sub-keys are still discarded.
+* **Loader + tests**: `transformDependsOnList` normalises both forms
+  into the new slice. `parse_test.go` updated to assert on
+  `.Service` + `.Condition`. Added a regression test matching the
+  original user scenario (`vault` + `vault-init` with
+  `condition: service_healthy`).
+* **Cycle detection**: a `depends_on` loop is caught by the
+  topological sort and reported before any container is touched.
+* **Self-deploy benefit**: the sidekick's deploy path is the same
+  standalone engine, so `depends_on` now works for self-deploy too —
+  a Swirl stack with `swirl depends_on mongodb condition:
+  service_healthy` will wait for Mongo to pass its healthcheck
+  before bringing the new Swirl up, eliminating the startup race
+  Swirl's own DB retry had been masking.
+
+This is compose-CLI parity for the standalone engine's ordering story.
+The Docker Engine API itself never supported `depends_on` (it's a
+CLI-level feature); Swirl now implements the same algorithm client-side
+against the same SDK it was using before.
+
 ### Self-deploy v3 cleanup: drop the HTTP server + iframe entirely
 
 Follow-up to the hardening series. The recovery HTTP server embedded

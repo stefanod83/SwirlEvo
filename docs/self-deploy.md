@@ -165,29 +165,61 @@ There is no separate "template editor" in Settings — the YAML is the single so
 
 ## Progress modal + session survival
 
-When Auto-Deploy is clicked, the UI opens a small modal with a spinner
-and a status line like:
+When Auto-Deploy is clicked, the UI opens a modal with live-status
+content:
 
 > **Self-deploy in progress**
 > Swirl is being swapped out by the sidekick container. This page will
 > auto-reload as soon as the new Swirl is online.
 >
-> Primary Swirl unreachable — waiting for the new container to respond. (0:15)
+> `[ pending ]` Primary Swirl unreachable — waiting for the new container to respond. (0:15)
 >
 > Job id: abc12345
+>
+> *(sidekick log tail — last 10 lines)*
+>
+> `2026-04-20T12:34:56Z stopping primary container …`
+> `2026-04-20T12:35:01Z pulling image registry.example.com/swirl:v2…`
+> …
 
-The modal is **purely client-side**:
+What the modal shows and how it's driven:
 
-- **Polling**: `GET /api/system/mode` every 3 seconds via plain
-  `fetch` (bypasses axios). First `200 OK` closes the modal, clears
-  the in-progress flag, and full-reloads the page on `/`.
+- **Phase tag** (pending → stopping → pulling → starting → health_check
+  → success / failed / rolled_back / recovery), colour-coded.
+- **Elapsed time** counter, reactive — ticks forward every second.
+- **Log tail** — last 10 lines from `state.json.logTail`.
+- **Inline error** — if the sidekick writes an error into state.json
+  (`service_completed_successfully` failure, external network missing,
+  etc.) it is rendered as a red `n-alert` inside the modal.
+
+Polling is done via plain `fetch` (bypasses axios — no memory leak
+from accumulating pending async closures when the primary is down):
+
+- `GET /api/self-deploy/status` every 2 s — reads state.json on the
+  primary. Populates the phase + log tail + error. Silent on
+  failure so the modal keeps the last-seen phase during the swap
+  window. **Phase=`success`** (when preceded by an in-flight phase)
+  triggers the modal close + page reload.
+- `GET /api/system/mode` every 3 s — secondary "is the new primary
+  up?" signal. A 200 OK **only** triggers the success path AFTER
+  the status poll has observed an in-progress phase — otherwise the
+  old primary (still alive for the brief window before the sidekick
+  calls `docker stop`) would satisfy the check and the modal would
+  reload right into a `502 Bad Gateway` from the reverse proxy.
+- **Terminal failure** (phase=`failed` / `rolled_back`) stops the
+  polling but **keeps the modal open** with the error + log tail so
+  the operator can read them. The session flag is released so the
+  router guard lets the user navigate away manually.
+
+Session survival mechanics:
+
 - **Session flag**: `selfDeployInProgress` in Vuex, persisted in
   `sessionStorage` with a 10-minute TTL. Set when Auto-Deploy opens
   the modal, cleared on success.
 - **Axios interceptor** ([ui/src/api/ajax.ts](../ui/src/api/ajax.ts)):
   while the flag is true, transient 401/403/404/500 responses are
   **silenced** (resolved with a synthetic `{code:-1}` body rather
-  than a never-resolving promise) so:
+  than a never-resolving promise):
   - The operator is NOT redirected to login when the old Swirl's
     HTTP server shuts down.
   - No memory leak from accumulating pending async closures.
@@ -278,14 +310,25 @@ Before the sidekick is spawned, `prepareJob` runs a battery of checks — any fa
 
 ## Troubleshooting
 
-### Deploy returns 500 immediately
+### Deploy fails immediately
 
-Check the response body. Coded errors (`1007`) are preflight blocks — read the `info` field; it tells you exactly what is missing:
+The Auto-Deploy button in the stack editor now shows a persistent
+red `n-alert` **below the button** with the full backend error
+message (`white-space: pre-wrap` so multi-line YAML parse errors
+render cleanly). Toasts were removed — they disappeared before the
+operator could read them.
+
+Every preflight failure is returned with `code: 1007`
+(`ErrSelfDeployBlocked`) and a specific `info` field:
 
 - `"self-deploy is not enabled"` — flip Enabled in Settings.
 - `"no source stack configured"` — pick a stack.
-- `"service swirl does not declare a persistent volume at /data"` — add the volume mount.
+- `"source stack "<id>" no longer exists — select a different stack in Settings → Self-deploy"` — the flagged stack was deleted.
+- `"source stack "<name>" has no compose content — open the stack editor and paste the YAML first"` — empty YAML.
+- `"source stack YAML is invalid: <compose loader error>"` — YAML syntax / compose-spec error. Typical culprit: mixing short + long `depends_on` forms (e.g. `- mongodb\n    condition: service_healthy` instead of `mongodb:\n    condition: service_healthy`).
+- `"service "swirl" does not declare a persistent volume at /data"` — add the volume mount.
 - `"env X references service Y but swirl and Y share no network"` — fix the YAML network attachments.
+- `"Docker daemon not reachable: …"` / `"Docker client unavailable: … — check Swirl has /var/run/docker.sock mounted"` — sock binding issue.
 - `"a self-deploy is already in progress"` — either wait for the active sidekick, or click **Clear stuck lock** if the sidekick is dead.
 
 ### Status stuck on "Pending" forever

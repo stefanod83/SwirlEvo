@@ -214,12 +214,206 @@ func (e *StandaloneEngine) DeployWithResult(ctx context.Context, projectName, co
 		}
 	}
 
-	for i, svc := range cfg.Services {
-		if err := e.createAndStart(ctx, projectName, cfg, &cfg.Services[i], opts.Hook); err != nil {
+	// Compose-spec parity: create + start services in the order dictated
+	// by `depends_on`. Without this, the Docker SDK creates containers in
+	// map-iteration order and a service that needs its DB peer up-front
+	// can race the daemon.
+	order, err := topologicalOrder(cfg.Services)
+	if err != nil {
+		return result, err
+	}
+
+	idxByName := map[string]int{}
+	for i := range cfg.Services {
+		idxByName[cfg.Services[i].Name] = i
+	}
+
+	for _, name := range order {
+		i := idxByName[name]
+		svc := &cfg.Services[i]
+
+		// Before starting this service, wait for every dependency to
+		// reach the requested condition. Errors here abort the deploy —
+		// the rationale is compose-spec parity: `service_healthy` means
+		// "do not proceed if the dependency is not healthy".
+		for _, dep := range svc.DependsOn {
+			if err := e.waitForDependency(ctx, projectName, dep); err != nil {
+				return result, fmt.Errorf("service %s: dependency %s: %w", svc.Name, dep.Service, err)
+			}
+		}
+
+		if err := e.createAndStart(ctx, projectName, cfg, svc, opts.Hook); err != nil {
 			return result, fmt.Errorf("service %s: %w", svc.Name, err)
 		}
 	}
 	return result, nil
+}
+
+// topologicalOrder returns the service names sorted so every dependency
+// appears before the services that declare it in their `depends_on`.
+// Uses Kahn's algorithm; returns a clear error on cycles + on missing
+// dependency targets (compose-spec requires them to exist).
+//
+// Ties are broken by alphabetical service name so the order is
+// deterministic across runs (same input → same order).
+func topologicalOrder(services composetypes.Services) ([]string, error) {
+	name := make(map[string]struct{}, len(services))
+	for _, s := range services {
+		name[s.Name] = struct{}{}
+	}
+	// inEdges[service] = number of unresolved dependencies.
+	inEdges := make(map[string]int, len(services))
+	// outEdges[service] = list of services that depend on it.
+	outEdges := make(map[string][]string, len(services))
+	for _, s := range services {
+		if _, seen := inEdges[s.Name]; !seen {
+			inEdges[s.Name] = 0
+		}
+		for _, d := range s.DependsOn {
+			if _, exists := name[d.Service]; !exists {
+				return nil, fmt.Errorf("service %q references undefined dependency %q in depends_on", s.Name, d.Service)
+			}
+			inEdges[s.Name]++
+			outEdges[d.Service] = append(outEdges[d.Service], s.Name)
+		}
+	}
+
+	// Start with every service that has no dependency, sorted
+	// alphabetically.
+	ready := make([]string, 0, len(services))
+	for _, s := range services {
+		if inEdges[s.Name] == 0 {
+			ready = append(ready, s.Name)
+		}
+	}
+	sort.Strings(ready)
+
+	order := make([]string, 0, len(services))
+	for len(ready) > 0 {
+		current := ready[0]
+		ready = ready[1:]
+		order = append(order, current)
+		children := outEdges[current]
+		sort.Strings(children)
+		for _, child := range children {
+			inEdges[child]--
+			if inEdges[child] == 0 {
+				// Preserve alphabetical order among simultaneously-ready.
+				insertAt := sort.SearchStrings(ready, child)
+				ready = append(ready, "")
+				copy(ready[insertAt+1:], ready[insertAt:])
+				ready[insertAt] = child
+			}
+		}
+	}
+	if len(order) != len(services) {
+		unresolved := make([]string, 0)
+		for n, e := range inEdges {
+			if e > 0 {
+				unresolved = append(unresolved, n)
+			}
+		}
+		sort.Strings(unresolved)
+		return nil, fmt.Errorf("circular dependency detected in depends_on involving services %v", unresolved)
+	}
+	return order, nil
+}
+
+// waitForDependency polls the container that backs the given dependency
+// service until the declared condition is met, or the internal deadline
+// elapses. The condition semantics mirror the compose spec:
+//
+//   - service_started (default when empty) — container is Running.
+//   - service_healthy — container has a healthcheck AND its current
+//     Health.Status is "healthy". If the service has no healthcheck we
+//     fall back to service_started with a warning log.
+//   - service_completed_successfully — container has exited with code 0.
+//
+// Returns an error on timeout. The ctx is honoured — cancelling it
+// aborts the poll immediately.
+func (e *StandaloneEngine) waitForDependency(ctx context.Context, project string, dep composetypes.ServiceDependency) error {
+	cond := dep.Condition
+	if cond == "" {
+		cond = "service_started"
+	}
+
+	// Timeout budget depends on the condition. These are pragmatic
+	// defaults; a user who needs longer should tune the healthcheck
+	// start_period/retries or split the deploy.
+	var timeout time.Duration
+	switch cond {
+	case "service_started":
+		timeout = 30 * time.Second
+	case "service_healthy":
+		timeout = 2 * time.Minute
+	case "service_completed_successfully":
+		timeout = 5 * time.Minute
+	default:
+		return fmt.Errorf("unsupported depends_on condition %q (expected service_started, service_healthy, or service_completed_successfully)", cond)
+	}
+
+	deadline := time.Now().Add(timeout)
+	const pollInterval = 1 * time.Second
+
+	for {
+		// Locate the dependency's container by compose labels.
+		list, lerr := e.cli.ContainerList(ctx, container.ListOptions{
+			All: true,
+			Filters: filters.NewArgs(
+				filters.Arg("label", LabelProject+"="+project),
+				filters.Arg("label", LabelService+"="+dep.Service),
+			),
+		})
+		if lerr != nil {
+			return fmt.Errorf("list dependency container: %w", lerr)
+		}
+		if len(list) > 0 {
+			info, ierr := e.cli.ContainerInspect(ctx, list[0].ID)
+			if ierr == nil && info.State != nil {
+				switch cond {
+				case "service_started":
+					if info.State.Running {
+						return nil
+					}
+					// Also accept a healthy container as "started" —
+					// some images are up + listening before the daemon
+					// flips Running, and State.Health implies Running.
+					if info.State.Health != nil && info.State.Health.Status == "healthy" {
+						return nil
+					}
+				case "service_healthy":
+					if info.State.Health == nil {
+						// Service has no healthcheck → compose spec
+						// says this is a user error; we relax to
+						// service_started so pre-healthcheck stacks
+						// don't regress when upgrading Swirl.
+						if info.State.Running {
+							return nil
+						}
+					} else if info.State.Health.Status == "healthy" {
+						return nil
+					}
+				case "service_completed_successfully":
+					if info.State.Status == "exited" {
+						if info.State.ExitCode == 0 {
+							return nil
+						}
+						return fmt.Errorf("service %q exited with code %d (condition service_completed_successfully expects 0)", dep.Service, info.State.ExitCode)
+					}
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s waiting for %s on dependency %q", timeout, cond, dep.Service)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
 }
 
 // collectIgnoredFieldWarnings scans the parsed compose config for fields

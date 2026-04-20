@@ -8,10 +8,11 @@ import (
 	"github.com/cuigh/swirl/misc"
 )
 
-// VaultSecretHandler exposes CRUD over the Vault secret catalog. These
-// endpoints are shared between swarm and standalone mode: swarm users can
-// still use them to manage external references, standalone users need them
-// to back their docker-compose stacks.
+// VaultSecretHandler exposes CRUD over the Vault secret catalog.
+// **Standalone mode only** — Swarm has native Docker Secrets which
+// supersede this feature for swarm stacks. Every handler is wrapped
+// with `standaloneOnly` so the endpoints return 404 in swarm mode,
+// matching the router guard that hides the menu item there.
 type VaultSecretHandler struct {
 	Search   web.HandlerFunc `path:"/search" auth:"vault_secret.view" desc:"search vault secret catalog"`
 	Find     web.HandlerFunc `path:"/find" auth:"vault_secret.view" desc:"find vault secret by id"`
@@ -24,18 +25,19 @@ type VaultSecretHandler struct {
 	Cleanup  web.HandlerFunc `path:"/cleanup" method:"post" auth:"vault_secret.cleanup" desc:"destroy KVv2 versions older than keepLast (permanent)"`
 }
 
-// NewVaultSecret creates an instance of VaultSecretHandler.
+// NewVaultSecret creates an instance of VaultSecretHandler. Every
+// handler is wrapped with `standaloneOnly` — swarm mode returns 404.
 func NewVaultSecret(b biz.VaultSecretBiz) *VaultSecretHandler {
 	return &VaultSecretHandler{
-		Search:   vaultSecretSearch(b),
-		Find:     vaultSecretFind(b),
-		List:     vaultSecretList(b),
-		Delete:   vaultSecretDelete(b),
-		Save:     vaultSecretSave(b),
-		Preview:  vaultSecretPreview(b),
-		Write:    vaultSecretWrite(b),
-		Statuses: vaultSecretStatuses(b),
-		Cleanup:  vaultSecretCleanup(b),
+		Search:   standaloneOnly(vaultSecretSearch(b)),
+		Find:     standaloneOnly(vaultSecretFind(b)),
+		List:     standaloneOnly(vaultSecretList(b)),
+		Delete:   standaloneOnly(vaultSecretDelete(b)),
+		Save:     standaloneOnly(vaultSecretSave(b)),
+		Preview:  standaloneOnly(vaultSecretPreview(b)),
+		Write:    standaloneOnly(vaultSecretWrite(b)),
+		Statuses: standaloneOnly(vaultSecretStatuses(b)),
+		Cleanup:  standaloneOnly(vaultSecretCleanup(b)),
 	}
 }
 
