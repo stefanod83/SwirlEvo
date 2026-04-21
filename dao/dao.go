@@ -102,6 +102,17 @@ type Interface interface {
 	ComposeStackUpdateWarnings(ctx context.Context, id string, warnings []string) error
 	ComposeStackDelete(ctx context.Context, id string) error
 
+	// ComposeStackVersion snapshots the pre-Save state of a stack so the
+	// operator can diff/restore prior revisions from the editor's History
+	// dropdown. List returns newest-first (revision desc); pass limit=0
+	// to fetch them all. Prune keeps only the newest `keep` versions for
+	// a given StackID.
+	ComposeStackVersionCreate(ctx context.Context, v *ComposeStackVersion) error
+	ComposeStackVersionList(ctx context.Context, stackID string, limit int) ([]*ComposeStackVersion, error)
+	ComposeStackVersionGet(ctx context.Context, id string) (*ComposeStackVersion, error)
+	ComposeStackVersionDeleteByStack(ctx context.Context, stackID string) error
+	ComposeStackVersionPrune(ctx context.Context, stackID string, keep int) error
+
 	BackupGet(ctx context.Context, id string) (*Backup, error)
 	BackupGetAll(ctx context.Context) ([]*Backup, error)
 	BackupGetBySource(ctx context.Context, source string) ([]*Backup, error)

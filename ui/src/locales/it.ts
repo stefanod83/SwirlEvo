@@ -839,6 +839,23 @@ export default {
         "env_file_subtitle": "Le variabili definite qui vengono sostituite nel compose YAML via ${VAR} al momento del deploy. Una coppia CHIAVE=VALORE per riga.",
         "env_file_placeholder": "# Una variabile per riga\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
+    "stack_addon_common": {
+        "coming_soon": "Questo wizard addon non è ancora disponibile. La tab verrà attivata in una prossima release."
+    },
+    "stack_addon_resources": {
+        "title": "Risorse"
+    },
+    "stack_version": {
+        "pick_hint": "Seleziona una versione precedente per confrontarla e ripristinarla",
+        "loading": "Caricamento storico…",
+        "empty": "Nessuna versione precedente",
+        "diff_title": "Confronto versioni",
+        "previous": "Versione precedente",
+        "current": "Versione corrente",
+        "restore": "Ripristina questa versione",
+        "restore_confirm": "Ripristinare questa versione? Il contenuto attuale verrà salvato come snapshot così l'azione resta reversibile.",
+        "restored": "Versione ripristinata"
+    },
     "events": {
         "type": {
             "self_deploy": "Auto-deploy"

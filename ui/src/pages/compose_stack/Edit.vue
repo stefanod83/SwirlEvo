@@ -27,32 +27,88 @@
           <n-input v-model:value="model.name" :disabled="isEdit" :placeholder="t('fields.name')" />
         </n-form-item-gi>
       </n-grid>
-      <n-form-item :label="t('fields.content')" path="content">
-        <x-code-mirror
-          v-model="model.content"
-          :style="{ width: '100%', height: '55vh' }"
+
+      <!--
+        Version history dropdown — visible only while editing an existing
+        stack. Reveals prior snapshots captured before each content-changing
+        save, with a side-by-side diff modal and a Restore action.
+      -->
+      <div v-if="isEdit" style="margin-bottom: 12px">
+        <StackVersionHistory
+          ref="historyRef"
+          :stack-id="model.id || ''"
+          :current-content="model.content"
+          @restored="reloadStackFromServer"
         />
-      </n-form-item>
+      </div>
+
+      <!--
+        Addon wizard tab layout. `display-directive="show"` keeps every pane
+        mounted so field state persists across tab switches. The YAML editor
+        lives in the first tab; the remaining tabs are filled in later phases.
+      -->
+      <n-tabs v-model:value="activeTab" type="line" size="large" display-directive="show">
+        <n-tab-pane name="compose" :tab="t('fields.content')">
+          <n-form-item :label="t('fields.content')" path="content" :show-label="false">
+            <x-code-mirror
+              v-model="model.content"
+              :style="{ width: '100%', height: '55vh' }"
+            />
+          </n-form-item>
+
+          <!-- Env file (.env-style variables) — substituted into the compose
+               YAML at deploy time via ${VAR} expansion. Persisted alongside
+               the stack. -->
+          <x-panel
+            :title="t('stack_secret.env_file_title')"
+            :subtitle="t('stack_secret.env_file_subtitle')"
+            divider="bottom"
+          >
+            <n-input
+              type="textarea"
+              v-model:value="model.envFile"
+              :placeholder="t('stack_secret.env_file_placeholder')"
+              :autosize="{ minRows: 3, maxRows: 15 }"
+              :input-props="{ style: 'font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;' }"
+            />
+          </x-panel>
+        </n-tab-pane>
+
+        <n-tab-pane name="traefik" tab="Traefik">
+          <n-alert type="info" :show-icon="true">
+            {{ t('stack_addon_common.coming_soon') || 'Traefik wizard coming soon.' }}
+          </n-alert>
+        </n-tab-pane>
+
+        <n-tab-pane name="sablier" tab="Sablier">
+          <n-alert type="info" :show-icon="true">
+            {{ t('stack_addon_common.coming_soon') || 'Sablier wizard coming soon.' }}
+          </n-alert>
+        </n-tab-pane>
+
+        <n-tab-pane name="watchtower" tab="Watchtower">
+          <n-alert type="info" :show-icon="true">
+            {{ t('stack_addon_common.coming_soon') || 'Watchtower wizard coming soon.' }}
+          </n-alert>
+        </n-tab-pane>
+
+        <n-tab-pane name="backup" tab="Backup">
+          <n-alert type="info" :show-icon="true">
+            {{ t('stack_addon_common.coming_soon') || 'Backup wizard coming soon.' }}
+          </n-alert>
+        </n-tab-pane>
+
+        <n-tab-pane name="resources" :tab="t('stack_addon_resources.title') || 'Resources'">
+          <n-alert type="info" :show-icon="true">
+            {{ t('stack_addon_common.coming_soon') || 'Resource limits wizard coming soon.' }}
+          </n-alert>
+        </n-tab-pane>
+      </n-tabs>
+
       <n-space>
         <n-checkbox v-model:checked="pullImages">{{ t('fields.pull_images') || 'Pull images' }}</n-checkbox>
       </n-space>
     </n-form>
-
-    <!-- Env file (.env-style variables) — substituted into the compose YAML
-         at deploy time via ${VAR} expansion. Persisted alongside the stack. -->
-    <x-panel
-      :title="t('stack_secret.env_file_title')"
-      :subtitle="t('stack_secret.env_file_subtitle')"
-      divider="bottom"
-    >
-      <n-input
-        type="textarea"
-        v-model:value="model.envFile"
-        :placeholder="t('stack_secret.env_file_placeholder')"
-        :autosize="{ minRows: 3, maxRows: 15 }"
-        :input-props="{ style: 'font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;' }"
-      />
-    </x-panel>
 
     <n-space>
       <n-button
@@ -458,11 +514,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import {
   NSpace, NButton, NForm, NFormItem, NFormItemGi, NGrid, NInput, NInputNumber,
   NSelect, NCheckbox, NCheckboxGroup, NIcon, NTable, NTag, NPopconfirm, NTime, NTooltip, NSpin,
-  NModal, NRadio, NRadioGroup, NAlert,
+  NModal, NRadio, NRadioGroup, NAlert, NTabs, NTabPane,
   useMessage,
 } from "naive-ui";
 import {
@@ -474,8 +530,10 @@ import {
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import XCodeMirror from "@/components/CodeMirror.vue";
+import StackVersionHistory from "@/components/stack-version/StackVersionHistory.vue";
 import composeStackApi from "@/api/compose_stack";
-import type { ComposeStack } from "@/api/compose_stack";
+import type { ComposeStack, HostAddons } from "@/api/compose_stack";
+import { parseServiceNames } from "@/utils/stack-addon-parse";
 import composeStackSecretApi from "@/api/compose-stack-secret";
 import type {
   ComposeStackSecretBinding,
@@ -525,6 +583,62 @@ const rules = {
   hostId: requiredRule(),
   name: requiredRule(),
   content: requiredRule(),
+}
+
+// activeTab drives the addon wizard tab layout. Preserved across tab switches
+// via display-directive="show" so editor state is never remounted.
+const activeTab = ref<'compose' | 'traefik' | 'sablier' | 'watchtower' | 'backup' | 'resources'>('compose')
+
+// hostAddons caches the /compose-stack/host-addons response for the currently
+// selected host. Re-fetched on hostId change. Null while loading or when the
+// host has no detected addons — downstream tabs render generic defaults in
+// that case.
+const hostAddons = ref<HostAddons | null>(null)
+const hostAddonsLoading = ref(false)
+
+// serviceNames is reactive: every YAML edit refreshes the list so the addon
+// tabs see the current service set without manual refresh.
+const serviceNames = computed(() => parseServiceNames(model.content))
+
+async function loadHostAddons(hostId: string) {
+  if (!hostId) {
+    hostAddons.value = null
+    return
+  }
+  hostAddonsLoading.value = true
+  try {
+    const r = await composeStackApi.hostAddons(hostId)
+    hostAddons.value = (r.data as HostAddons) || null
+  } catch {
+    // Best-effort: network failures / disconnected host must NOT block the
+    // editor. Tabs fall back to generic defaults when hostAddons is null.
+    hostAddons.value = null
+  } finally {
+    hostAddonsLoading.value = false
+  }
+}
+
+watch(() => model.hostId, (hid) => { loadHostAddons(hid) })
+
+// historyRef is used after a restore to refresh the list so the new snapshot
+// (reason=restore:revN) shows up immediately without a full page reload.
+const historyRef = ref<InstanceType<typeof StackVersionHistory> | null>(null)
+
+// reloadStackFromServer pulls the current content+envFile back from the API
+// after a Restore operation. The restore already persisted server-side; this
+// just syncs the editor state so the YAML editor shows the restored bytes.
+async function reloadStackFromServer() {
+  if (!model.id) return
+  try {
+    const s = await composeStackApi.find(model.id)
+    if (s.data) {
+      model.content = s.data.content || ''
+      model.envFile = s.data.envFile || ''
+    }
+  } catch {
+    // Best-effort: the restore itself succeeded (server returned 2xx) so
+    // we don't surface a second error if the follow-up fetch hiccups.
+  }
 }
 
 async function validate(): Promise<boolean> {
@@ -811,40 +925,14 @@ const wizardConfig = ref<{ field: string; service: string; envName: string; targ
 const wizardLoadingFields = ref(false)
 const wizardSaving = ref(false)
 
-// Extract service names from compose YAML via indent-aware parsing.
-// Detects the indent level of the first child under `services:` and
-// only captures names at THAT exact level — deeper keys like
-// `environment:`, `labels:`, `volumes:` are ignored.
-function parseServiceNames(content: string): string[] {
-  const lines = (content || '').split('\n')
-  let inServices = false
-  let serviceIndent = -1
-  const names: string[] = []
-  for (const line of lines) {
-    if (/^services:\s*(#.*)?$/.test(line)) { inServices = true; continue }
-    if (!inServices) continue
-    // A non-indented line after `services:` means we left the block.
-    if (line.length > 0 && /^\S/.test(line)) break
-    // Determine the indent of the first service name dynamically
-    // (works for both 2-space and 4-space conventions).
-    if (serviceIndent < 0) {
-      const m = line.match(/^(\s+)\S/)
-      if (m) serviceIndent = m[1].length
-      else continue
-    }
-    const leading = line.match(/^(\s*)/)
-    if (!leading || leading[1].length !== serviceIndent) continue
-    const m = line.match(/^\s+([a-zA-Z0-9_][a-zA-Z0-9_.-]*):\s*(#.*)?$/)
-    if (m) names.push(m[1])
-  }
-  return names
-}
+// Service names are derived via js-yaml in a shared util — the previous
+// line-scanning heuristic could not handle anchors, multiline strings, or
+// non-trivial indentation. See utils/stack-addon-parse.ts.
 
 const serviceOptions = computed(() => {
-  const names = parseServiceNames(model.content)
   return [
     { label: t('stack_secret.all_services'), value: '' },
-    ...names.map(n => ({ label: n, value: n })),
+    ...serviceNames.value.map(n => ({ label: n, value: n })),
   ]
 })
 

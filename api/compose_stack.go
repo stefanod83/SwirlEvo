@@ -20,10 +20,25 @@ type ComposeStackHandler struct {
 	Stop       web.HandlerFunc `path:"/stop" method:"post" auth:"stack.shutdown" desc:"stop compose stack"`
 	Remove     web.HandlerFunc `path:"/remove" method:"post" auth:"stack.delete" desc:"remove compose stack"`
 	Migrate    web.HandlerFunc `path:"/migrate" method:"post" auth:"stack.edit" desc:"migrate stack to another host"`
+	// HostAddons feeds the compose editor wizard tabs with runtime
+	// configuration of add-on containers (Traefik entrypoints, Sablier
+	// URL, Watchtower schedule, backup env) detected on the target host.
+	// Auth: stack.view — the payload is public container metadata, no
+	// secret values, so we reuse the same permission the editor itself
+	// needs to read the stack.
+	HostAddons web.HandlerFunc `path:"/host-addons" auth:"stack.view" desc:"discover add-on runtime config on a host"`
+
+	// Version history endpoints — list/get are read-only (stack.view),
+	// restore mutates the stack record (stack.edit). The list payload
+	// strips Content/EnvFile bodies; clients fetch them via VersionGet
+	// when rendering a diff.
+	Versions       web.HandlerFunc `path:"/versions" auth:"stack.view" desc:"list content-history versions of a stack"`
+	VersionGet     web.HandlerFunc `path:"/version-get" auth:"stack.view" desc:"fetch a single version with body"`
+	VersionRestore web.HandlerFunc `path:"/version-restore" method:"post" auth:"stack.edit" desc:"restore a prior version of a stack"`
 }
 
 // NewComposeStack is registered in api.init.
-func NewComposeStack(b biz.ComposeStackBiz) *ComposeStackHandler {
+func NewComposeStack(b biz.ComposeStackBiz, ad biz.AddonDiscoveryBiz) *ComposeStackHandler {
 	return &ComposeStackHandler{
 		Search:     composeStackSearch(b),
 		Find:       composeStackFind(b),
@@ -34,7 +49,11 @@ func NewComposeStack(b biz.ComposeStackBiz) *ComposeStackHandler {
 		Start:      composeStackStart(b),
 		Stop:       composeStackStop(b),
 		Remove:     composeStackRemove(b),
-		Migrate:    composeStackMigrate(b),
+		Migrate:        composeStackMigrate(b),
+		HostAddons:     composeStackHostAddons(ad),
+		Versions:       composeStackVersions(b),
+		VersionGet:     composeStackVersionGet(b),
+		VersionRestore: composeStackVersionRestore(b),
 	}
 }
 
@@ -211,6 +230,61 @@ func composeStackMigrate(b biz.ComposeStackBiz) web.HandlerFunc {
 		ctx, cancel := misc.Context(5 * defaultTimeout)
 		defer cancel()
 		return ajax(c, b.Migrate(ctx, args.ID, args.TargetHostID, args.Redeploy, c.User()))
+	}
+}
+
+func composeStackVersions(b biz.ComposeStackBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		stackID := c.Query("stackId")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		items, err := b.ListVersions(ctx, stackID)
+		if err != nil {
+			return err
+		}
+		return success(c, data.Map{"items": items})
+	}
+}
+
+func composeStackVersionGet(b biz.ComposeStackBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		versionID := c.Query("id")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		v, err := b.GetVersion(ctx, versionID)
+		if err != nil {
+			return err
+		}
+		return success(c, v)
+	}
+}
+
+func composeStackVersionRestore(b biz.ComposeStackBiz) web.HandlerFunc {
+	type Args struct {
+		StackID   string `json:"stackId"`
+		VersionID string `json:"versionId"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.RestoreVersion(ctx, args.StackID, args.VersionID, c.User()))
+	}
+}
+
+func composeStackHostAddons(ad biz.AddonDiscoveryBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		hostID := c.Query("hostId")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		addons, err := ad.Discover(ctx, hostID)
+		if err != nil {
+			return err
+		}
+		return success(c, addons)
 	}
 }
 

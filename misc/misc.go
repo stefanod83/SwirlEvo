@@ -93,6 +93,12 @@ const (
 	// with auth=tcp). `info` describes the mismatch and the expected
 	// AuthMethod for the given scheme.
 	ErrHostEndpointScheme = 1025
+	// ErrCrossModeMigrate is raised when a stack migration is attempted
+	// between hosts whose Type differs (standalone ↔ swarm_via_swirl).
+	// Label placement (labels vs deploy.labels) and resource shape
+	// (cpus/mem_limit vs deploy.resources) are mode-specific, so moving
+	// a stack across modes would silently break wizard-managed labels.
+	ErrCrossModeMigrate = 1026
 )
 
 func Error(code int32, err error) error {

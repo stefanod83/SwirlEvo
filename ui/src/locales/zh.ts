@@ -833,6 +833,23 @@ export default {
         "env_file_subtitle": "此处定义的变量在部署时通过 ${VAR} 替换到 compose YAML 中。每行一个 KEY=VALUE。",
         "env_file_placeholder": "# 每行一个变量\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
+    "stack_addon_common": {
+        "coming_soon": "此插件向导尚未就绪，后续版本会启用该标签页。"
+    },
+    "stack_addon_resources": {
+        "title": "资源限制"
+    },
+    "stack_version": {
+        "pick_hint": "选择历史版本以进行对比或恢复",
+        "loading": "正在加载历史…",
+        "empty": "没有历史版本",
+        "diff_title": "版本对比",
+        "previous": "历史版本",
+        "current": "当前版本",
+        "restore": "恢复此版本",
+        "restore_confirm": "确认恢复此版本？当前内容会先被快照保存，保证操作可逆。",
+        "restored": "版本已恢复"
+    },
     "events": {
         "type": {
             "self_deploy": "自部署"

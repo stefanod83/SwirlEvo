@@ -839,6 +839,23 @@ export default {
         "env_file_subtitle": "Variables defined here are substituted into the compose YAML via ${VAR} at deploy time. One KEY=VALUE per line.",
         "env_file_placeholder": "# One variable per line\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
+    "stack_addon_common": {
+        "coming_soon": "This addon wizard is not yet available. The tab will be wired up in an upcoming release."
+    },
+    "stack_addon_resources": {
+        "title": "Resources"
+    },
+    "stack_version": {
+        "pick_hint": "Select a previous version to diff and restore",
+        "loading": "Loading history…",
+        "empty": "No previous versions",
+        "diff_title": "Version diff",
+        "previous": "Previous version",
+        "current": "Current",
+        "restore": "Restore this version",
+        "restore_confirm": "Restore this version? The current content will be snapshotted first so the action stays reversible.",
+        "restored": "Version restored"
+    },
     "events": {
         "type": {
             "self_deploy": "Self-deploy"

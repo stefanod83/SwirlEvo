@@ -57,6 +57,19 @@ type ComposeStackBiz interface {
 	// the source host — the operator is responsible for any data
 	// transfer.
 	Migrate(ctx context.Context, id, targetHostID string, redeploy bool, user web.User) error
+
+	// ListVersions returns the content-history snapshots for a stack,
+	// newest-first. Bodies are omitted to keep the list cheap; fetch
+	// them with GetVersion.
+	ListVersions(ctx context.Context, stackID string) ([]*dao.ComposeStackVersion, error)
+	// GetVersion returns a single snapshot with its full Content +
+	// EnvFile so the UI can render a diff against the current stack.
+	GetVersion(ctx context.Context, versionID string) (*dao.ComposeStackVersion, error)
+	// RestoreVersion replaces the stack's Content + EnvFile with those
+	// of a prior snapshot. The current state is captured as a new
+	// snapshot first (reason="restore:rev<N>") so every restore is
+	// reversible.
+	RestoreVersion(ctx context.Context, stackID, versionID string, user web.User) error
 }
 
 // VolumesContainDataError wraps a list of project volumes that contain data,
@@ -243,6 +256,11 @@ func (b *composeStackBiz) Save(ctx context.Context, stack *dao.ComposeStack, use
 		}
 		b.eb.CreateStack(EventActionCreate, stack.HostID, stack.Name, user)
 	} else {
+		// Snapshot the pre-save state so the operator can diff/restore
+		// from the editor's History dropdown. Best-effort: failures are
+		// silently dropped — losing the history entry is strictly better
+		// than refusing to save.
+		b.snapshotIfChanged(ctx, stack, "save", user)
 		if err := b.di.ComposeStackUpdate(ctx, stack); err != nil {
 			return "", err
 		}
@@ -473,6 +491,9 @@ func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes, 
 	}
 	// Drop persisted bindings — the values live in Vault and are unaffected.
 	_ = b.di.ComposeStackSecretBindingDeleteByStack(ctx, id)
+	// Drop snapshot history — keeping it after the stack itself is gone
+	// would accumulate orphans nobody can restore.
+	_ = b.di.ComposeStackVersionDeleteByStack(ctx, id)
 	if err := b.di.ComposeStackDelete(ctx, id); err != nil {
 		return err
 	}
@@ -810,6 +831,19 @@ func (b *composeStackBiz) Migrate(ctx context.Context, id, targetHostID string, 
 	}
 	if targetHost == nil {
 		return errors.New("target host not found")
+	}
+
+	// 3b. Cross-mode migration guard. Hosts of different Type (e.g.
+	//     "standalone" vs "swarm_via_swirl") expose structurally
+	//     different label placement (top-level labels vs deploy.labels)
+	//     and resource shapes (cpus/mem_limit vs deploy.resources).
+	//     Wizard-managed labels injected for one mode would silently
+	//     break on the other — refuse up front so operators notice at
+	//     the action site instead of post-deploy.
+	sourceHost, hErr := b.hb.Find(ctx, stack.HostID)
+	if hErr == nil && sourceHost != nil && sourceHost.Type != targetHost.Type {
+		return misc.Error(misc.ErrCrossModeMigrate,
+			fmt.Errorf("cannot migrate across host modes (%q → %q)", sourceHost.Type, targetHost.Type))
 	}
 
 	// 4. Name-conflict check — cover both managed (our DB) and external

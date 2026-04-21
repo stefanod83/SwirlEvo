@@ -357,6 +357,27 @@ type ComposeStackSearchArgs struct {
 	PageSize  int    `bind:"pageSize"`
 }
 
+// ComposeStackVersion is a point-in-time snapshot of a compose stack's
+// Content + EnvFile captured before any mutating Save. Revisions are
+// monotonic per StackID (not per install) so the UI can show "rev 7"
+// regardless of DB cardinality. Retention is enforced by the biz layer
+// (Prune), not here — the DAO stores whatever the biz writes.
+type ComposeStackVersion struct {
+	ID        string   `json:"id" bson:"_id"`
+	StackID   string   `json:"stackId" bson:"stack_id"`
+	Revision  int      `json:"revision" bson:"revision"`
+	Content   string   `json:"content,omitempty" bson:"content,omitempty"`
+	EnvFile   string   `json:"envFile,omitempty" bson:"env_file,omitempty"`
+	// Reason is a short tag describing why the snapshot was taken:
+	//   "save"          — plain save / deploy that changed Content
+	//   "addon-inject"  — save triggered the addon wizard label injection
+	//   "restore:rev<N>" — snapshot taken before restoring revision N
+	// The UI surfaces it in the History dropdown.
+	Reason    string   `json:"reason" bson:"reason"`
+	CreatedAt Time     `json:"createdAt" bson:"created_at"`
+	CreatedBy Operator `json:"createdBy" bson:"created_by"`
+}
+
 type Session struct {
 	ID        string    `json:"id" bson:"_id"` // token
 	UserID    string    `json:"userId" bson:"user_id"`

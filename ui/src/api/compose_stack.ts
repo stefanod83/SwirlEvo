@@ -87,6 +87,71 @@ export interface RemoveResponse {
     volumes?: string[];
 }
 
+// Addon discovery types — consumed by the stack editor wizard tabs.
+// Fields are optional because any add-on may be missing from the host.
+// DiscoveryValue carries a provenance badge ("docker" from live inspect,
+// "file" from an uploaded config file stored in Host.AddonConfigExtract).
+export interface DiscoveryValue {
+    name: string;
+    origin: string;
+}
+
+export interface TraefikAddon {
+    containerName?: string;
+    image?: string;
+    version?: string;
+    entryPoints: DiscoveryValue[];
+    certResolvers: DiscoveryValue[];
+    middlewares: DiscoveryValue[];
+    networks: DiscoveryValue[];
+    dockerNetwork?: string;
+    sablierPlugin?: boolean;
+}
+
+export interface SablierAddon {
+    containerName?: string;
+    image?: string;
+    url?: string;
+    networks?: string[];
+}
+
+export interface WatchtowerAddon {
+    containerName?: string;
+    image?: string;
+    labelEnable?: boolean;
+    includeStopped?: boolean;
+    pollInterval?: number;
+}
+
+export interface BackupAddon {
+    containerName?: string;
+    image?: string;
+    schedule?: string;
+    retentionEnv?: string;
+    targetDir?: string;
+}
+
+export interface HostAddons {
+    traefik?: TraefikAddon;
+    sablier?: SablierAddon;
+    watchtower?: WatchtowerAddon;
+    backup?: BackupAddon;
+}
+
+// ComposeStackVersion is a point-in-time snapshot of the stack content.
+// List responses omit Content/EnvFile to keep the payload small; fetch
+// a single version with versionGet() when rendering a diff.
+export interface ComposeStackVersion {
+    id: string;
+    stackId: string;
+    revision: number;
+    content?: string;
+    envFile?: string;
+    reason: string;
+    createdAt?: string;
+    createdBy?: { id?: string; name?: string };
+}
+
 export class ComposeStackApi {
     find(id: string) {
         return ajax.get<ComposeStack>('/compose-stack/find', { id })
@@ -126,6 +191,22 @@ export class ComposeStackApi {
 
     migrate(id: string, targetHostId: string, redeploy: boolean) {
         return ajax.post<Result<Object>>('/compose-stack/migrate', { id, targetHostId, redeploy })
+    }
+
+    hostAddons(hostId: string) {
+        return ajax.get<HostAddons>('/compose-stack/host-addons', { hostId })
+    }
+
+    versions(stackId: string) {
+        return ajax.get<{ items: ComposeStackVersion[] }>('/compose-stack/versions', { stackId })
+    }
+
+    versionGet(id: string) {
+        return ajax.get<ComposeStackVersion>('/compose-stack/version-get', { id })
+    }
+
+    versionRestore(stackId: string, versionId: string) {
+        return ajax.post<Result<Object>>('/compose-stack/version-restore', { stackId, versionId })
     }
 }
 
