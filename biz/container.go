@@ -7,7 +7,9 @@ import (
 
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
+	"github.com/cuigh/swirl/dao"
 	"github.com/cuigh/swirl/docker"
+	"github.com/cuigh/swirl/misc"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -32,13 +34,36 @@ type ContainerBiz interface {
 	Stats(ctx context.Context, node, id string) ([]byte, error)
 }
 
-func NewContainer(d *docker.Docker, eb EventBiz) ContainerBiz {
-	return &containerBiz{d: d, eb: eb}
+// NewContainer takes the host biz so exported methods can pre-resolve the
+// target host and surface coded errors instead of bare 500s.
+func NewContainer(d *docker.Docker, hb HostBiz, eb EventBiz) ContainerBiz {
+	return &containerBiz{d: d, hb: hb, eb: eb}
 }
 
 type containerBiz struct {
 	d  *docker.Docker
+	hb HostBiz
 	eb EventBiz
+}
+
+// preflight resolves the target host in standalone mode so follow-up SDK
+// calls have a coded host-not-found / host-unreachable error to return.
+// See networkBiz.preflight for the full rationale.
+func (b *containerBiz) preflight(ctx context.Context, node string) (*dao.Host, error) {
+	if !misc.IsStandalone() || node == "" || node == "-" {
+		return nil, nil
+	}
+	_, host, err := resolveHostClient(ctx, b.d, b.hb, node)
+	if err != nil {
+		return nil, err
+	}
+	return host, nil
+}
+
+// wrapContainerOpError fixes the error-code pair for the container
+// resource and forwards to the shared wrapOpError.
+func wrapContainerOpError(op, name string, host *dao.Host, err error) error {
+	return wrapOpError(op, "container", name, host, err, misc.ErrContainerNotFound, misc.ErrContainerOperationFailed)
 }
 
 func (b *containerBiz) Find(ctx context.Context, node, id string) (c *Container, raw string, err error) {
@@ -47,12 +72,22 @@ func (b *containerBiz) Find(ctx context.Context, node, id string) (c *Container,
 		r  []byte
 	)
 
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return nil, "", err
+	}
+
 	cj, r, err = b.d.ContainerInspect(ctx, node, id)
 	if err != nil {
+		// Preserve the historical nil-on-NotFound contract: the API
+		// layer emits a 404 when container == nil and the existing
+		// frontends rely on it. Connectivity / other failures are
+		// still surfaced as coded errors.
 		if docker.IsErrNotFound(err) {
 			err = nil
+			return
 		}
-		return
+		return nil, "", wrapContainerOpError("inspect", id, host, err)
 	}
 
 	if raw, err = indentJSON(r); err == nil {
@@ -62,9 +97,13 @@ func (b *containerBiz) Find(ctx context.Context, node, id string) (c *Container,
 }
 
 func (b *containerBiz) Search(ctx context.Context, node, name, status, project string, pageIndex, pageSize int) (containers []*Container, total int, err error) {
-	list, total, err := b.d.ContainerList(ctx, node, name, status, project, pageIndex, pageSize)
+	host, err := b.preflight(ctx, node)
 	if err != nil {
 		return nil, 0, err
+	}
+	list, total, err := b.d.ContainerList(ctx, node, name, status, project, pageIndex, pageSize)
+	if err != nil {
+		return nil, 0, wrapContainerOpError("list", "", host, err)
 	}
 
 	containers = make([]*Container, len(list))
@@ -75,100 +114,184 @@ func (b *containerBiz) Search(ctx context.Context, node, name, status, project s
 }
 
 func (b *containerBiz) Delete(ctx context.Context, node, id, name string, removeAnonymousVolumes bool, user web.User) (err error) {
-	err = b.d.ContainerRemove(ctx, node, id, removeAnonymousVolumes)
-	if err == nil {
-		b.eb.CreateContainer(EventActionDelete, node, id, name, user)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return err
 	}
-	return
+	err = b.d.ContainerRemove(ctx, node, id, removeAnonymousVolumes)
+	if err != nil {
+		return wrapContainerOpError("delete", containerLabel(id, name), host, err)
+	}
+	b.eb.CreateContainer(EventActionDelete, node, id, name, user)
+	return nil
 }
 
 func (b *containerBiz) ExecCreate(ctx context.Context, node, id, cmd string) (resp container.ExecCreateResponse, err error) {
-	return b.d.ContainerExecCreate(ctx, node, id, cmd)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return resp, err
+	}
+	resp, err = b.d.ContainerExecCreate(ctx, node, id, cmd)
+	if err != nil {
+		return resp, wrapContainerOpError("exec-create", id, host, err)
+	}
+	return resp, nil
 }
 
 func (b *containerBiz) ExecAttach(ctx context.Context, node, id string) (resp types.HijackedResponse, err error) {
-	return b.d.ContainerExecAttach(ctx, node, id)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return resp, err
+	}
+	resp, err = b.d.ContainerExecAttach(ctx, node, id)
+	if err != nil {
+		return resp, wrapContainerOpError("exec-attach", id, host, err)
+	}
+	return resp, nil
 }
 
 func (b *containerBiz) ExecStart(ctx context.Context, node, id string) error {
-	return b.d.ContainerExecStart(ctx, node, id)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return err
+	}
+	if err := b.d.ContainerExecStart(ctx, node, id); err != nil {
+		return wrapContainerOpError("exec-start", id, host, err)
+	}
+	return nil
 }
 
 func (b *containerBiz) FetchLogs(ctx context.Context, node, id string, lines int, timestamps bool) (string, string, error) {
-	stdout, stderr, err := b.d.ContainerLogs(ctx, node, id, lines, timestamps)
+	host, err := b.preflight(ctx, node)
 	if err != nil {
 		return "", "", err
+	}
+	stdout, stderr, err := b.d.ContainerLogs(ctx, node, id, lines, timestamps)
+	if err != nil {
+		return "", "", wrapContainerOpError("logs", id, host, err)
 	}
 	return stdout.String(), stderr.String(), nil
 }
 
 func (b *containerBiz) Prune(ctx context.Context, node string, user web.User) (count int, size uint64, err error) {
-	var report container.PruneReport
-	if report, err = b.d.ContainerPrune(ctx, node); err == nil {
-		count, size = len(report.ContainersDeleted), report.SpaceReclaimed
-		b.eb.CreateContainer(EventActionPrune, node, "", "", user)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return 0, 0, err
 	}
-	return
+	var report container.PruneReport
+	if report, err = b.d.ContainerPrune(ctx, node); err != nil {
+		return 0, 0, wrapContainerOpError("prune", "", host, err)
+	}
+	count, size = len(report.ContainersDeleted), report.SpaceReclaimed
+	b.eb.CreateContainer(EventActionPrune, node, "", "", user)
+	return count, size, nil
 }
 
 func (b *containerBiz) Start(ctx context.Context, node, id, name string, user web.User) error {
-	if err := b.d.ContainerStart(ctx, node, id); err != nil {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
 		return err
+	}
+	if err := b.d.ContainerStart(ctx, node, id); err != nil {
+		return wrapContainerOpError("start", containerLabel(id, name), host, err)
 	}
 	b.eb.CreateContainer(EventActionStart, node, id, name, user)
 	return nil
 }
 
 func (b *containerBiz) Stop(ctx context.Context, node, id, name string, timeoutSecs int, user web.User) error {
-	if err := b.d.ContainerStop(ctx, node, id, timeoutSecs); err != nil {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
 		return err
+	}
+	if err := b.d.ContainerStop(ctx, node, id, timeoutSecs); err != nil {
+		return wrapContainerOpError("stop", containerLabel(id, name), host, err)
 	}
 	b.eb.CreateContainer(EventActionStop, node, id, name, user)
 	return nil
 }
 
 func (b *containerBiz) Restart(ctx context.Context, node, id, name string, timeoutSecs int, user web.User) error {
-	if err := b.d.ContainerRestart(ctx, node, id, timeoutSecs); err != nil {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
 		return err
+	}
+	if err := b.d.ContainerRestart(ctx, node, id, timeoutSecs); err != nil {
+		return wrapContainerOpError("restart", containerLabel(id, name), host, err)
 	}
 	b.eb.CreateContainer(EventActionRestart, node, id, name, user)
 	return nil
 }
 
 func (b *containerBiz) Kill(ctx context.Context, node, id, name, signal string, user web.User) error {
-	if err := b.d.ContainerKill(ctx, node, id, signal); err != nil {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
 		return err
+	}
+	if err := b.d.ContainerKill(ctx, node, id, signal); err != nil {
+		return wrapContainerOpError("kill", containerLabel(id, name), host, err)
 	}
 	b.eb.CreateContainer(EventActionKill, node, id, name, user)
 	return nil
 }
 
 func (b *containerBiz) Pause(ctx context.Context, node, id, name string, user web.User) error {
-	if err := b.d.ContainerPause(ctx, node, id); err != nil {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
 		return err
+	}
+	if err := b.d.ContainerPause(ctx, node, id); err != nil {
+		return wrapContainerOpError("pause", containerLabel(id, name), host, err)
 	}
 	b.eb.CreateContainer(EventActionPause, node, id, name, user)
 	return nil
 }
 
 func (b *containerBiz) Unpause(ctx context.Context, node, id, name string, user web.User) error {
-	if err := b.d.ContainerUnpause(ctx, node, id); err != nil {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
 		return err
+	}
+	if err := b.d.ContainerUnpause(ctx, node, id); err != nil {
+		return wrapContainerOpError("unpause", containerLabel(id, name), host, err)
 	}
 	b.eb.CreateContainer(EventActionUnpause, node, id, name, user)
 	return nil
 }
 
 func (b *containerBiz) Rename(ctx context.Context, node, id, name, newName string, user web.User) error {
-	if err := b.d.ContainerRename(ctx, node, id, newName); err != nil {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
 		return err
+	}
+	if err := b.d.ContainerRename(ctx, node, id, newName); err != nil {
+		return wrapContainerOpError("rename", containerLabel(id, name), host, err)
 	}
 	b.eb.CreateContainer(EventActionRename, node, id, name, user)
 	return nil
 }
 
 func (b *containerBiz) Stats(ctx context.Context, node, id string) ([]byte, error) {
-	return b.d.ContainerStats(ctx, node, id)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := b.d.ContainerStats(ctx, node, id)
+	if err != nil {
+		return nil, wrapContainerOpError("stats", id, host, err)
+	}
+	return raw, nil
+}
+
+// containerLabel prefers the human-readable name over the bare id when
+// both are available. Used to fill the {name} slot in wrapOpError so the
+// operator sees "container \"webapp\" stop failed on host ..." instead
+// of a 64-char hash.
+func containerLabel(id, name string) string {
+	if name != "" {
+		return name
+	}
+	return id
 }
 
 type Container struct {

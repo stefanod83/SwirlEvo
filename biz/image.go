@@ -7,7 +7,9 @@ import (
 
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
+	"github.com/cuigh/swirl/dao"
 	"github.com/cuigh/swirl/docker"
+	"github.com/cuigh/swirl/misc"
 	"github.com/docker/docker/api/types/image"
 )
 
@@ -24,14 +26,33 @@ type ImageBiz interface {
 	Push(ctx context.Context, node, ref, registryID string, user web.User) error
 }
 
-func NewImage(d *docker.Docker, eb EventBiz, rb RegistryBiz) ImageBiz {
-	return &imageBiz{d: d, eb: eb, rb: rb}
+// NewImage takes the host biz so exported methods can pre-resolve the
+// target host and surface coded errors instead of bare 500s.
+func NewImage(d *docker.Docker, hb HostBiz, eb EventBiz, rb RegistryBiz) ImageBiz {
+	return &imageBiz{d: d, hb: hb, eb: eb, rb: rb}
 }
 
 type imageBiz struct {
 	d  *docker.Docker
+	hb HostBiz
 	eb EventBiz
 	rb RegistryBiz
+}
+
+// preflight — see networkBiz.preflight.
+func (b *imageBiz) preflight(ctx context.Context, node string) (*dao.Host, error) {
+	if !misc.IsStandalone() || node == "" || node == "-" {
+		return nil, nil
+	}
+	_, host, err := resolveHostClient(ctx, b.d, b.hb, node)
+	if err != nil {
+		return nil, err
+	}
+	return host, nil
+}
+
+func wrapImageOpError(op, name string, host *dao.Host, err error) error {
+	return wrapOpError(op, "image", name, host, err, misc.ErrImageNotFound, misc.ErrImageOperationFailed)
 }
 
 func (b *imageBiz) Find(ctx context.Context, node, id string) (img *Image, raw string, err error) {
@@ -41,24 +62,34 @@ func (b *imageBiz) Find(ctx context.Context, node, id string) (img *Image, raw s
 		histories []image.HistoryResponseItem
 	)
 
-	if i, r, err = b.d.ImageInspect(ctx, node, id); err == nil {
-		raw, err = indentJSON(r)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return nil, "", err
 	}
 
-	if err == nil {
-		histories, err = b.d.ImageHistory(ctx, node, id)
+	if i, r, err = b.d.ImageInspect(ctx, node, id); err != nil {
+		return nil, "", wrapImageOpError("inspect", id, host, err)
+	}
+	if raw, err = indentJSON(r); err != nil {
+		return nil, "", err
 	}
 
-	if err == nil {
-		img = newImageDetail(&i, histories)
+	if histories, err = b.d.ImageHistory(ctx, node, id); err != nil {
+		return nil, raw, wrapImageOpError("history", id, host, err)
 	}
+
+	img = newImageDetail(&i, histories)
 	return
 }
 
 func (b *imageBiz) Search(ctx context.Context, node, name string, pageIndex, pageSize int) (images []*Image, total int, err error) {
-	list, total, err := b.d.ImageList(ctx, node, name, pageIndex, pageSize)
+	host, err := b.preflight(ctx, node)
 	if err != nil {
 		return nil, 0, err
+	}
+	list, total, err := b.d.ImageList(ctx, node, name, pageIndex, pageSize)
+	if err != nil {
+		return nil, 0, wrapImageOpError("list", "", host, err)
 	}
 
 	// Docker's image.Summary.Containers is often -1 (expensive to compute on the
@@ -81,33 +112,53 @@ func (b *imageBiz) Search(ctx context.Context, node, name string, pageIndex, pag
 }
 
 func (b *imageBiz) Delete(ctx context.Context, node, id string, force bool, user web.User) (err error) {
-	err = b.d.ImageRemove(ctx, node, id, force)
-	if err == nil {
-		b.eb.CreateImage(EventActionDelete, node, id, user)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return err
 	}
-	return
+	err = b.d.ImageRemove(ctx, node, id, force)
+	if err != nil {
+		return wrapImageOpError("delete", id, host, err)
+	}
+	b.eb.CreateImage(EventActionDelete, node, id, user)
+	return nil
 }
 
 func (b *imageBiz) Prune(ctx context.Context, node string, user web.User) (count int, size uint64, err error) {
-	var report image.PruneReport
-	if report, err = b.d.ImagePrune(ctx, node); err == nil {
-		count, size = len(report.ImagesDeleted), report.SpaceReclaimed
-		b.eb.CreateImage(EventActionPrune, node, "", user)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return 0, 0, err
 	}
-	return
+	var report image.PruneReport
+	if report, err = b.d.ImagePrune(ctx, node); err != nil {
+		return 0, 0, wrapImageOpError("prune", "", host, err)
+	}
+	count, size = len(report.ImagesDeleted), report.SpaceReclaimed
+	b.eb.CreateImage(EventActionPrune, node, "", user)
+	return count, size, nil
 }
 
 func (b *imageBiz) Tag(ctx context.Context, node, source, target string, user web.User) error {
-	if err := b.d.ImageTag(ctx, node, source, target); err != nil {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
 		return err
+	}
+	if err := b.d.ImageTag(ctx, node, source, target); err != nil {
+		return wrapImageOpError("tag", source+" -> "+target, host, err)
 	}
 	b.eb.CreateImage(EventActionUpdate, node, source+" -> "+target, user)
 	return nil
 }
 
 func (b *imageBiz) Push(ctx context.Context, node, ref, registryID string, user web.User) error {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return err
+	}
 	auth := ""
 	if registryID != "" {
+		// Registry resolution is biz-layer logic, not a daemon op —
+		// errors here stay un-wrapped (validation-style) per the brief.
 		r, err := b.rb.Find(ctx, registryID)
 		if err != nil {
 			return err
@@ -125,7 +176,7 @@ func (b *imageBiz) Push(ctx context.Context, node, ref, registryID string, user 
 		auth = a
 	}
 	if err := b.d.ImagePush(ctx, node, ref, auth); err != nil {
-		return err
+		return wrapImageOpError("push", ref, host, err)
 	}
 	b.eb.CreateImage(EventActionUpdate, node, "push:"+ref, user)
 	return nil

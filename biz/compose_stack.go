@@ -259,18 +259,9 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 		return "", err
 	}
 
-	host, err := b.hb.Find(ctx, stack.HostID)
+	cli, _, err := resolveHostClient(ctx, b.d, b.hb, stack.HostID)
 	if err != nil {
 		return "", err
-	}
-	if host == nil {
-		return "", misc.Error(misc.ErrHostNotFound,
-			fmt.Errorf("stack %q references host %q but that host is no longer registered", stack.Name, stack.HostID))
-	}
-	cli, err := b.d.Hosts.GetClient(host.ID, host.Endpoint)
-	if err != nil {
-		return "", misc.Error(misc.ErrHostUnreachable,
-			fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, err))
 	}
 
 	// 2. Self-protection: if the compose file would deploy a container
@@ -505,72 +496,18 @@ func (b *composeStackBiz) loadStack(ctx context.Context, id string) (*dao.Compos
 	return stack, nil
 }
 
-// clientForStack returns (docker client, resolved host, error). The host
-// is returned alongside the client so callers can reference ID +
-// Endpoint when wrapping engine-level errors via wrapStackOpError.
+// clientForStack returns (docker client, resolved host, error) for a
+// persisted stack. Thin wrapper over the shared resolveHostClient helper
+// kept for source-level readability at the call sites.
 func (b *composeStackBiz) clientForStack(ctx context.Context, stack *dao.ComposeStack) (*dockerclient.Client, *dao.Host, error) {
-	host, err := b.hb.Find(ctx, stack.HostID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if host == nil {
-		return nil, nil, misc.Error(misc.ErrHostNotFound,
-			fmt.Errorf("stack %q references host %q but that host is no longer registered", stack.Name, stack.HostID))
-	}
-	cli, cErr := b.d.Hosts.GetClient(host.ID, host.Endpoint)
-	if cErr != nil {
-		return nil, host, misc.Error(misc.ErrHostUnreachable,
-			fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, cErr))
-	}
-	return cli, host, nil
+	return resolveHostClient(ctx, b.d, b.hb, stack.HostID)
 }
 
-// wrapStackOpError turns a raw daemon error bubbling up from the
-// standalone compose engine into a misc.Coded error the API layer can
-// emit as a structured 200/info response (avoiding the bare 500 the UI
-// has no handle on). Includes op name, stack name, and host reference
-// so the operator sees something actionable.
+// wrapStackOpError — kept as a thin wrapper so the existing call sites
+// stay ergonomic. Forwards to the shared wrapOpError with the stack
+// error-code pair.
 func wrapStackOpError(op, stackName string, host *dao.Host, err error) error {
-	if err == nil {
-		return nil
-	}
-	hostRef := "unknown host"
-	if host != nil {
-		hostRef = fmt.Sprintf("host %q (%s)", host.ID, host.Endpoint)
-	}
-	// Connectivity-class errors (dial unix ... connection refused,
-	// no such host, TLS handshake, etc.) are remapped to
-	// ErrHostUnreachable so the UI can render a dedicated message.
-	if isConnectivityError(err) {
-		return misc.Error(misc.ErrHostUnreachable,
-			fmt.Errorf("cannot reach %s while trying to %s stack %q: %v", hostRef, op, stackName, err))
-	}
-	return misc.Error(misc.ErrStackOperationFailed,
-		fmt.Errorf("stack %q: %s failed on %s: %v", stackName, op, hostRef, err))
-}
-
-// isConnectivityError is a best-effort classifier of Docker SDK errors
-// that indicate the daemon itself is unreachable rather than rejecting
-// a specific operation. Kept as a substring match on the stringified
-// error to stay resilient across SDK versions (errdefs doesn't cover
-// every transport-layer failure).
-func isConnectivityError(err error) bool {
-	msg := strings.ToLower(err.Error())
-	for _, needle := range []string{
-		"connection refused",
-		"no such host",
-		"no such file or directory",
-		"network is unreachable",
-		"i/o timeout",
-		"connect: timed out",
-		"tls handshake",
-		"cannot connect to the docker daemon",
-	} {
-		if strings.Contains(msg, needle) {
-			return true
-		}
-	}
-	return false
+	return wrapOpError(op, "stack", stackName, host, err, misc.ErrStackNotFound, misc.ErrStackOperationFailed)
 }
 
 func split2(s, sep string) []string {
@@ -617,22 +554,13 @@ func toLower(b byte) byte {
 // merging persisted metadata (if any) with live discovery and optional YAML
 // reconstruction for external stacks.
 func (b *composeStackBiz) FindDetail(ctx context.Context, hostID, name string) (*ComposeStackDetail, error) {
-	host, err := b.hb.Find(ctx, hostID)
+	cli, host, err := resolveHostClient(ctx, b.d, b.hb, hostID)
 	if err != nil {
 		return nil, err
-	}
-	if host == nil {
-		return nil, misc.Error(misc.ErrHostNotFound,
-			fmt.Errorf("host %q is not registered", hostID))
 	}
 	if host.Status != "connected" {
 		return nil, misc.Error(misc.ErrHostUnreachable,
 			fmt.Errorf("host %q (%s) is not connected: %s", host.ID, host.Endpoint, host.Error))
-	}
-	cli, err := b.d.Hosts.GetClient(host.ID, host.Endpoint)
-	if err != nil {
-		return nil, misc.Error(misc.ErrHostUnreachable,
-			fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, err))
 	}
 	engine := compose.NewStandaloneEngine(cli)
 
@@ -719,18 +647,9 @@ func (b *composeStackBiz) Import(ctx context.Context, stack *dao.ComposeStack, r
 	}
 
 	if stack.Content == "" {
-		host, err := b.hb.Find(ctx, stack.HostID)
+		cli, host, err := resolveHostClient(ctx, b.d, b.hb, stack.HostID)
 		if err != nil {
 			return "", err
-		}
-		if host == nil {
-			return "", misc.Error(misc.ErrHostNotFound,
-				fmt.Errorf("host %q is not registered", stack.HostID))
-		}
-		cli, err := b.d.Hosts.GetClient(host.ID, host.Endpoint)
-		if err != nil {
-			return "", misc.Error(misc.ErrHostUnreachable,
-				fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, err))
 		}
 		engine := compose.NewStandaloneEngine(cli)
 		yaml, err := engine.ReconstructCompose(ctx, stack.Name)
@@ -812,24 +731,11 @@ func (b *composeStackBiz) RemoveExternal(ctx context.Context, hostID, name strin
 	return nil
 }
 
-// hostClient returns (client, host, err) for a hostID. Error values use
-// the same misc.Coded pattern as clientForStack so the API layer emits
-// specific codes instead of a bare 500.
+// hostClient returns (client, host, err) for a hostID. Forwards to the
+// shared resolveHostClient helper so connectivity/not-found classification
+// stays consistent across compose + container/network/volume/image biz.
 func (b *composeStackBiz) hostClient(ctx context.Context, hostID string) (*dockerclient.Client, *dao.Host, error) {
-	host, err := b.hb.Find(ctx, hostID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if host == nil {
-		return nil, nil, misc.Error(misc.ErrHostNotFound,
-			fmt.Errorf("host %q is not registered", hostID))
-	}
-	cli, cErr := b.d.Hosts.GetClient(host.ID, host.Endpoint)
-	if cErr != nil {
-		return nil, host, misc.Error(misc.ErrHostUnreachable,
-			fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, cErr))
-	}
-	return cli, host, nil
+	return resolveHostClient(ctx, b.d, b.hb, hostID)
 }
 
 // parseEnvFile converts a .env-style text block (one KEY=VALUE per line)

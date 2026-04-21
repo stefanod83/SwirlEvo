@@ -49,6 +49,35 @@ const (
 	// original daemon message is preserved verbatim in `info` so the
 	// operator sees e.g. "No such container: ..." instead of a bare 500.
 	ErrStackOperationFailed = 1014
+	// ErrNetworkNotFound is raised when a network lookup (by name or id)
+	// targets a host that's reachable but returns a 404. The UI can
+	// tell this apart from a transport-level failure.
+	ErrNetworkNotFound = 1015
+	// ErrNetworkOperationFailed is the catch-all for Docker errors
+	// returned by network ops (create/delete/disconnect/inspect). The
+	// op name goes into `info` so the operator knows what actually
+	// failed.
+	ErrNetworkOperationFailed = 1016
+	// ErrContainerNotFound is raised when a container lookup targets a
+	// reachable host but the container id/name doesn't resolve.
+	ErrContainerNotFound = 1017
+	// ErrContainerOperationFailed is the catch-all for container ops
+	// (start/stop/kill/restart/pause/unpause/rename/remove/exec/logs/
+	// stats/prune). The op name goes into `info`.
+	ErrContainerOperationFailed = 1018
+	// ErrVolumeNotFound is raised when a volume lookup targets a
+	// reachable host but the volume name doesn't resolve.
+	ErrVolumeNotFound = 1019
+	// ErrVolumeOperationFailed is the catch-all for volume ops
+	// (create/delete/prune/inspect). The op name goes into `info`.
+	ErrVolumeOperationFailed = 1020
+	// ErrImageNotFound is raised when an image lookup targets a
+	// reachable host but the image id/tag doesn't resolve.
+	ErrImageNotFound = 1021
+	// ErrImageOperationFailed is the catch-all for image ops
+	// (remove/prune/tag/push/inspect/history). The op name goes into
+	// `info`.
+	ErrImageOperationFailed = 1022
 )
 
 func Error(code int32, err error) error {

@@ -6,7 +6,9 @@ import (
 
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
+	"github.com/cuigh/swirl/dao"
 	"github.com/cuigh/swirl/docker"
+	"github.com/cuigh/swirl/misc"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 )
@@ -20,16 +22,52 @@ type NetworkBiz interface {
 	Topology(ctx context.Context, node string, all bool) (*NetworkTopology, error)
 }
 
-func NewNetwork(d *docker.Docker, eb EventBiz) NetworkBiz {
-	return &networkBiz{d: d, eb: eb}
+// NewNetwork takes the host biz so exported methods can pre-resolve the
+// target host, producing misc.Coded errors when the host is gone or
+// unreachable instead of bare 500s bubbling up from the SDK.
+func NewNetwork(d *docker.Docker, hb HostBiz, eb EventBiz) NetworkBiz {
+	return &networkBiz{d: d, hb: hb, eb: eb}
 }
 
 type networkBiz struct {
 	d  *docker.Docker
+	hb HostBiz
 	eb EventBiz
 }
 
+// preflight resolves the target host when running in standalone mode so
+// the follow-up SDK call has a coded host-not-found / host-unreachable
+// error to return instead of a bare 500. In swarm mode `node` is a swarm
+// node ID (never in the Hosts registry) — we skip the preflight and the
+// docker wrapper dispatches via the socat agent cache as before.
+//
+// Returns the resolved *dao.Host (or nil in swarm mode) so callers can
+// pass it to wrapNetworkOpError for daemon-level error wrapping. Empty
+// node (`""` or `"-"`) means "primary client" — we also skip the probe
+// there since there's no host record to resolve.
+func (b *networkBiz) preflight(ctx context.Context, node string) (*dao.Host, error) {
+	if !misc.IsStandalone() || node == "" || node == "-" {
+		return nil, nil
+	}
+	_, host, err := resolveHostClient(ctx, b.d, b.hb, node)
+	if err != nil {
+		return nil, err
+	}
+	return host, nil
+}
+
+// wrapNetworkOpError fixes the error-code pair for the network resource
+// and forwards to the shared wrapOpError. Kept at file scope as a tiny
+// named-constant helper so call sites stay short.
+func wrapNetworkOpError(op, name string, host *dao.Host, err error) error {
+	return wrapOpError(op, "network", name, host, err, misc.ErrNetworkNotFound, misc.ErrNetworkOperationFailed)
+}
+
 func (b *networkBiz) Create(ctx context.Context, node string, n *Network, user web.User) (err error) {
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return err
+	}
 	nc := &network.CreateOptions{
 		Driver:     n.Driver,
 		Scope:      n.Scope,
@@ -51,10 +89,11 @@ func (b *networkBiz) Create(ctx context.Context, node string, n *Network, user w
 		})
 	}
 	err = b.d.NetworkCreateOnNode(ctx, node, n.Name, nc)
-	if err == nil {
-		b.eb.CreateNetwork(EventActionCreate, node, n.Name, n.Name, user)
+	if err != nil {
+		return wrapNetworkOpError("create", n.Name, host, err)
 	}
-	return
+	b.eb.CreateNetwork(EventActionCreate, node, n.Name, n.Name, user)
+	return nil
 }
 
 func (b *networkBiz) Find(ctx context.Context, node, name string) (nw *Network, raw string, err error) {
@@ -62,18 +101,27 @@ func (b *networkBiz) Find(ctx context.Context, node, name string) (nw *Network, 
 		nr network.Inspect
 		r  []byte
 	)
-	nr, r, err = b.d.NetworkInspectOnNode(ctx, node, name)
-	if err == nil {
-		nw = newNetwork(&nr)
-		raw, err = indentJSON(r)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return nil, "", err
 	}
+	nr, r, err = b.d.NetworkInspectOnNode(ctx, node, name)
+	if err != nil {
+		return nil, "", wrapNetworkOpError("inspect", name, host, err)
+	}
+	nw = newNetwork(&nr)
+	raw, err = indentJSON(r)
 	return
 }
 
 func (b *networkBiz) Search(ctx context.Context, node string) ([]*Network, error) {
-	list, err := b.d.NetworkListOnNode(ctx, node)
+	host, err := b.preflight(ctx, node)
 	if err != nil {
 		return nil, err
+	}
+	list, err := b.d.NetworkListOnNode(ctx, node)
+	if err != nil {
+		return nil, wrapNetworkOpError("list", "", host, err)
 	}
 
 	// Scan all containers once to build the set of networks actually in use.
@@ -117,19 +165,29 @@ func isSystemNetwork(n *Network) bool {
 }
 
 func (b *networkBiz) Delete(ctx context.Context, node, id, name string, user web.User) (err error) {
-	err = b.d.NetworkRemoveOnNode(ctx, node, name)
-	if err == nil {
-		b.eb.CreateNetwork(EventActionDelete, node, id, name, user)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return err
 	}
-	return
+	err = b.d.NetworkRemoveOnNode(ctx, node, name)
+	if err != nil {
+		return wrapNetworkOpError("delete", name, host, err)
+	}
+	b.eb.CreateNetwork(EventActionDelete, node, id, name, user)
+	return nil
 }
 
 func (b *networkBiz) Disconnect(ctx context.Context, node, networkId, networkName, container string, user web.User) (err error) {
-	err = b.d.NetworkDisconnectOnNode(ctx, node, networkName, container)
-	if err == nil {
-		b.eb.CreateNetwork(EventActionDisconnect, node, networkId, networkName, user)
+	host, err := b.preflight(ctx, node)
+	if err != nil {
+		return err
 	}
-	return
+	err = b.d.NetworkDisconnectOnNode(ctx, node, networkName, container)
+	if err != nil {
+		return wrapNetworkOpError("disconnect", networkName, host, err)
+	}
+	b.eb.CreateNetwork(EventActionDisconnect, node, networkId, networkName, user)
+	return nil
 }
 
 // Topology builds a host-networks-containers graph. When `all` is false
@@ -142,9 +200,13 @@ func (b *networkBiz) Disconnect(ctx context.Context, node, networkId, networkNam
 // pull IPAM config for the network-node tooltip. Unused networks (no
 // attachments, non-system) get an "unused" flag.
 func (b *networkBiz) Topology(ctx context.Context, node string, all bool) (*NetworkTopology, error) {
-	nets, err := b.d.NetworkListOnNode(ctx, node)
+	host, err := b.preflight(ctx, node)
 	if err != nil {
 		return nil, err
+	}
+	nets, err := b.d.NetworkListOnNode(ctx, node)
+	if err != nil {
+		return nil, wrapNetworkOpError("list", "", host, err)
 	}
 	containers, _ := b.d.ContainerListAll(ctx, node)
 
