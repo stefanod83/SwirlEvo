@@ -316,6 +316,14 @@ type Host struct {
 	UpdatedAt Time     `json:"updatedAt" bson:"updated_at"`
 	CreatedBy Operator `json:"createdBy" bson:"created_by"`
 	UpdatedBy Operator `json:"updatedBy" bson:"updated_by"`
+	// AddonConfigExtract is a JSON blob (kept as a string so the DAO
+	// layer never has to know the schema) holding lists extracted from
+	// uploaded add-on config files — e.g. Traefik static config ->
+	// entryPoints, certResolvers, middlewares, networks. Structure is
+	// defined at the biz layer and consumed by AddonDiscoveryBiz to
+	// augment the dropdowns of the stack-editor wizard tabs. The raw
+	// file is never persisted (may contain ACME keys).
+	AddonConfigExtract string `json:"addonConfigExtract,omitempty" bson:"addon_config_extract,omitempty"`
 }
 
 type HostSearchArgs struct {

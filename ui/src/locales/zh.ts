@@ -834,10 +834,33 @@ export default {
         "env_file_placeholder": "# 每行一个变量\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
     "stack_addon_common": {
-        "coming_soon": "此插件向导尚未就绪，后续版本会启用该标签页。"
+        "coming_soon": "此插件向导尚未就绪，后续版本会启用该标签页。",
+        "preview_title": "生成的标签",
+        "preview_hint": "只读预览，保存时会重新生成"
     },
     "stack_addon_resources": {
         "title": "资源限制"
+    },
+    "stack_addon_traefik": {
+        "detected": "已检测到 Traefik",
+        "not_detected": "此主机未检测到 Traefik 容器，下拉框将作为自由输入框显示。",
+        "extract_title": "扩展发现",
+        "extract_subtitle": "上传 traefik.yml 可以将文件提供者模式中定义的 entrypoints / certResolvers / middlewares 补充到下拉选项中。",
+        "extract_hint": "文件不会离开浏览器，仅保存提取出的名称。",
+        "upload_btn": "上传 traefik.yml",
+        "upload_need_host": "上传配置文件前请先选择主机。",
+        "upload_ok": "已导入 Traefik 配置。",
+        "upload_failed": "导入 Traefik 配置失败",
+        "clear_confirm": "删除此主机的 Traefik 持久化数据？",
+        "clear_ok": "已移除 Traefik 扩展信息。",
+        "no_services": "当前 compose YAML 中没有服务。",
+        "enable": "启用",
+        "rule_type": "规则",
+        "domain": "域名",
+        "path": "路径",
+        "entrypoint": "入口点",
+        "port": "端口",
+        "certresolver": "证书解析器"
     },
     "stack_version": {
         "pick_hint": "选择历史版本以进行对比或恢复",

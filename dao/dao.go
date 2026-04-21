@@ -90,6 +90,13 @@ type Interface interface {
 	HostCreate(ctx context.Context, host *Host) error
 	HostUpdate(ctx context.Context, host *Host) error
 	HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer, os, arch string, cpus int, memory int64) error
+	// HostUpdateAddonConfigExtract writes (or clears) the raw JSON blob
+	// that carries lists extracted from uploaded add-on config files
+	// (e.g. traefik.yml → entryPoints/certResolvers). A dedicated method
+	// so the writes don't go through HostUpdate's full payload — that
+	// path would require the caller to hold the current TLSKey/SSHKey
+	// plaintext, which the API does not have after the initial save.
+	HostUpdateAddonConfigExtract(ctx context.Context, id, extractJSON string) error
 	HostDelete(ctx context.Context, id string) error
 
 	ComposeStackGet(ctx context.Context, id string) (*ComposeStack, error)

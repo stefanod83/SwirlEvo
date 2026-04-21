@@ -75,9 +75,13 @@
         </n-tab-pane>
 
         <n-tab-pane name="traefik" tab="Traefik">
-          <n-alert type="info" :show-icon="true">
-            {{ t('stack_addon_common.coming_soon') || 'Traefik wizard coming soon.' }}
-          </n-alert>
+          <AddonTabTraefik
+            :services="serviceNames"
+            :discovery="hostAddons?.traefik || null"
+            :mode="hostMode"
+            :host-id="model.hostId || ''"
+            v-model="traefikCfgModel"
+          />
         </n-tab-pane>
 
         <n-tab-pane name="sablier" tab="Sablier">
@@ -531,9 +535,11 @@ import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import XCodeMirror from "@/components/CodeMirror.vue";
 import StackVersionHistory from "@/components/stack-version/StackVersionHistory.vue";
+import AddonTabTraefik from "@/components/stack-addons/AddonTabTraefik.vue";
 import composeStackApi from "@/api/compose_stack";
-import type { ComposeStack, HostAddons } from "@/api/compose_stack";
-import { parseServiceNames } from "@/utils/stack-addon-parse";
+import type { ComposeStack, HostAddons, AddonsConfig, TraefikServiceCfg } from "@/api/compose_stack";
+import { parseServiceNames, collectManagedLabels } from "@/utils/stack-addon-parse";
+import { traefikCfgFromLabels } from "@/utils/stack-addon-labels";
 import composeStackSecretApi from "@/api/compose-stack-secret";
 import type {
   ComposeStackSecretBinding,
@@ -620,6 +626,40 @@ async function loadHostAddons(hostId: string) {
 
 watch(() => model.hostId, (hid) => { loadHostAddons(hid) })
 
+// hostMode is inferred from the selected host entity and forwarded to the
+// addon tabs — "swarm" means labels land under deploy.labels, otherwise
+// top-level. Defaults to "standalone" while the host list loads.
+const hostMode = computed<'swarm' | 'standalone'>(() => {
+  const h: any = (hosts.value as any[])?.find((x: any) => x.value === model.hostId)
+  return h?.type === 'swarm_via_swirl' ? 'swarm' : 'standalone'
+})
+
+// addonsConfig is the wizard state kept in-memory and sent alongside the
+// compose payload on Save/Deploy. It's also reverse-populated whenever the
+// YAML in the editor changes so the tabs reflect already-persisted labels.
+const addonsConfig = reactive<AddonsConfig>({ traefik: {}, resources: {} })
+
+function reverseParseAddons(content: string) {
+  const managed = collectManagedLabels(content)
+  const traefik: Record<string, TraefikServiceCfg> = {}
+  for (const svc of Object.keys(managed)) {
+    const cfg = traefikCfgFromLabels(managed[svc])
+    if (cfg.enabled) traefik[svc] = cfg
+  }
+  addonsConfig.traefik = traefik
+}
+
+watch(() => model.content, (c) => { reverseParseAddons(c) })
+
+// traefikCfgModel is the two-way bridge between AddonTabTraefik and the
+// addonsConfig reactive state. Keeping it as a computed getter/setter avoids
+// writing directly to `addonsConfig.traefik` from the template (which would
+// bypass Vue's reactivity tracking in nested object scenarios).
+const traefikCfgModel = computed<Record<string, TraefikServiceCfg>>({
+  get: () => addonsConfig.traefik || {},
+  set: (v) => { addonsConfig.traefik = v },
+})
+
 // historyRef is used after a restore to refresh the list so the new snapshot
 // (reason=restore:revN) shows up immediately without a full page reload.
 const historyRef = ref<InstanceType<typeof StackVersionHistory> | null>(null)
@@ -650,11 +690,22 @@ async function validate(): Promise<boolean> {
   }
 }
 
+// addonsPayload filters empty maps so the backend receives `undefined` when
+// the operator didn't touch any wizard tab — a minor payload hygiene tweak.
+function addonsPayload(): AddonsConfig | undefined {
+  const traefik = addonsConfig.traefik && Object.keys(addonsConfig.traefik).length
+    ? addonsConfig.traefik : undefined
+  const resources = addonsConfig.resources && Object.keys(addonsConfig.resources).length
+    ? addonsConfig.resources : undefined
+  if (!traefik && !resources) return undefined
+  return { traefik, resources }
+}
+
 async function saveStack() {
   if (!await validate()) return
   submitting.value = true
   try {
-    const r = await composeStackApi.save(model)
+    const r = await composeStackApi.save(model, addonsPayload())
     message.success(t('buttons.save'))
     router.replace({ name: 'std_stack_edit', params: { id: r.data?.id || model.id } })
   } catch (e: any) {
@@ -673,7 +724,7 @@ async function deployStack() {
   if (!await validate()) return
   submitting.value = true
   try {
-    await composeStackApi.deploy(model, pullImages.value)
+    await composeStackApi.deploy(model, pullImages.value, addonsPayload())
     message.success(t('buttons.deploy'))
     router.push({ name: 'std_stack_list' })
   } catch (e: any) {
@@ -1038,7 +1089,7 @@ async function loadVaultSecrets() {
 onMounted(async () => {
   const r = await hostApi.search('', '', 1, 1000)
   const data = r.data as any
-  hosts.value = (data?.items || []).map((h: any) => ({ label: h.name, value: h.id }))
+  hosts.value = (data?.items || []).map((h: any) => ({ label: h.name, value: h.id, type: h.type }))
 
   if (isEdit.value) {
     const s = await composeStackApi.find(route.params.id as string)

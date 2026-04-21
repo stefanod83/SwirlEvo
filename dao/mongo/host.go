@@ -95,6 +95,10 @@ func (d *Dao) HostSearch(ctx context.Context, args *dao.HostSearchArgs) (hosts [
 	return
 }
 
+func (d *Dao) HostUpdateAddonConfigExtract(ctx context.Context, id, extractJSON string) error {
+	return d.update(ctx, Host, id, bson.M{"$set": bson.M{"addon_config_extract": extractJSON}})
+}
+
 func (d *Dao) HostDelete(ctx context.Context, id string) (err error) {
 	return d.delete(ctx, Host, id)
 }

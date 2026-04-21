@@ -88,14 +88,22 @@ func composeStackFind(b biz.ComposeStackBiz) web.HandlerFunc {
 }
 
 func composeStackSave(b biz.ComposeStackBiz) web.HandlerFunc {
+	type Args struct {
+		dao.ComposeStack
+		// AddonsConfig carries the wizard state for Traefik/Sablier/
+		// Watchtower/Backup/Resources tabs. When present, the biz layer
+		// mutates Content to inject the corresponding labels before
+		// persisting — the DB stores the final, label-bearing YAML.
+		AddonsConfig *biz.AddonsConfig `json:"addonsConfig,omitempty"`
+	}
 	return func(c web.Context) error {
-		stack := &dao.ComposeStack{}
-		if err := c.Bind(stack, true); err != nil {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
 			return err
 		}
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
-		id, err := b.Save(ctx, stack, c.User())
+		id, err := b.SaveWithAddons(ctx, &args.ComposeStack, args.AddonsConfig, c.User())
 		if err != nil {
 			return err
 		}
@@ -106,7 +114,8 @@ func composeStackSave(b biz.ComposeStackBiz) web.HandlerFunc {
 func composeStackDeploy(b biz.ComposeStackBiz) web.HandlerFunc {
 	type Args struct {
 		dao.ComposeStack
-		PullImages bool `json:"pullImages"`
+		PullImages   bool              `json:"pullImages"`
+		AddonsConfig *biz.AddonsConfig `json:"addonsConfig,omitempty"`
 	}
 	return func(c web.Context) error {
 		args := &Args{}
@@ -116,7 +125,7 @@ func composeStackDeploy(b biz.ComposeStackBiz) web.HandlerFunc {
 		// deploy may take longer than defaultTimeout due to image pulls
 		ctx, cancel := misc.Context(5 * defaultTimeout)
 		defer cancel()
-		id, err := b.Deploy(ctx, &args.ComposeStack, args.PullImages, c.User())
+		id, err := b.DeployWithAddons(ctx, &args.ComposeStack, args.AddonsConfig, args.PullImages, c.User())
 		if err != nil {
 			return err
 		}

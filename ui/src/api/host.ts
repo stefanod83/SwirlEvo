@@ -57,3 +57,32 @@ export function test(endpoint: string, authMethod?: string) {
 export function sync(id: string) {
   return ajax.post('/host/sync', { id })
 }
+
+// Addon config extract — persisted JSON blob with lists parsed from an
+// uploaded addon config file (e.g. traefik.yml). Consumed by the compose
+// stack editor wizard tabs to augment dropdown options.
+export interface TraefikExtract {
+  entryPoints?: string[]
+  certResolvers?: string[]
+  middlewares?: string[]
+  networks?: string[]
+  sourceFile?: string
+  uploadedAt?: string
+  uploadedBy?: string
+}
+
+export interface AddonConfigExtract {
+  traefik?: TraefikExtract
+}
+
+export function getAddonExtract(hostId: string) {
+  return ajax.get<AddonConfigExtract>('/host/addon-extract-get', { hostId })
+}
+
+export function saveAddonExtract(hostId: string, extract: AddonConfigExtract) {
+  return ajax.post('/host/addon-extract-save', { hostId, extract })
+}
+
+export function clearAddonExtract(hostId: string, addon?: string) {
+  return ajax.post('/host/addon-extract-clear', { hostId, addon: addon || '' })
+}

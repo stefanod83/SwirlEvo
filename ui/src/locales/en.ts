@@ -840,10 +840,33 @@ export default {
         "env_file_placeholder": "# One variable per line\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
     "stack_addon_common": {
-        "coming_soon": "This addon wizard is not yet available. The tab will be wired up in an upcoming release."
+        "coming_soon": "This addon wizard is not yet available. The tab will be wired up in an upcoming release.",
+        "preview_title": "Generated labels",
+        "preview_hint": "read-only preview, regenerated on save"
     },
     "stack_addon_resources": {
         "title": "Resources"
+    },
+    "stack_addon_traefik": {
+        "detected": "Traefik detected",
+        "not_detected": "No Traefik container detected on this host — dropdowns fall back to manual entry.",
+        "extract_title": "Augmented discovery",
+        "extract_subtitle": "Upload a traefik.yml to enrich dropdowns with entrypoints/certResolvers/middlewares defined by file provider.",
+        "extract_hint": "The file never leaves the browser. Only the extracted names are persisted.",
+        "upload_btn": "Upload traefik.yml",
+        "upload_need_host": "Select a host before uploading a config file.",
+        "upload_ok": "Traefik config imported.",
+        "upload_failed": "Failed to import Traefik config",
+        "clear_confirm": "Remove the persisted Traefik extract for this host?",
+        "clear_ok": "Traefik extract removed.",
+        "no_services": "No services found in the compose YAML yet.",
+        "enable": "Enable",
+        "rule_type": "Rule",
+        "domain": "Domain",
+        "path": "Path",
+        "entrypoint": "Entrypoint",
+        "port": "Port",
+        "certresolver": "Cert resolver"
     },
     "stack_version": {
         "pick_hint": "Select a previous version to diff and restore",

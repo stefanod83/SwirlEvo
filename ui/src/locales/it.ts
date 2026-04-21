@@ -840,10 +840,33 @@ export default {
         "env_file_placeholder": "# Una variabile per riga\nDB_HOST=db.example.com\nDB_PORT=5432"
     },
     "stack_addon_common": {
-        "coming_soon": "Questo wizard addon non è ancora disponibile. La tab verrà attivata in una prossima release."
+        "coming_soon": "Questo wizard addon non è ancora disponibile. La tab verrà attivata in una prossima release.",
+        "preview_title": "Label generate",
+        "preview_hint": "anteprima read-only, rigenerata al save"
     },
     "stack_addon_resources": {
         "title": "Risorse"
+    },
+    "stack_addon_traefik": {
+        "detected": "Traefik rilevato",
+        "not_detected": "Nessun container Traefik rilevato su questo host — le dropdown si comportano come campi liberi.",
+        "extract_title": "Discovery arricchita",
+        "extract_subtitle": "Carica un traefik.yml per arricchire le dropdown con entrypoints/certResolvers/middlewares definiti in modalità file provider.",
+        "extract_hint": "Il file non lascia il browser. Vengono salvati solo i nomi estratti.",
+        "upload_btn": "Carica traefik.yml",
+        "upload_need_host": "Seleziona un host prima di caricare un file di configurazione.",
+        "upload_ok": "Config Traefik importata.",
+        "upload_failed": "Impossibile importare la config Traefik",
+        "clear_confirm": "Rimuovere l'estratto Traefik per questo host?",
+        "clear_ok": "Estratto Traefik rimosso.",
+        "no_services": "Nessun servizio trovato nel compose YAML.",
+        "enable": "Abilita",
+        "rule_type": "Regola",
+        "domain": "Dominio",
+        "path": "Path",
+        "entrypoint": "Entrypoint",
+        "port": "Porta",
+        "certresolver": "Cert resolver"
     },
     "stack_version": {
         "pick_hint": "Seleziona una versione precedente per confrontarla e ripristinarla",

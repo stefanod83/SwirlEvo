@@ -138,6 +138,34 @@ export interface HostAddons {
     backup?: BackupAddon;
 }
 
+// AddonsConfig mirrors the Go DTO — one wizard-state map per addon, keyed
+// by service name. Missing maps / empty objects are treated as "no wizard
+// state", so the backend leaves those services untouched.
+export interface TraefikServiceCfg {
+    enabled: boolean;
+    router?: string;
+    ruleType?: 'Host' | 'PathPrefix' | 'Host+PathPrefix' | '';
+    domain?: string;
+    path?: string;
+    entrypoint?: string;
+    port?: number;
+    tls?: boolean;
+    certResolver?: string;
+    middlewares?: string[];
+}
+
+export interface ResourcesServiceCfg {
+    cpusLimit?: string;
+    cpusReservation?: string;
+    memoryLimit?: string;
+    memoryReservation?: string;
+}
+
+export interface AddonsConfig {
+    traefik?: Record<string, TraefikServiceCfg>;
+    resources?: Record<string, ResourcesServiceCfg>;
+}
+
 // ComposeStackVersion is a point-in-time snapshot of the stack content.
 // List responses omit Content/EnvFile to keep the payload small; fetch
 // a single version with versionGet() when rendering a diff.
@@ -165,12 +193,14 @@ export class ComposeStackApi {
         return ajax.get<{ items: ComposeStackSummary[]; total: number }>('/compose-stack/search', args)
     }
 
-    save(stack: ComposeStack) {
-        return ajax.post<{ id: string }>('/compose-stack/save', stack)
+    save(stack: ComposeStack, addonsConfig?: AddonsConfig) {
+        const payload = addonsConfig ? { ...stack, addonsConfig } : stack
+        return ajax.post<{ id: string }>('/compose-stack/save', payload)
     }
 
-    deploy(stack: ComposeStack, pullImages = false) {
-        return ajax.post<{ id: string }>('/compose-stack/deploy', { ...stack, pullImages })
+    deploy(stack: ComposeStack, pullImages = false, addonsConfig?: AddonsConfig) {
+        return ajax.post<{ id: string }>('/compose-stack/deploy',
+            { ...stack, pullImages, addonsConfig })
     }
 
     import_(stack: ComposeStack, redeploy = false, pullImages = false) {

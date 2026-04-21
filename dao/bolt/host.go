@@ -36,6 +36,13 @@ func (d *Dao) HostUpdate(ctx context.Context, host *dao.Host) (err error) {
 		if host.SwirlToken == "" {
 			host.SwirlToken = old.SwirlToken
 		}
+		// AddonConfigExtract is owned by the addon discovery flow, not
+		// the Host edit form — HostUpdate (form save) would come with
+		// the field empty. Preserve so the flow's writes survive a
+		// plain host edit.
+		if host.AddonConfigExtract == "" {
+			host.AddonConfigExtract = old.AddonConfigExtract
+		}
 		// `Immutable` stays whatever was set at create time — refuse
 		// to flip it via Update so the `local` host cannot be demoted.
 		host.Immutable = old.Immutable
@@ -110,6 +117,14 @@ func (d *Dao) HostSearch(ctx context.Context, args *dao.HostSearchArgs) (hosts [
 		count = len(hosts)
 	}
 	return
+}
+
+func (d *Dao) HostUpdateAddonConfigExtract(ctx context.Context, id, extractJSON string) error {
+	old := &dao.Host{}
+	return d.update(Host, id, old, func() interface{} {
+		old.AddonConfigExtract = extractJSON
+		return old
+	})
 }
 
 func (d *Dao) HostDelete(ctx context.Context, id string) (err error) {

@@ -27,6 +27,11 @@ type ComposeStackBiz interface {
 	FindDetail(ctx context.Context, hostID, name string) (*ComposeStackDetail, error)
 	// Save persists the compose stack without deploying. Pass an empty ID to create a new one.
 	Save(ctx context.Context, stack *dao.ComposeStack, user web.User) (string, error)
+	// SaveWithAddons is the wizard-tab aware sibling of Save: when
+	// addons != nil, the stack.Content is mutated (wizard labels
+	// injected, resources applied) before persisting. A nil addons is
+	// equivalent to calling Save directly.
+	SaveWithAddons(ctx context.Context, stack *dao.ComposeStack, addons *AddonsConfig, user web.User) (string, error)
 	// Deploy is async: it persists the stack, performs self-protection
 	// checks synchronously, then spawns a goroutine that runs the actual
 	// engine deploy against a background context (so it survives the
@@ -34,6 +39,10 @@ type ComposeStackBiz interface {
 	// stack's Status field moves from "deploying" to "active" or "error"
 	// as the deploy progresses.
 	Deploy(ctx context.Context, stack *dao.ComposeStack, pullImages bool, user web.User) (string, error)
+	// DeployWithAddons wraps Deploy the same way SaveWithAddons wraps
+	// Save — injecting wizard labels/resources into the content before
+	// the deploy pipeline runs.
+	DeployWithAddons(ctx context.Context, stack *dao.ComposeStack, addons *AddonsConfig, pullImages bool, user web.User) (string, error)
 	// Import promotes an external stack to managed. If stack.Content is empty,
 	// the engine reconstructs a YAML from running containers. If redeploy is
 	// true, the stack is (re)deployed against the imported/edited YAML.
@@ -239,6 +248,14 @@ func (b *composeStackBiz) Find(ctx context.Context, id string) (*dao.ComposeStac
 }
 
 func (b *composeStackBiz) Save(ctx context.Context, stack *dao.ComposeStack, user web.User) (string, error) {
+	return b.saveWithReason(ctx, stack, "save", user)
+}
+
+// saveWithReason is the shared write path for both plain Save and
+// SaveWithAddons. The `reason` value is carried into ComposeStackVersion
+// snapshots so the History dropdown can tell routine saves apart from
+// wizard-driven label injections.
+func (b *composeStackBiz) saveWithReason(ctx context.Context, stack *dao.ComposeStack, reason string, user web.User) (string, error) {
 	if stack.HostID == "" || stack.Name == "" {
 		return "", errors.New("hostId and name are required")
 	}
@@ -260,13 +277,75 @@ func (b *composeStackBiz) Save(ctx context.Context, stack *dao.ComposeStack, use
 		// from the editor's History dropdown. Best-effort: failures are
 		// silently dropped — losing the history entry is strictly better
 		// than refusing to save.
-		b.snapshotIfChanged(ctx, stack, "save", user)
+		b.snapshotIfChanged(ctx, stack, reason, user)
 		if err := b.di.ComposeStackUpdate(ctx, stack); err != nil {
 			return "", err
 		}
 		b.eb.CreateStack(EventActionUpdate, stack.HostID, stack.Name, user)
 	}
 	return stack.ID, nil
+}
+
+// SaveWithAddons injects the wizard-generated labels and resources into the
+// compose Content (when addons != nil) and then runs the standard save path.
+// The mode (standalone vs swarm) is inferred from the target host's Type so
+// label placement lands in the right spot (top-level labels vs deploy.labels,
+// cpus/mem_limit vs deploy.resources).
+func (b *composeStackBiz) SaveWithAddons(ctx context.Context, stack *dao.ComposeStack, addons *AddonsConfig, user web.User) (string, error) {
+	reason := "save"
+	if addons != nil && hasAnyAddon(addons) {
+		mode, mErr := b.modeForHost(ctx, stack.HostID)
+		if mErr != nil {
+			return "", mErr
+		}
+		newContent, iErr := injectAddonLabels(stack.Content, addons, mode)
+		if iErr != nil {
+			return "", iErr
+		}
+		if newContent != stack.Content {
+			stack.Content = newContent
+			reason = "addon-inject"
+		}
+	}
+	return b.saveWithReason(ctx, stack, reason, user)
+}
+
+// DeployWithAddons performs the same pre-save injection as SaveWithAddons
+// and then delegates to the standard Deploy pipeline so the async engine
+// flow is unchanged.
+func (b *composeStackBiz) DeployWithAddons(ctx context.Context, stack *dao.ComposeStack, addons *AddonsConfig, pullImages bool, user web.User) (string, error) {
+	if addons != nil && hasAnyAddon(addons) {
+		mode, mErr := b.modeForHost(ctx, stack.HostID)
+		if mErr != nil {
+			return "", mErr
+		}
+		newContent, iErr := injectAddonLabels(stack.Content, addons, mode)
+		if iErr != nil {
+			return "", iErr
+		}
+		stack.Content = newContent
+	}
+	return b.Deploy(ctx, stack, pullImages, user)
+}
+
+// modeForHost maps Host.Type into the "standalone" | "swarm" label used by
+// the YAML injector. swarm_via_swirl federates to a Swirl running in swarm
+// mode, so labels must land under deploy.labels on the remote side too.
+func (b *composeStackBiz) modeForHost(ctx context.Context, hostID string) (string, error) {
+	if hostID == "" {
+		return "standalone", nil
+	}
+	host, err := b.hb.Find(ctx, hostID)
+	if err != nil {
+		return "", err
+	}
+	if host == nil {
+		return "standalone", nil
+	}
+	if host.Type == "swarm_via_swirl" {
+		return "swarm", nil
+	}
+	return "standalone", nil
 }
 
 func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, pullImages bool, user web.User) (string, error) {
