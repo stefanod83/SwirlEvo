@@ -578,6 +578,7 @@ export default {
         "vault_secret_path": "Sub-path inside the Vault KV prefix (e.g. 'myapp/db'). Defaults to the Name if left empty.",
         "vault_secret_field": "KVv2 field selector. Leave empty to return the full JSON blob.",
         "vault_secret_name_rule": "Name must not contain slashes. Allowed: letters, digits, dot, underscore, dash. Max 128 chars.",
+        "vault_secret_path_rule": "Path must not start with '/' or contain empty segments. Allowed per segment: letters, digits, dot, underscore, dash.",
         "vault_secret_no_value": "Swirl never stores the secret value. Only the reference to the Vault entry is kept here; the value is fetched from Vault at deploy time.",
     },
     "texts": {
@@ -622,6 +623,22 @@ export default {
         "1003": "Old password is incorrect",
         "1004": "Can not deploy external stack",
         "1005": "system was already initialized",
+    },
+    "validation": {
+        "invalid_url": "Must be a valid URL ({schemes}://…)",
+        "invalid_endpoint": "Must be a Docker endpoint (tcp://, unix://, ssh://) or a Swarm Swirl URL (https://)",
+        "invalid_ip": "Must be a valid IPv4 address",
+        "invalid_cidr": "Must be a valid CIDR (e.g. 10.0.0.0/16)",
+        "invalid_duration": "Must be a duration (e.g. 30s, 1m, 2h30m)",
+        "invalid_hostname": "Must be a valid hostname",
+        "password_mismatch": "Passwords do not match",
+        "pem_suspect": "Text does not look like a PEM-encoded block",
+    },
+    "host_errors": {
+        "scheme_missing_title": "Endpoint without scheme",
+        "scheme_missing_body": "The endpoint \"{original}\" has no scheme. Based on the selected Auth Method, the suggested endpoint is \"{suggested}\". Apply it and retry?",
+        "apply_and_retry": "Apply and retry",
+        "cancel": "Cancel",
     },
     "backup": {
         "create": "Create backup",

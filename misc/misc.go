@@ -78,6 +78,21 @@ const (
 	// (remove/prune/tag/push/inspect/history). The op name goes into
 	// `info`.
 	ErrImageOperationFailed = 1022
+	// ErrHostValidation is raised when a host form submission misses a
+	// required field (name, endpoint, SSH user when auth=ssh, TLS CA
+	// when auth=tcp+tls). The `info` field names the missing field so
+	// the UI can surface a targeted alert.
+	ErrHostValidation = 1023
+	// ErrHostEndpointFormat is raised when the endpoint has no scheme
+	// AND no AuthMethod is selected (no basis for a suggestion), or
+	// the scheme is unknown (not in http/https/tcp/unix/ssh). `info`
+	// lists the valid schemes.
+	ErrHostEndpointFormat = 1024
+	// ErrHostEndpointScheme is raised when the endpoint scheme
+	// conflicts with the selected AuthMethod (e.g. unix:// endpoint
+	// with auth=tcp). `info` describes the mismatch and the expected
+	// AuthMethod for the given scheme.
+	ErrHostEndpointScheme = 1025
 )
 
 func Error(code int32, err error) error {

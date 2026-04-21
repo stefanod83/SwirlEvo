@@ -578,6 +578,7 @@ export default {
         "vault_secret_path": "Sotto-path all'interno del prefisso KV di Vault (es. 'myapp/db'). Se vuoto, viene usato il Nome.",
         "vault_secret_field": "Selettore di field KVv2. Vuoto = ritorna l'intero blob JSON.",
         "vault_secret_name_rule": "Il nome non deve contenere slash. Ammessi: lettere, cifre, punto, underscore, trattino. Max 128 caratteri.",
+        "vault_secret_path_rule": "Il path non deve iniziare con '/' né contenere segmenti vuoti. Ammessi per segmento: lettere, cifre, punto, underscore, trattino.",
         "vault_secret_no_value": "Swirl non salva mai il valore del secret. Solo il riferimento alla voce Vault è memorizzato qui; il valore viene letto da Vault al deploy.",
     },
     "texts": {
@@ -622,6 +623,22 @@ export default {
         "1003": "Vecchia password errata",
         "1004": "Impossibile fare il deploy di uno stack esterno",
         "1005": "Sistema già inizializzato",
+    },
+    "validation": {
+        "invalid_url": "Deve essere un URL valido ({schemes}://…)",
+        "invalid_endpoint": "Deve essere un endpoint Docker (tcp://, unix://, ssh://) o un URL di Swirl Swarm (https://)",
+        "invalid_ip": "Deve essere un indirizzo IPv4 valido",
+        "invalid_cidr": "Deve essere un CIDR valido (es. 10.0.0.0/16)",
+        "invalid_duration": "Deve essere una durata (es. 30s, 1m, 2h30m)",
+        "invalid_hostname": "Deve essere un hostname valido",
+        "password_mismatch": "Le password non corrispondono",
+        "pem_suspect": "Il testo non sembra un blocco PEM",
+    },
+    "host_errors": {
+        "scheme_missing_title": "Endpoint senza prefisso",
+        "scheme_missing_body": "L'endpoint \"{original}\" non ha un prefisso. In base all'Auth Method selezionato, l'endpoint suggerito è \"{suggested}\". Applicarlo e riprovare?",
+        "apply_and_retry": "Applica e riprova",
+        "cancel": "Annulla",
     },
     "backup": {
         "create": "Crea backup",

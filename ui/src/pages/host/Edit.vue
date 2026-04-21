@@ -10,11 +10,11 @@
     </template>
   </x-page-header>
   <div class="page-body">
-    <n-form :model="model" label-placement="left" label-width="120">
-      <n-form-item :label="t('fields.name')" required>
+    <n-form ref="formRef" :model="model" :rules="rules" label-placement="left" label-width="120">
+      <n-form-item :label="t('fields.name')" path="name">
         <n-input v-model:value="model.name" placeholder="My Docker Host" />
       </n-form-item>
-      <n-form-item label="Endpoint" required>
+      <n-form-item label="Endpoint" path="endpoint">
         <div style="width: 100%">
           <n-input v-model:value="model.endpoint"
             placeholder="tcp://host:2375 · unix:///var/run/docker.sock · ssh://user@host · https://swirl-swarm.example.com"
@@ -31,7 +31,7 @@
         <n-select v-model:value="model.authMethod" :options="authOptions" />
       </n-form-item>
       <!-- Federation-specific fields -->
-      <n-form-item v-if="isFederation" :label="t('fields.swirl_token')" required>
+      <n-form-item v-if="isFederation" :label="t('fields.swirl_token')" path="swirlToken">
         <n-input
           v-model:value="model.swirlToken"
           type="password"
@@ -55,7 +55,7 @@
           </span>
         </n-space>
       </n-form-item>
-      <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS CA Cert">
+      <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS CA Cert" path="tlsCaCert">
         <n-input v-model:value="model.tlsCaCert" type="textarea" :rows="3" placeholder="CA certificate (PEM)" />
       </n-form-item>
       <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS Cert">
@@ -64,7 +64,7 @@
       <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS Key">
         <n-input v-model:value="model.tlsKey" type="textarea" :rows="3" placeholder="Client key (PEM)" />
       </n-form-item>
-      <n-form-item v-if="model.authMethod === 'ssh'" label="SSH User">
+      <n-form-item v-if="model.authMethod === 'ssh'" label="SSH User" path="sshUser">
         <n-input v-model:value="model.sshUser" placeholder="root" />
       </n-form-item>
       <n-form-item v-if="model.authMethod === 'ssh'" label="SSH Key">
@@ -129,6 +129,10 @@ import {
   NIcon,
   NSwitch,
   NTag,
+  useDialog,
+  useMessage,
+  type FormInst,
+  type FormRules,
 } from "naive-ui";
 import { ArrowBackCircleOutline as ArrowBackIcon } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
@@ -137,11 +141,15 @@ import type { HostInfo } from "@/api/host";
 import { useStore } from "vuex";
 import { useI18n } from 'vue-i18n'
 import { returnTo } from "@/utils/nav";
+import { requiredRule, customRule, handleSaveError } from "@/utils/form";
 
 const { t } = useI18n()
 const route = useRoute();
 const router = useRouter();
 const store = useStore();
+const dialog = useDialog();
+const message = useMessage();
+const formRef = ref<FormInst | null>(null);
 const testing = ref(false);
 const testResult = ref(null as null | { success: boolean; info?: HostInfo; error?: string });
 
@@ -209,6 +217,33 @@ const authOptions = [
   { label: 'SSH', value: 'ssh' },
 ]
 
+// Form rules. Conditional rules (SSH User, Swirl Token, TLS CA)
+// use customRule so they only fire when the relevant AuthMethod /
+// federation state is active — otherwise NForm would reject valid
+// submissions where those fields legitimately aren't rendered.
+const rules = computed<FormRules>(() => ({
+  name: requiredRule(),
+  endpoint: requiredRule(),
+  swirlToken: customRule(
+    (_: any, v: string) => !isFederation.value || !!v,
+    t('tips.required_rule'),
+    undefined,
+    isFederation.value,
+  ),
+  sshUser: customRule(
+    (_: any, v: string) => model.authMethod !== 'ssh' || !!v,
+    t('tips.required_rule'),
+    undefined,
+    model.authMethod === 'ssh',
+  ),
+  tlsCaCert: customRule(
+    (_: any, v: string) => model.authMethod !== 'tcp+tls' || !!v,
+    t('tips.required_rule'),
+    undefined,
+    model.authMethod === 'tcp+tls',
+  ),
+}))
+
 function onReturn() {
   // On edit, returnTo prefers history.back if available so the user
   // lands on the exact list scroll position they came from. On new
@@ -222,19 +257,42 @@ function onReturn() {
 }
 
 async function save() {
-  await hostApi.save(model);
-  await store.dispatch('reloadHosts')
-  router.push({ name: 'host_list' })
+  try {
+    await formRef.value?.validate()
+  } catch {
+    // NForm rejects with the validation error list; the red field
+    // feedback is already rendered — abort the submit silently.
+    return
+  }
+  try {
+    await hostApi.save(model)
+    await store.dispatch('reloadHosts')
+    router.push({ name: 'host_list' })
+  } catch (e: any) {
+    // Scheme-missing suggestion → dialog offers "apply and retry".
+    if (handleSaveError(e, save, dialog, model)) return
+    // Worker-rejected → the existing manager suggestions are surfaced
+    // by the old path; here we just show the info field.
+    const info = e?.response?.data?.info || e?.message || String(e)
+    message.error(info)
+  }
 }
 
 async function testConnection() {
   testing.value = true
   testResult.value = null
   try {
-    const r = await hostApi.test(model.endpoint)
+    const r = await hostApi.test(model.endpoint, model.authMethod)
     testResult.value = { success: true, info: r.data as HostInfo }
   } catch (e: any) {
-    testResult.value = { success: false, error: e.message || String(e) }
+    // Scheme-missing suggestion for the Test button too — apply
+    // and re-test so operators confirm connectivity before saving.
+    if (handleSaveError(e, testConnection, dialog, model)) {
+      testing.value = false
+      return
+    }
+    const info = e?.response?.data?.info || e?.message || String(e)
+    testResult.value = { success: false, error: info }
   } finally {
     testing.value = false
   }

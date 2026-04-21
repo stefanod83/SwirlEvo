@@ -1074,8 +1074,17 @@ function togglePanel(name: string) {
 }
 
 async function save(id: string, options: any) {
-  await settingApi.save(id, options)
-  window.message.info(t('texts.action_success'));
+  // Wrap the POST so backend errors (validation, connectivity) land
+  // in a readable toast instead of relying on the axios interceptor
+  // alone — the interceptor only covers 500s, while our new coded
+  // errors travel as 400/422/502.
+  try {
+    await settingApi.save(id, options)
+    window.message.info(t('texts.action_success'));
+  } catch (e: any) {
+    const info = e?.response?.data?.info || e?.message || String(e)
+    window.message.error(info, { duration: 5000 })
+  }
 }
 
 async function testVault() {

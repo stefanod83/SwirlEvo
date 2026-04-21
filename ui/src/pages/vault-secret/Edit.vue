@@ -330,9 +330,16 @@ const nameSegmentRule = customRule(
   (_r, v) => !v || (/^[A-Za-z0-9._-]+$/.test(v) && v.length <= 128),
   t('tips.vault_secret_name_rule'),
 )
+// Vault KV path: sequence of slash-separated segments. No leading
+// slash (kv_prefix handles that), no empty segments (no `foo//bar`),
+// each segment restricted to safe chars.
+const pathFormatRule = customRule(
+  (_r, v) => !v || /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(v),
+  t('tips.vault_secret_path_rule'),
+)
 const rules: any = {
   name: [requiredRule(), nameSegmentRule],
-  path: requiredRule(),
+  path: [requiredRule(), pathFormatRule],
 }
 
 const fullPath = computed(() => {

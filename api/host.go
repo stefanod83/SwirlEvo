@@ -4,11 +4,59 @@ import (
 	"errors"
 	"net/http"
 
+	auxoerrors "github.com/cuigh/auxo/errors"
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/biz"
 	"github.com/cuigh/swirl/dao"
 	"github.com/cuigh/swirl/misc"
 )
+
+// respondHostError maps the biz-layer error types to the right HTTP
+// status + response envelope. Centralised so hostSave and hostTest
+// stay in sync.
+//
+//   - *biz.EndpointSuggestionError → 422 + suggestedEndpoint payload
+//     (UI offers "apply and retry" dialog).
+//   - *biz.WorkerRejectedError     → 422 + suggestedManagers payload
+//     (UI offers "switch to manager").
+//   - errors.Is ErrHostImmutable   → 403.
+//   - CodedError validation codes  → 400 with the info preserved.
+//   - CodedError ErrHostUnreachable→ 502 (bad gateway to the daemon)
+//     so the UI distinguishes user-fixable vs connectivity issues.
+//
+// Returns (handled, result). When handled == false the caller should
+// fall through to `ajax(c, err)` for the non-mapped case.
+func respondHostError(c web.Context, err error) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+	if sugg, ok := err.(*biz.EndpointSuggestionError); ok {
+		return true, c.Status(http.StatusUnprocessableEntity).Result(misc.ErrHostValidation, sugg.Error(), map[string]interface{}{
+			"endpointSuggestion": true,
+			"originalEndpoint":   sugg.Endpoint,
+			"suggestedEndpoint":  sugg.SuggestedEndpoint,
+			"authMethod":         sugg.AuthMethod,
+		})
+	}
+	if werr, ok := err.(*biz.WorkerRejectedError); ok {
+		return true, c.Status(http.StatusUnprocessableEntity).Result(1, werr.Error(), map[string]interface{}{
+			"suggestedManagers": werr.SuggestedManagers,
+			"workerRejected":    true,
+		})
+	}
+	if errors.Is(err, biz.ErrHostImmutable) {
+		return true, web.NewError(http.StatusForbidden, err.Error())
+	}
+	if ce, ok := err.(*auxoerrors.CodedError); ok {
+		switch ce.Code {
+		case misc.ErrHostValidation, misc.ErrHostEndpointFormat, misc.ErrHostEndpointScheme:
+			return true, c.Status(http.StatusBadRequest).Result(ce.Code, ce.Error(), nil)
+		case misc.ErrHostUnreachable:
+			return true, c.Status(http.StatusBadGateway).Result(ce.Code, ce.Error(), nil)
+		}
+	}
+	return false, nil
+}
 
 // HostHandler encapsulates host management endpoints.
 type HostHandler struct {
@@ -97,7 +145,12 @@ func hostSave(b biz.HostBiz) web.HandlerFunc {
 	return func(c web.Context) error {
 		h := &dao.Host{}
 		err := c.Bind(h, true)
-		if err == nil {
+		// Bind-time validation (struct-tag `valid:"required"`) → wrap
+		// as ErrHostValidation so it emits 400 with a readable body
+		// instead of leaking through ajax() as a bare 500.
+		if err != nil {
+			err = misc.Error(misc.ErrHostValidation, err)
+		} else {
 			ctx, cancel := misc.Context(defaultTimeout)
 			defer cancel()
 
@@ -107,17 +160,8 @@ func hostSave(b biz.HostBiz) web.HandlerFunc {
 				err = b.Update(ctx, h, c.User())
 			}
 		}
-		if errors.Is(err, biz.ErrHostImmutable) {
-			return web.NewError(http.StatusForbidden, err.Error())
-		}
-		// Surface worker-rejection as 422 with the manager suggestions
-		// embedded — the UI reads `.data.suggestedManagers` to offer a
-		// "switch to manager" action.
-		if werr, ok := err.(*biz.WorkerRejectedError); ok {
-			return c.Status(http.StatusUnprocessableEntity).Result(1, werr.Error(), map[string]interface{}{
-				"suggestedManagers": werr.SuggestedManagers,
-				"workerRejected":    true,
-			})
+		if handled, res := respondHostError(c, err); handled {
+			return res
 		}
 		return ajax(c, err)
 	}
@@ -125,7 +169,8 @@ func hostSave(b biz.HostBiz) web.HandlerFunc {
 
 func hostTest(b biz.HostBiz) web.HandlerFunc {
 	type Args struct {
-		Endpoint string `json:"endpoint"`
+		Endpoint   string `json:"endpoint"`
+		AuthMethod string `json:"authMethod"`
 	}
 	return func(c web.Context) error {
 		args := &Args{}
@@ -136,7 +181,10 @@ func hostTest(b biz.HostBiz) web.HandlerFunc {
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
 
-		info, err := b.Test(ctx, args.Endpoint)
+		info, err := b.Test(ctx, args.Endpoint, args.AuthMethod)
+		if handled, res := respondHostError(c, err); handled {
+			return res
+		}
 		if err != nil {
 			return err
 		}

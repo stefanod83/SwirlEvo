@@ -544,7 +544,12 @@ async function saveStack() {
     message.success(t('buttons.save'))
     router.replace({ name: 'std_stack_edit', params: { id: r.data?.id || model.id } })
   } catch (e: any) {
-    message.error(e?.message || String(e))
+    // Prefer the backend `info` field (coded errors from biz/compose_stack.go
+    // — ErrStackNotFound / ErrHostUnreachable / ErrStackOperationFailed, etc.)
+    // so operators see "stack foo: deploy failed on host local (unix:///…):
+    // no such image" instead of axios' generic "Request failed 500".
+    const info = e?.response?.data?.info || e?.message || String(e)
+    message.error(info)
   } finally {
     submitting.value = false
   }
@@ -558,7 +563,8 @@ async function deployStack() {
     message.success(t('buttons.deploy'))
     router.push({ name: 'std_stack_list' })
   } catch (e: any) {
-    message.error(e?.message || String(e))
+    const info = e?.response?.data?.info || e?.message || String(e)
+    message.error(info)
   } finally {
     submitting.value = false
   }

@@ -73,7 +73,7 @@ import registryApi from "@/api/registry";
 import type { Registry } from "@/api/registry";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
-import { useForm, requiredRule } from "@/utils/form";
+import { useForm, requiredRule, urlRule } from "@/utils/form";
 import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
@@ -92,7 +92,7 @@ function onReturn() {
 const form = ref();
 const rules: any = {
   name: requiredRule(),
-  url: requiredRule(),
+  url: [requiredRule(), urlRule()],
   username: requiredRule(),
 };
 const { submit, submiting } = useForm(form, () => registryApi.save(model.value), () => {

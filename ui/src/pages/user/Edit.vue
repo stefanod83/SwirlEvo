@@ -155,7 +155,7 @@ import userApi from "@/api/user";
 import roleApi from "@/api/role";
 import type { User } from "@/api/user";
 import type { Role } from "@/api/role";
-import { useForm, emailRule, requiredRule, customRule } from "@/utils/form";
+import { useForm, emailRule, requiredRule, customRule, passwordConfirmRule } from "@/utils/form";
 import { useI18n } from 'vue-i18n'
 import { useClipboard } from '@vueuse/core'
 import { guid } from "@/utils";
@@ -195,7 +195,10 @@ const rules: any = {
   loginName: requiredRule(),
   email: [requiredRule(), emailRule()],
   password: passwordRequiredRule,
-  passwordConfirm: passwordRequiredRule,
+  // Confirm field: required when the primary password is set
+  // (covers both new-user flow and in-place password change),
+  // plus strict equality check against the primary.
+  passwordConfirm: [passwordRequiredRule, passwordConfirmRule(() => user.value.password || '')],
   tokens: customRule((rule: any, value: any[]) => {
     return value?.every(v => v.name && v.value)
   }, t('tips.required_rule')),

@@ -12,7 +12,7 @@
     </template>
   </x-page-header>
   <n-space class="page-body" vertical :size="12">
-    <n-form :model="model" ref="form" label-placement="top">
+    <n-form :model="model" :rules="rules" ref="form" label-placement="top">
       <n-grid cols="1 640:2" :x-gap="24">
         <n-form-item-gi :label="t('fields.name')" span="2" path="name" label-placement="left">
           <n-input
@@ -89,7 +89,7 @@ import nodeApi from "@/api/node";
 import type { Node } from "@/api/node";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
-import { useForm } from "@/utils/form";
+import { useForm, requiredRule } from "@/utils/form";
 import { returnTo } from "@/utils/nav";
 import { useI18n } from 'vue-i18n'
 
@@ -106,6 +106,11 @@ function onReturn() {
   }
 }
 const form = ref();
+const rules = {
+  name: requiredRule(),
+  role: requiredRule(),
+  availability: requiredRule(),
+}
 const { submit, submiting } = useForm(form, () => nodeApi.save(model.value), () => {
   window.message.info(t('texts.action_success'));
   router.push({ name: 'node_list' })

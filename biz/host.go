@@ -52,13 +52,136 @@ type HostProbeResult struct {
 // config operator onboarding ("already managing the local daemon").
 const LocalHostID = "local"
 
+// EndpointSuggestionError is returned by validateAndNormalizeHost
+// when the endpoint has no scheme but the operator has picked an
+// AuthMethod that unambiguously implies one. The API handler maps
+// this to HTTP 422 with `suggestedEndpoint` in the body so the UI
+// can show an "apply and retry" dialog. Mirrors the pattern used by
+// WorkerRejectedError.
+type EndpointSuggestionError struct {
+	Endpoint          string
+	SuggestedEndpoint string
+	AuthMethod        string
+	Reason            string
+}
+
+func (e *EndpointSuggestionError) Error() string {
+	if e.Reason != "" {
+		return e.Reason
+	}
+	return "endpoint missing scheme; suggested: " + e.SuggestedEndpoint
+}
+
+// validateAndNormalizeHost trims text fields and enforces the required
+// invariants at the biz layer so the API handler doesn't have to.
+// Structured errors (`misc.Error` codes + `*EndpointSuggestionError`)
+// are mapped to 4xx in api/host.go. Returning plain `errors.New`
+// results in a bare 500 — avoid at all costs.
+func validateAndNormalizeHost(host *dao.Host) error {
+	host.Name = strings.TrimSpace(host.Name)
+	host.Endpoint = strings.TrimSpace(host.Endpoint)
+	host.SSHUser = strings.TrimSpace(host.SSHUser)
+
+	if host.Name == "" {
+		return misc.Error(misc.ErrHostValidation, errors.New("Name is required"))
+	}
+	if host.Endpoint == "" {
+		return misc.Error(misc.ErrHostValidation, errors.New("Endpoint is required"))
+	}
+
+	// Scheme classification. Accepted set mirrors ProbeHost:
+	// {http, https, tcp, unix, ssh}. `tcp+tls` on AuthMethod side
+	// still resolves to scheme `tcp`.
+	scheme := ""
+	if idx := strings.Index(host.Endpoint, "://"); idx > 0 {
+		scheme = strings.ToLower(host.Endpoint[:idx])
+	}
+
+	validSchemes := map[string]bool{
+		"http": true, "https": true, "tcp": true, "unix": true, "ssh": true,
+	}
+
+	// No scheme at all: suggest one based on AuthMethod when we have
+	// an unambiguous mapping, otherwise hard-fail with a listing.
+	if scheme == "" {
+		switch host.AuthMethod {
+		case "socket":
+			if strings.HasPrefix(host.Endpoint, "/") {
+				return &EndpointSuggestionError{
+					Endpoint:          host.Endpoint,
+					SuggestedEndpoint: "unix://" + host.Endpoint,
+					AuthMethod:        host.AuthMethod,
+					Reason:            "Endpoint missing scheme. For Auth Method 'Docker Socket' the expected scheme is unix://",
+				}
+			}
+			// socket without leading slash → no suggestion; fall through.
+		case "tcp", "tcp+tls":
+			return &EndpointSuggestionError{
+				Endpoint:          host.Endpoint,
+				SuggestedEndpoint: "tcp://" + host.Endpoint,
+				AuthMethod:        host.AuthMethod,
+				Reason:            "Endpoint missing scheme. For Auth Method 'TCP" + map[string]string{"tcp+tls": " + TLS"}[host.AuthMethod] + "' the expected scheme is tcp://",
+			}
+		case "ssh":
+			return &EndpointSuggestionError{
+				Endpoint:          host.Endpoint,
+				SuggestedEndpoint: "ssh://" + host.Endpoint,
+				AuthMethod:        host.AuthMethod,
+				Reason:            "Endpoint missing scheme. For Auth Method 'SSH' the expected scheme is ssh://",
+			}
+		}
+		return misc.Error(misc.ErrHostEndpointFormat, errors.New("Endpoint missing scheme. Pick an Auth Method to get a suggestion, or prefix the endpoint with one of: tcp://, unix://, ssh://, https:// (for Swarm federation)"))
+	}
+
+	if !validSchemes[scheme] {
+		return misc.Error(misc.ErrHostEndpointFormat, errors.New("Endpoint scheme '"+scheme+"' is not supported. Valid schemes: tcp, unix, ssh, http, https"))
+	}
+
+	// Scheme vs AuthMethod consistency. Skipped for http/https which
+	// take the federation path and ignore AuthMethod entirely.
+	if scheme != "http" && scheme != "https" {
+		expected := map[string]string{
+			"unix": "socket",
+			"tcp":  "tcp", // tcp+tls also valid
+			"ssh":  "ssh",
+		}[scheme]
+		am := host.AuthMethod
+		ok := false
+		switch am {
+		case expected:
+			ok = true
+		case "tcp+tls":
+			ok = scheme == "tcp"
+		case "":
+			// Empty AuthMethod will be auto-filled by the classifier;
+			// skip the mismatch check.
+			ok = true
+		}
+		if !ok {
+			return misc.Error(misc.ErrHostEndpointScheme, errors.New("Endpoint scheme '"+scheme+"://' does not match Auth Method '"+am+"'. Expected Auth Method: "+expected))
+		}
+	}
+
+	// Conditional required fields per AuthMethod.
+	if host.AuthMethod == "ssh" && host.SSHUser == "" {
+		// SSHKey stays optional: operators can rely on agent auth.
+		return misc.Error(misc.ErrHostValidation, errors.New("SSH User is required when Auth Method is SSH"))
+	}
+	if host.AuthMethod == "tcp+tls" && strings.TrimSpace(host.TLSCACert) == "" {
+		// Client cert/key optional (server-verified TLS is valid).
+		return misc.Error(misc.ErrHostValidation, errors.New("TLS CA Certificate is required when Auth Method is TCP + TLS"))
+	}
+
+	return nil
+}
+
 type HostBiz interface {
 	Search(ctx context.Context, name, status string, pageIndex, pageSize int) ([]*dao.Host, int, error)
 	Find(ctx context.Context, id string) (*dao.Host, error)
 	Create(ctx context.Context, host *dao.Host, user web.User) error
 	Update(ctx context.Context, host *dao.Host, user web.User) error
 	Delete(ctx context.Context, id, name string, user web.User) error
-	Test(ctx context.Context, endpoint string) (*HostInfo, error)
+	Test(ctx context.Context, endpoint, authMethod string) (*HostInfo, error)
 	Sync(ctx context.Context, id string) error
 	GetAll(ctx context.Context) ([]*dao.Host, error)
 	// EnsureLocal auto-registers the `local` host (immutable) pointing
@@ -109,6 +232,9 @@ func (b *hostBiz) GetAll(ctx context.Context) ([]*dao.Host, error) {
 }
 
 func (b *hostBiz) Create(ctx context.Context, host *dao.Host, user web.User) error {
+	if err := validateAndNormalizeHost(host); err != nil {
+		return err
+	}
 	// Classify first so we can short-circuit workers (they never touch
 	// the DB) and auto-populate Type/AuthMethod for the UI.
 	probe, err := b.ProbeHost(ctx, host.Endpoint)
@@ -149,6 +275,13 @@ func (b *hostBiz) Update(ctx context.Context, host *dao.Host, user web.User) err
 		existing, _ = b.di.HostGet(ctx, host.ID)
 	}
 	if existing != nil && existing.Immutable {
+		// Immutable path: cosmetic-only update. Validate just the
+		// cosmetic field (Name) — endpoint etc. come from the DB,
+		// not from the payload, so skip the endpoint validator.
+		host.Name = strings.TrimSpace(host.Name)
+		if host.Name == "" {
+			return misc.Error(misc.ErrHostValidation, errors.New("Name is required"))
+		}
 		existing.Name = host.Name
 		existing.Color = host.Color
 		existing.UpdatedAt = now()
@@ -158,6 +291,9 @@ func (b *hostBiz) Update(ctx context.Context, host *dao.Host, user web.User) err
 		}
 		b.eb.CreateHost(EventActionUpdate, existing.ID, existing.Name, user)
 		return nil
+	}
+	if err := validateAndNormalizeHost(host); err != nil {
+		return err
 	}
 	// Re-classify when the endpoint changes (or on every Update — the
 	// probe is cheap, 10s timeout). Lets the UI reflect transitions
@@ -199,10 +335,19 @@ func (b *hostBiz) Delete(ctx context.Context, id, name string, user web.User) er
 	return err
 }
 
-func (b *hostBiz) Test(ctx context.Context, endpoint string) (*HostInfo, error) {
-	info, err := b.d.Hosts.TestConnection(ctx, endpoint)
-	if err != nil {
+func (b *hostBiz) Test(ctx context.Context, endpoint, authMethod string) (*HostInfo, error) {
+	// Reuse the host validator for the ad-hoc "Test Connection" button:
+	// run it against a stub dao.Host so operators get the same
+	// "scheme missing" / suggestion UX they'd see on save. Passing
+	// the AuthMethod from the form lets the validator propose the
+	// right scheme prefix.
+	stub := &dao.Host{Endpoint: strings.TrimSpace(endpoint), Name: "test", AuthMethod: authMethod}
+	if err := validateAndNormalizeHost(stub); err != nil {
 		return nil, err
+	}
+	info, err := b.d.Hosts.TestConnection(ctx, stub.Endpoint)
+	if err != nil {
+		return nil, misc.Error(misc.ErrHostUnreachable, err)
 	}
 	return &HostInfo{
 		EngineVer: info.ServerVersion,
@@ -231,7 +376,7 @@ func (b *hostBiz) Sync(ctx context.Context, id string) error {
 func (b *hostBiz) ProbeHost(ctx context.Context, endpoint string) (*HostProbeResult, error) {
 	trimmed := strings.TrimSpace(endpoint)
 	if trimmed == "" {
-		return nil, errors.New("host: empty endpoint")
+		return nil, misc.Error(misc.ErrHostValidation, errors.New("Endpoint is required"))
 	}
 	// Federation candidate — capabilities probe lives in Phase 3. For
 	// now, accept http/https as the federation marker so the rest of
@@ -244,7 +389,10 @@ func (b *hostBiz) ProbeHost(ctx context.Context, endpoint string) (*HostProbeRes
 	defer cancel()
 	info, err := b.d.Hosts.TestConnection(testCtx, endpoint)
 	if err != nil {
-		return nil, err
+		// Wrap the raw SDK error (which would otherwise leak through
+		// api/host.go::ajax as a bare 500) with a coded unreachable
+		// error so the UI can render the Docker daemon's cause.
+		return nil, misc.Error(misc.ErrHostUnreachable, err)
 	}
 
 	state := info.Swarm.LocalNodeState

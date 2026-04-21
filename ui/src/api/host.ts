@@ -50,8 +50,8 @@ export function remove(id: string, name: string) {
   return ajax.post('/host/delete', { id, name })
 }
 
-export function test(endpoint: string) {
-  return ajax.post('/host/test', { endpoint })
+export function test(endpoint: string, authMethod?: string) {
+  return ajax.post('/host/test', { endpoint, authMethod: authMethod || '' })
 }
 
 export function sync(id: string) {

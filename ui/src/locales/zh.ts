@@ -576,6 +576,7 @@ export default {
         "vault_secret_path": "Vault KV 前缀下的子路径（如 myapp/db）。留空时默认使用名称。",
         "vault_secret_field": "KVv2 字段选择器。留空时返回整个 JSON 对象。",
         "vault_secret_name_rule": "名称不能包含斜杠。允许字母、数字、点、下划线和中划线，最长 128 个字符。",
+        "vault_secret_path_rule": "路径不能以 '/' 开头，也不能包含空片段。每段允许字母、数字、点、下划线和中划线。",
         "vault_secret_no_value": "Swirl 不保存密钥值，仅保存指向 Vault 条目的引用；实际值在部署时从 Vault 读取。",
     },
     "texts": {
@@ -616,6 +617,22 @@ export default {
         "1003": "旧密码不正确",
         "1004": "不能发布外部编排",
         "1005": "系统已经初始化",
+    },
+    "validation": {
+        "invalid_url": "必须是有效的 URL（{schemes}://…）",
+        "invalid_endpoint": "必须是 Docker 端点（tcp://、unix://、ssh://）或 Swarm Swirl 的 https:// 地址",
+        "invalid_ip": "必须是有效的 IPv4 地址",
+        "invalid_cidr": "必须是有效的 CIDR（例如 10.0.0.0/16）",
+        "invalid_duration": "必须是时长（例如 30s、1m、2h30m）",
+        "invalid_hostname": "必须是有效的主机名",
+        "password_mismatch": "两次密码不一致",
+        "pem_suspect": "文本不像 PEM 编码块",
+    },
+    "host_errors": {
+        "scheme_missing_title": "端点缺少协议前缀",
+        "scheme_missing_body": "端点 \"{original}\" 没有协议前缀。根据所选 Auth Method，建议使用 \"{suggested}\"。是否应用并重试？",
+        "apply_and_retry": "应用并重试",
+        "cancel": "取消",
     },
     "backup": {
         "create": "创建备份",
