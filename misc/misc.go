@@ -29,6 +29,26 @@ const (
 	// ErrStackNameConflict is raised when a stack migration is attempted
 	// but a stack with the same name already exists on the target host.
 	ErrStackNameConflict = 1010
+	// ErrHostNotFound is raised when a stack/container/etc. operation
+	// references a host ID that doesn't exist in the Hosts registry.
+	// Returned as HTTP 200 with `info` set so the UI can render a
+	// specific "host no longer exists" message instead of a bare 500.
+	ErrHostNotFound = 1011
+	// ErrHostUnreachable is raised when Swirl can open a Docker client
+	// for a host but the subsequent API call fails — connection refused,
+	// TLS handshake error, DNS failure, etc. The `info` field embeds
+	// the host ID + endpoint + the underlying cause so the operator can
+	// fix the connectivity problem without digging through the server log.
+	ErrHostUnreachable = 1012
+	// ErrStackNotFound is raised when a stack ID (managed path) doesn't
+	// resolve to a persisted record. Distinct from ErrHostNotFound so
+	// the UI can tell the two apart (stale stack link vs deleted host).
+	ErrStackNotFound = 1013
+	// ErrStackOperationFailed is the catch-all for Docker errors bubbled
+	// up from the standalone compose engine (Start/Stop/Remove). The
+	// original daemon message is preserved verbatim in `info` so the
+	// operator sees e.g. "No such container: ..." instead of a bare 500.
+	ErrStackOperationFailed = 1014
 )
 
 func Error(code int32, err error) error {

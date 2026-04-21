@@ -264,11 +264,13 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 		return "", err
 	}
 	if host == nil {
-		return "", errors.New("host not found")
+		return "", misc.Error(misc.ErrHostNotFound,
+			fmt.Errorf("stack %q references host %q but that host is no longer registered", stack.Name, stack.HostID))
 	}
 	cli, err := b.d.Hosts.GetClient(host.ID, host.Endpoint)
 	if err != nil {
-		return "", err
+		return "", misc.Error(misc.ErrHostUnreachable,
+			fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, err))
 	}
 
 	// 2. Self-protection: if the compose file would deploy a container
@@ -404,20 +406,17 @@ func (b *composeStackBiz) checkSelfDeploy(ctx context.Context, cli *dockerclient
 }
 
 func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) error {
-	stack, err := b.di.ComposeStackGet(ctx, id)
-	if err != nil || stack == nil {
-		if stack == nil {
-			return errors.New("stack not found")
-		}
+	stack, err := b.loadStack(ctx, id)
+	if err != nil {
 		return err
 	}
-	cli, err := b.clientForStack(ctx, stack)
+	cli, host, err := b.clientForStack(ctx, stack)
 	if err != nil {
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
 	if err := engine.Start(ctx, stack.Name); err != nil {
-		return err
+		return wrapStackOpError("start", stack.Name, host, err)
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "active")
 	b.eb.CreateStack(EventActionStart, stack.HostID, stack.Name, user)
@@ -425,20 +424,17 @@ func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) e
 }
 
 func (b *composeStackBiz) Stop(ctx context.Context, id string, user web.User) error {
-	stack, err := b.di.ComposeStackGet(ctx, id)
-	if err != nil || stack == nil {
-		if stack == nil {
-			return errors.New("stack not found")
-		}
+	stack, err := b.loadStack(ctx, id)
+	if err != nil {
 		return err
 	}
-	cli, err := b.clientForStack(ctx, stack)
+	cli, host, err := b.clientForStack(ctx, stack)
 	if err != nil {
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
 	if err := engine.Stop(ctx, stack.Name); err != nil {
-		return err
+		return wrapStackOpError("stop", stack.Name, host, err)
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "inactive")
 	b.eb.CreateStack(EventActionShutdown, stack.HostID, stack.Name, user)
@@ -446,15 +442,12 @@ func (b *composeStackBiz) Stop(ctx context.Context, id string, user web.User) er
 }
 
 func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes, force bool, user web.User) error {
-	stack, err := b.di.ComposeStackGet(ctx, id)
-	if err != nil || stack == nil {
-		if stack == nil {
-			return errors.New("stack not found")
-		}
+	stack, err := b.loadStack(ctx, id)
+	if err != nil {
 		return err
 	}
-	cli, err := b.clientForStack(ctx, stack)
-	if err == nil {
+	cli, host, cerr := b.clientForStack(ctx, stack)
+	if cerr == nil {
 		// B4 — volume preservation: before destroying anything, check
 		// whether the user's volumes carry data. If so, require force=true
 		// so the UI can show a second, rafforzato confirmation.
@@ -475,7 +468,17 @@ func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes, 
 		// Cleanup hook drops helper containers + secret volumes by label —
 		// no Vault lookup needed, so stack removal still works when Vault
 		// is unreachable.
-		_ = engine.Remove(ctx, stack.Name, removeVolumes, b.sec.NewCleanupHook())
+		if rErr := engine.Remove(ctx, stack.Name, removeVolumes, b.sec.NewCleanupHook()); rErr != nil {
+			// Preserve the DAO record so the operator can retry after
+			// fixing the underlying daemon issue. Returning early here
+			// prevents a silent delete of the stack metadata while the
+			// actual containers / volumes stayed behind on the host.
+			return wrapStackOpError("remove", stack.Name, host, rErr)
+		}
+	} else {
+		// Client acquisition itself failed — don't silently drop the
+		// record; surface the host error so the UI can render it.
+		return cerr
 	}
 	// Drop persisted bindings — the values live in Vault and are unaffected.
 	_ = b.di.ComposeStackSecretBindingDeleteByStack(ctx, id)
@@ -486,15 +489,88 @@ func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes, 
 	return nil
 }
 
-func (b *composeStackBiz) clientForStack(ctx context.Context, stack *dao.ComposeStack) (*dockerclient.Client, error) {
-	host, err := b.hb.Find(ctx, stack.HostID)
+// loadStack is a tiny convenience wrapper around ComposeStackGet that
+// normalises "not found" into a misc.Coded error with ErrStackNotFound
+// instead of a bare errors.New("stack not found") 500. Callers never
+// need to nil-check stack after this.
+func (b *composeStackBiz) loadStack(ctx context.Context, id string) (*dao.ComposeStack, error) {
+	stack, err := b.di.ComposeStackGet(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if host == nil {
-		return nil, errors.New("host not found")
+	if stack == nil {
+		return nil, misc.Error(misc.ErrStackNotFound,
+			fmt.Errorf("stack %q not found", id))
 	}
-	return b.d.Hosts.GetClient(host.ID, host.Endpoint)
+	return stack, nil
+}
+
+// clientForStack returns (docker client, resolved host, error). The host
+// is returned alongside the client so callers can reference ID +
+// Endpoint when wrapping engine-level errors via wrapStackOpError.
+func (b *composeStackBiz) clientForStack(ctx context.Context, stack *dao.ComposeStack) (*dockerclient.Client, *dao.Host, error) {
+	host, err := b.hb.Find(ctx, stack.HostID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if host == nil {
+		return nil, nil, misc.Error(misc.ErrHostNotFound,
+			fmt.Errorf("stack %q references host %q but that host is no longer registered", stack.Name, stack.HostID))
+	}
+	cli, cErr := b.d.Hosts.GetClient(host.ID, host.Endpoint)
+	if cErr != nil {
+		return nil, host, misc.Error(misc.ErrHostUnreachable,
+			fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, cErr))
+	}
+	return cli, host, nil
+}
+
+// wrapStackOpError turns a raw daemon error bubbling up from the
+// standalone compose engine into a misc.Coded error the API layer can
+// emit as a structured 200/info response (avoiding the bare 500 the UI
+// has no handle on). Includes op name, stack name, and host reference
+// so the operator sees something actionable.
+func wrapStackOpError(op, stackName string, host *dao.Host, err error) error {
+	if err == nil {
+		return nil
+	}
+	hostRef := "unknown host"
+	if host != nil {
+		hostRef = fmt.Sprintf("host %q (%s)", host.ID, host.Endpoint)
+	}
+	// Connectivity-class errors (dial unix ... connection refused,
+	// no such host, TLS handshake, etc.) are remapped to
+	// ErrHostUnreachable so the UI can render a dedicated message.
+	if isConnectivityError(err) {
+		return misc.Error(misc.ErrHostUnreachable,
+			fmt.Errorf("cannot reach %s while trying to %s stack %q: %v", hostRef, op, stackName, err))
+	}
+	return misc.Error(misc.ErrStackOperationFailed,
+		fmt.Errorf("stack %q: %s failed on %s: %v", stackName, op, hostRef, err))
+}
+
+// isConnectivityError is a best-effort classifier of Docker SDK errors
+// that indicate the daemon itself is unreachable rather than rejecting
+// a specific operation. Kept as a substring match on the stringified
+// error to stay resilient across SDK versions (errdefs doesn't cover
+// every transport-layer failure).
+func isConnectivityError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"connection refused",
+		"no such host",
+		"no such file or directory",
+		"network is unreachable",
+		"i/o timeout",
+		"connect: timed out",
+		"tls handshake",
+		"cannot connect to the docker daemon",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func split2(s, sep string) []string {
@@ -546,14 +622,17 @@ func (b *composeStackBiz) FindDetail(ctx context.Context, hostID, name string) (
 		return nil, err
 	}
 	if host == nil {
-		return nil, errors.New("host not found")
+		return nil, misc.Error(misc.ErrHostNotFound,
+			fmt.Errorf("host %q is not registered", hostID))
 	}
 	if host.Status != "connected" {
-		return nil, errors.New("host is not connected")
+		return nil, misc.Error(misc.ErrHostUnreachable,
+			fmt.Errorf("host %q (%s) is not connected: %s", host.ID, host.Endpoint, host.Error))
 	}
 	cli, err := b.d.Hosts.GetClient(host.ID, host.Endpoint)
 	if err != nil {
-		return nil, err
+		return nil, misc.Error(misc.ErrHostUnreachable,
+			fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, err))
 	}
 	engine := compose.NewStandaloneEngine(cli)
 
@@ -645,16 +724,18 @@ func (b *composeStackBiz) Import(ctx context.Context, stack *dao.ComposeStack, r
 			return "", err
 		}
 		if host == nil {
-			return "", errors.New("host not found")
+			return "", misc.Error(misc.ErrHostNotFound,
+				fmt.Errorf("host %q is not registered", stack.HostID))
 		}
 		cli, err := b.d.Hosts.GetClient(host.ID, host.Endpoint)
 		if err != nil {
-			return "", err
+			return "", misc.Error(misc.ErrHostUnreachable,
+				fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, err))
 		}
 		engine := compose.NewStandaloneEngine(cli)
 		yaml, err := engine.ReconstructCompose(ctx, stack.Name)
 		if err != nil {
-			return "", err
+			return "", wrapStackOpError("reconstruct", stack.Name, host, err)
 		}
 		stack.Content = yaml
 	}
@@ -677,13 +758,13 @@ func (b *composeStackBiz) Import(ctx context.Context, stack *dao.ComposeStack, r
 
 // StartExternal starts all containers of an unmanaged project on a host.
 func (b *composeStackBiz) StartExternal(ctx context.Context, hostID, name string, user web.User) error {
-	cli, err := b.hostClient(ctx, hostID)
+	cli, host, err := b.hostClient(ctx, hostID)
 	if err != nil {
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
 	if err := engine.Start(ctx, name); err != nil {
-		return err
+		return wrapStackOpError("start", name, host, err)
 	}
 	b.eb.CreateStack(EventActionStart, hostID, name, user)
 	return nil
@@ -691,13 +772,13 @@ func (b *composeStackBiz) StartExternal(ctx context.Context, hostID, name string
 
 // StopExternal stops all running containers of an unmanaged project on a host.
 func (b *composeStackBiz) StopExternal(ctx context.Context, hostID, name string, user web.User) error {
-	cli, err := b.hostClient(ctx, hostID)
+	cli, host, err := b.hostClient(ctx, hostID)
 	if err != nil {
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
 	if err := engine.Stop(ctx, name); err != nil {
-		return err
+		return wrapStackOpError("stop", name, host, err)
 	}
 	b.eb.CreateStack(EventActionShutdown, hostID, name, user)
 	return nil
@@ -705,7 +786,7 @@ func (b *composeStackBiz) StopExternal(ctx context.Context, hostID, name string,
 
 // RemoveExternal removes all containers of an unmanaged project on a host.
 func (b *composeStackBiz) RemoveExternal(ctx context.Context, hostID, name string, removeVolumes, force bool, user web.User) error {
-	cli, err := b.hostClient(ctx, hostID)
+	cli, host, err := b.hostClient(ctx, hostID)
 	if err != nil {
 		return err
 	}
@@ -725,21 +806,30 @@ func (b *composeStackBiz) RemoveExternal(ctx context.Context, hostID, name strin
 	}
 	engine := compose.NewStandaloneEngine(cli)
 	if err := engine.Remove(ctx, name, removeVolumes, b.sec.NewCleanupHook()); err != nil {
-		return err
+		return wrapStackOpError("remove", name, host, err)
 	}
 	b.eb.CreateStack(EventActionDelete, hostID, name, user)
 	return nil
 }
 
-func (b *composeStackBiz) hostClient(ctx context.Context, hostID string) (*dockerclient.Client, error) {
+// hostClient returns (client, host, err) for a hostID. Error values use
+// the same misc.Coded pattern as clientForStack so the API layer emits
+// specific codes instead of a bare 500.
+func (b *composeStackBiz) hostClient(ctx context.Context, hostID string) (*dockerclient.Client, *dao.Host, error) {
 	host, err := b.hb.Find(ctx, hostID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if host == nil {
-		return nil, errors.New("host not found")
+		return nil, nil, misc.Error(misc.ErrHostNotFound,
+			fmt.Errorf("host %q is not registered", hostID))
 	}
-	return b.d.Hosts.GetClient(host.ID, host.Endpoint)
+	cli, cErr := b.d.Hosts.GetClient(host.ID, host.Endpoint)
+	if cErr != nil {
+		return nil, host, misc.Error(misc.ErrHostUnreachable,
+			fmt.Errorf("Docker client for host %q (%s) could not be created: %v", host.ID, host.Endpoint, cErr))
+	}
+	return cli, host, nil
 }
 
 // parseEnvFile converts a .env-style text block (one KEY=VALUE per line)
@@ -847,7 +937,7 @@ func (b *composeStackBiz) Migrate(ctx context.Context, id, targetHostID string, 
 	//    safe on the source and the operator can rsync/snapshot it later.
 	//    Cleanup hook drops only helper containers + secret volumes, never
 	//    project data volumes.
-	if cli, cErr := b.clientForStack(ctx, stack); cErr == nil {
+	if cli, _, cErr := b.clientForStack(ctx, stack); cErr == nil {
 		engine := compose.NewStandaloneEngine(cli)
 		// Best-effort: if the source host is unreachable the DAO pointer
 		// still flips. Operator is warned via the UI checklist.

@@ -286,20 +286,110 @@ func (b *hostBiz) ProbeHost(ctx context.Context, endpoint string) (*HostProbeRes
 	return result, nil
 }
 
-// EnsureLocal creates the `local` system-managed host entry if it
-// doesn't already exist. Idempotent. Intentionally swallows "exists"
-// errors so concurrent boots (unlikely but possible) don't panic.
-// Only runs when MODE=standalone — in swarm mode the concept of
-// local-socket-host is irrelevant (swirl talks to its daemon
-// directly without going through the Hosts registry).
+// isLocalSocketEndpoint reports whether `ep` refers to the Docker unix
+// socket that Swirl itself talks to. The canonical form is
+// `unix:///var/run/docker.sock`, but we tolerate two common variants:
+//
+//	exact              unix:///var/run/docker.sock
+//	trailing slash     unix:///var/run/docker.sock/
+//	no scheme          /var/run/docker.sock
+//
+// Used by EnsureLocal to decide whether an operator-registered host
+// already covers the local daemon — in which case we do NOT create the
+// `local` auto-entry (dedup) and may clean up a stale one from a
+// previous boot.
+func isLocalSocketEndpoint(ep string) bool {
+	s := strings.TrimSpace(ep)
+	if s == "" {
+		return false
+	}
+	// strip optional trailing slash for schemed URIs
+	s = strings.TrimSuffix(s, "/")
+	switch s {
+	case "unix:///var/run/docker.sock":
+		return true
+	case "/var/run/docker.sock":
+		return true
+	}
+	return false
+}
+
+// EnsureLocal creates (or cleans up) the `local` system-managed host
+// entry depending on what the operator has already registered. Runs
+// only in MODE=standalone. The decision matrix:
+//
+//	(A) `local` exists AND another non-immutable host points at the
+//	    local socket → DELETE `local` (system-initiated cleanup —
+//	    bypasses the ErrHostImmutable guard). One-shot self-repair
+//	    for operators who upgrade to this build after having manually
+//	    registered a local-socket host on an older version that
+//	    created `local` unconditionally.
+//	(B) `local` exists AND no other local-socket host exists →
+//	    status quo, keep it. Idempotent re-boot.
+//	(C) `local` does NOT exist AND another host already points at the
+//	    local socket → do nothing. The operator's own record owns the
+//	    local daemon; we never create a second one.
+//	(D) `local` does NOT exist AND no other local-socket host exists
+//	    → create `local` as before (zero-config onboarding).
 func (b *hostBiz) EnsureLocal(ctx context.Context) error {
 	if !misc.IsStandalone() {
 		return nil
 	}
-	existing, err := b.di.HostGet(ctx, LocalHostID)
-	if err == nil && existing != nil {
+
+	all, err := b.di.HostGetAll(ctx)
+	if err != nil {
+		log.Get("host").Warnf("EnsureLocal: could not list hosts: %v", err)
+		return err
+	}
+
+	var (
+		autoLocal      *dao.Host
+		otherLocalHost *dao.Host // first non-immutable host that points at the local socket
+	)
+	for _, h := range all {
+		if h == nil {
+			continue
+		}
+		if h.ID == LocalHostID && h.Immutable {
+			autoLocal = h
+			continue
+		}
+		if !h.Immutable && isLocalSocketEndpoint(h.Endpoint) && otherLocalHost == nil {
+			otherLocalHost = h
+		}
+	}
+
+	// (A) auto-created `local` AND an operator-owned local host both exist.
+	// The operator's record takes precedence — it carries the history,
+	// imported stacks, chosen name, etc. Drop the dup.
+	if autoLocal != nil && otherLocalHost != nil {
+		// Direct DAO delete: the biz-level Delete would refuse because
+		// the record is Immutable. This cleanup path is the documented
+		// system-initiated exception.
+		b.d.Hosts.RemoveClient(autoLocal.ID)
+		if derr := b.di.HostDelete(ctx, autoLocal.ID); derr != nil {
+			log.Get("host").Warnf("EnsureLocal: could not remove duplicate auto-created %q (kept operator host %q / %s): %v",
+				autoLocal.ID, otherLocalHost.ID, otherLocalHost.Endpoint, derr)
+			return derr
+		}
+		log.Get("host").Infof("EnsureLocal: removed duplicate auto-created host %q — operator host %q (%s) already covers the local socket",
+			autoLocal.ID, otherLocalHost.ID, otherLocalHost.Endpoint)
 		return nil
 	}
+
+	// (B) auto `local` already there, no operator dup → nothing to do.
+	if autoLocal != nil {
+		return nil
+	}
+
+	// (C) operator host already covers the local socket → no auto-creation.
+	if otherLocalHost != nil {
+		log.Get("host").Infof("EnsureLocal: skipping auto-registration — operator host %q (%s) already covers the local socket",
+			otherLocalHost.ID, otherLocalHost.Endpoint)
+		return nil
+	}
+
+	// (D) nothing covers the local socket → create it.
 	host := &dao.Host{
 		ID:         LocalHostID,
 		Name:       "local",
