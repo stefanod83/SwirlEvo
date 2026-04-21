@@ -147,6 +147,88 @@ func TestRoundTripTraefikCfg(t *testing.T) {
 	}
 }
 
+func TestResourcesStandaloneRoundtrip(t *testing.T) {
+	cfg := &AddonsConfig{
+		Resources: map[string]ResourcesServiceCfg{
+			"web": {CPUsLimit: "0.5", MemoryLimit: "256M", MemoryReservation: "128M"},
+		},
+	}
+	out, err := injectAddonLabels(traefikMinimalStack, cfg, "standalone")
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	// yaml.v3 wraps numeric-looking scalars in quotes — accept both forms.
+	for _, needle := range []string{
+		"cpus: \"0.5\" # swirl-managed",
+		"mem_limit: 256M # swirl-managed",
+		"mem_reservation: 128M # swirl-managed",
+	} {
+		if !strings.Contains(out, needle) {
+			t.Errorf("expected %q in output, got:\n%s", needle, out)
+		}
+	}
+	reversed, err := extractAddonConfig(out)
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	got := reversed.Resources["web"]
+	if got.CPUsLimit != "0.5" || got.MemoryLimit != "256M" || got.MemoryReservation != "128M" {
+		t.Errorf("roundtrip mismatch: got %+v", got)
+	}
+}
+
+func TestResourcesSwarmPlacement(t *testing.T) {
+	cfg := &AddonsConfig{
+		Resources: map[string]ResourcesServiceCfg{
+			"web": {CPUsLimit: "1.0", MemoryLimit: "512M", CPUsReservation: "0.25"},
+		},
+	}
+	out, err := injectAddonLabels(traefikMinimalStack, cfg, "swarm")
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	// Swarm placement: deploy.resources.{limits,reservations}
+	if !strings.Contains(out, "limits:") || !strings.Contains(out, "cpus: \"1.0\"") {
+		t.Errorf("expected deploy.resources.limits on swarm, got:\n%s", out)
+	}
+	if !strings.Contains(out, "reservations:") {
+		t.Errorf("expected deploy.resources.reservations on swarm, got:\n%s", out)
+	}
+	// No top-level cpus on swarm mode.
+	if strings.Contains(out, "\n    cpus: ") {
+		t.Errorf("swarm mode must not emit top-level cpus, got:\n%s", out)
+	}
+}
+
+func TestResourcesPreserveUserManaged(t *testing.T) {
+	input := `services:
+  web:
+    image: nginx:alpine
+    cpus: 2
+    mem_limit: 1G
+`
+	cfg := &AddonsConfig{
+		Resources: map[string]ResourcesServiceCfg{
+			"web": {CPUsLimit: "0.5", MemoryLimit: "256M"},
+		},
+	}
+	out, err := injectAddonLabels(input, cfg, "standalone")
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	// User wrote cpus: 2 without marker — must survive.
+	if !strings.Contains(out, "cpus: 2") {
+		t.Errorf("expected user-managed cpus: 2 to survive, got:\n%s", out)
+	}
+	if !strings.Contains(out, "mem_limit: 1G") {
+		t.Errorf("expected user-managed mem_limit: 1G to survive, got:\n%s", out)
+	}
+	// And wizard cpus: 0.5 must NOT replace the user value.
+	if strings.Contains(out, "cpus: 0.5 # swirl-managed") {
+		t.Errorf("wizard should not overwrite user-managed cpus, got:\n%s", out)
+	}
+}
+
 func TestNoOpWhenCfgEmpty(t *testing.T) {
 	out, err := injectAddonLabels(traefikMinimalStack, nil, "standalone")
 	if err != nil {

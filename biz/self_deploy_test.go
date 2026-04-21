@@ -163,6 +163,9 @@ func (s *stubComposeStackBiz) GetVersion(context.Context, string) (*dao.ComposeS
 func (s *stubComposeStackBiz) RestoreVersion(context.Context, string, string, web.User) error {
 	return nil
 }
+func (s *stubComposeStackBiz) ParseAddons(string) (*AddonsConfig, error) {
+	return &AddonsConfig{}, nil
+}
 
 var _ ComposeStackBiz = (*stubComposeStackBiz)(nil)
 

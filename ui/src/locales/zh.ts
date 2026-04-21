@@ -839,7 +839,18 @@ export default {
         "preview_hint": "只读预览，保存时会重新生成"
     },
     "stack_addon_resources": {
-        "title": "资源限制"
+        "title": "资源限制",
+        "mode_swarm": "Swarm 模式：限制写入 deploy.resources.limits，预留写入 deploy.resources.reservations。",
+        "mode_standalone": "Standalone 模式：限制写在服务级别（cpus / mem_limit / mem_reservation）。预留字段仅 Swarm 支持。",
+        "no_services": "当前 compose YAML 中没有服务。",
+        "cpus_limit": "CPU 上限",
+        "cpus_reservation": "CPU 预留",
+        "memory_limit": "内存上限",
+        "memory_reservation": "内存预留",
+        "cpus_placeholder": "例如 0.5",
+        "memory_placeholder": "例如 512M, 2G",
+        "swarm_only": "仅 Swarm",
+        "memory_hint": "内存值需满足 \\d+[kKmMgG]?[bB]? 格式（例如 256M、2G、512000000）。"
     },
     "stack_addon_traefik": {
         "detected": "已检测到 Traefik",

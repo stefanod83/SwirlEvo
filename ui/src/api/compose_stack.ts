@@ -238,6 +238,10 @@ export class ComposeStackApi {
     versionRestore(stackId: string, versionId: string) {
         return ajax.post<Result<Object>>('/compose-stack/version-restore', { stackId, versionId })
     }
+
+    parseAddons(content: string) {
+        return ajax.post<AddonsConfig>('/compose-stack/parse-addons', { content })
+    }
 }
 
 export default new ComposeStackApi

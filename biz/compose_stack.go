@@ -79,6 +79,14 @@ type ComposeStackBiz interface {
 	// snapshot first (reason="restore:rev<N>") so every restore is
 	// reversible.
 	RestoreVersion(ctx context.Context, stackID, versionID string, user web.User) error
+
+	// ParseAddons is the authoritative reverse parser for the addon
+	// wizard tabs: given a compose YAML it returns the AddonsConfig
+	// rebuilt by scanning `# swirl-managed`-stamped labels/fields.
+	// Exposed through the API so the editor loads the same state the
+	// backend would emit on the next save — avoids drift between a
+	// TS approximation and the Go canonical emitter.
+	ParseAddons(content string) (*AddonsConfig, error)
 }
 
 // VolumesContainDataError wraps a list of project volumes that contain data,

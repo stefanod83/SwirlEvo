@@ -35,6 +35,13 @@ type ComposeStackHandler struct {
 	Versions       web.HandlerFunc `path:"/versions" auth:"stack.view" desc:"list content-history versions of a stack"`
 	VersionGet     web.HandlerFunc `path:"/version-get" auth:"stack.view" desc:"fetch a single version with body"`
 	VersionRestore web.HandlerFunc `path:"/version-restore" method:"post" auth:"stack.edit" desc:"restore a prior version of a stack"`
+
+	// ParseAddons is the authoritative reverse-parser for the addon
+	// wizard tabs: given a compose YAML it returns the AddonsConfig
+	// rebuilt from `# swirl-managed` markers. Called by the editor at
+	// load time + after a version restore so the tabs start in sync
+	// with the persisted content. POST to keep the body out of the URL.
+	ParseAddons web.HandlerFunc `path:"/parse-addons" method:"post" auth:"stack.view" desc:"reverse-parse addon wizard state from compose YAML"`
 }
 
 // NewComposeStack is registered in api.init.
@@ -54,6 +61,7 @@ func NewComposeStack(b biz.ComposeStackBiz, ad biz.AddonDiscoveryBiz) *ComposeSt
 		Versions:       composeStackVersions(b),
 		VersionGet:     composeStackVersionGet(b),
 		VersionRestore: composeStackVersionRestore(b),
+		ParseAddons:    composeStackParseAddons(b),
 	}
 }
 
@@ -281,6 +289,23 @@ func composeStackVersionRestore(b biz.ComposeStackBiz) web.HandlerFunc {
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
 		return ajax(c, b.RestoreVersion(ctx, args.StackID, args.VersionID, c.User()))
+	}
+}
+
+func composeStackParseAddons(b biz.ComposeStackBiz) web.HandlerFunc {
+	type Args struct {
+		Content string `json:"content"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		cfg, err := b.ParseAddons(args.Content)
+		if err != nil {
+			return err
+		}
+		return success(c, cfg)
 	}
 }
 

@@ -561,6 +561,14 @@ func setScalarField(parent *yaml.Node, key, value string) {
 		return
 	}
 	if existing := mappingFieldNode(parent, key); existing != nil {
+		// Same merge policy as upsertLabels: wizard touches only values
+		// carrying the marker; user-authored entries stay intact. A
+		// value without the marker survives a subsequent wizard save
+		// untouched, and the reverse parser will not pick it up as
+		// wizard state (see resourcesCfgFromService).
+		if existing.Kind == yaml.ScalarNode && !strings.Contains(existing.LineComment, swirlManagedMarker) {
+			return
+		}
 		existing.Kind = yaml.ScalarNode
 		existing.Tag = "!!str"
 		existing.Value = value

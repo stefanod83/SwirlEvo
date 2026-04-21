@@ -845,7 +845,18 @@ export default {
         "preview_hint": "anteprima read-only, rigenerata al save"
     },
     "stack_addon_resources": {
-        "title": "Risorse"
+        "title": "Risorse",
+        "mode_swarm": "Modalità Swarm: i limiti vanno in deploy.resources.limits e le reservation in deploy.resources.reservations.",
+        "mode_standalone": "Modalità Standalone: i limiti vanno al livello del servizio (cpus / mem_limit / mem_reservation). Le reservation sono solo Swarm.",
+        "no_services": "Nessun servizio trovato nel compose YAML.",
+        "cpus_limit": "Limite CPU",
+        "cpus_reservation": "Reservation CPU",
+        "memory_limit": "Limite memoria",
+        "memory_reservation": "Reservation memoria",
+        "cpus_placeholder": "es. 0.5",
+        "memory_placeholder": "es. 512M, 2G",
+        "swarm_only": "Solo Swarm",
+        "memory_hint": "I valori di memoria devono rispettare \\d+[kKmMgG]?[bB]? (es. 256M, 2G, 512000000)."
     },
     "stack_addon_traefik": {
         "detected": "Traefik rilevato",

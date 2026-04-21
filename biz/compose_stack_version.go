@@ -99,6 +99,13 @@ func (b *composeStackBiz) GetVersion(ctx context.Context, versionID string) (*da
 	return v, nil
 }
 
+// ParseAddons exposes the extract reverse-parser so the API layer can
+// surface it to the editor. Thin wrapper that lets the biz interface stay
+// the single injection point for everything compose-stack related.
+func (b *composeStackBiz) ParseAddons(content string) (*AddonsConfig, error) {
+	return extractAddonConfig(content)
+}
+
 // RestoreVersion replaces the current stack's Content + EnvFile with those of
 // a previous snapshot. A new snapshot is created BEFORE the overwrite so the
 // restore itself is reversible — reason="restore:rev<N>" so the UI can tell

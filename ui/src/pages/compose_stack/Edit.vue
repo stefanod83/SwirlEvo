@@ -103,9 +103,11 @@
         </n-tab-pane>
 
         <n-tab-pane name="resources" :tab="t('stack_addon_resources.title') || 'Resources'">
-          <n-alert type="info" :show-icon="true">
-            {{ t('stack_addon_common.coming_soon') || 'Resource limits wizard coming soon.' }}
-          </n-alert>
+          <AddonTabResources
+            :services="serviceNames"
+            :mode="hostMode"
+            v-model="resourcesCfgModel"
+          />
         </n-tab-pane>
       </n-tabs>
 
@@ -536,10 +538,13 @@ import XPanel from "@/components/Panel.vue";
 import XCodeMirror from "@/components/CodeMirror.vue";
 import StackVersionHistory from "@/components/stack-version/StackVersionHistory.vue";
 import AddonTabTraefik from "@/components/stack-addons/AddonTabTraefik.vue";
+import AddonTabResources from "@/components/stack-addons/AddonTabResources.vue";
 import composeStackApi from "@/api/compose_stack";
-import type { ComposeStack, HostAddons, AddonsConfig, TraefikServiceCfg } from "@/api/compose_stack";
-import { parseServiceNames, collectManagedLabels } from "@/utils/stack-addon-parse";
-import { traefikCfgFromLabels } from "@/utils/stack-addon-labels";
+import type {
+  ComposeStack, HostAddons, AddonsConfig,
+  TraefikServiceCfg, ResourcesServiceCfg,
+} from "@/api/compose_stack";
+import { parseServiceNames } from "@/utils/stack-addon-parse";
 import composeStackSecretApi from "@/api/compose-stack-secret";
 import type {
   ComposeStackSecretBinding,
@@ -635,29 +640,39 @@ const hostMode = computed<'swarm' | 'standalone'>(() => {
 })
 
 // addonsConfig is the wizard state kept in-memory and sent alongside the
-// compose payload on Save/Deploy. It's also reverse-populated whenever the
-// YAML in the editor changes so the tabs reflect already-persisted labels.
+// compose payload on Save/Deploy. It's rebuilt from the persisted content
+// via the server-side parser (POST /compose-stack/parse-addons) so the tabs
+// never drift from what the Go emitter would produce on the next save.
 const addonsConfig = reactive<AddonsConfig>({ traefik: {}, resources: {} })
 
-function reverseParseAddons(content: string) {
-  const managed = collectManagedLabels(content)
-  const traefik: Record<string, TraefikServiceCfg> = {}
-  for (const svc of Object.keys(managed)) {
-    const cfg = traefikCfgFromLabels(managed[svc])
-    if (cfg.enabled) traefik[svc] = cfg
+async function reverseParseAddons(content: string) {
+  if (!content) {
+    addonsConfig.traefik = {}
+    addonsConfig.resources = {}
+    return
   }
-  addonsConfig.traefik = traefik
+  try {
+    const r = await composeStackApi.parseAddons(content)
+    const cfg = (r.data as AddonsConfig) || {}
+    addonsConfig.traefik = cfg.traefik || {}
+    addonsConfig.resources = cfg.resources || {}
+  } catch {
+    // Parsing failure (e.g. invalid YAML mid-edit) leaves the current
+    // tab state intact — operators keep typing and the server parses
+    // at the next save.
+  }
 }
 
-watch(() => model.content, (c) => { reverseParseAddons(c) })
-
-// traefikCfgModel is the two-way bridge between AddonTabTraefik and the
-// addonsConfig reactive state. Keeping it as a computed getter/setter avoids
-// writing directly to `addonsConfig.traefik` from the template (which would
-// bypass Vue's reactivity tracking in nested object scenarios).
+// traefikCfgModel / resourcesCfgModel are the two-way bridges between the
+// addon tabs and addonsConfig. Keeping them as computed getter/setter pairs
+// avoids writing directly to nested reactive state from the template.
 const traefikCfgModel = computed<Record<string, TraefikServiceCfg>>({
   get: () => addonsConfig.traefik || {},
   set: (v) => { addonsConfig.traefik = v },
+})
+const resourcesCfgModel = computed<Record<string, ResourcesServiceCfg>>({
+  get: () => addonsConfig.resources || {},
+  set: (v) => { addonsConfig.resources = v },
 })
 
 // historyRef is used after a restore to refresh the list so the new snapshot
@@ -675,6 +690,8 @@ async function reloadStackFromServer() {
       model.content = s.data.content || ''
       model.envFile = s.data.envFile || ''
     }
+    // Rebuild addon tab state from the restored content.
+    await reverseParseAddons(model.content)
   } catch {
     // Best-effort: the restore itself succeeded (server returned 2xx) so
     // we don't surface a second error if the follow-up fetch hiccups.
@@ -1101,6 +1118,9 @@ onMounted(async () => {
       model.envFile = s.data.envFile || ''
       model.errorMessage = s.data.errorMessage || ''
     }
+    // Reverse-parse the persisted content so the addon tabs start in
+    // sync with the YAML (marker-tagged labels/fields → tab state).
+    await reverseParseAddons(model.content)
     // Fire in parallel: stack-level artifacts + self-deploy flag check.
     // loadSelfDeployConfig is tolerant to 403/404 (returns null) so
     // users without self_deploy.view still get a clean Deploy button.
