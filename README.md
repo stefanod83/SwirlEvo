@@ -168,7 +168,8 @@ Legend:
 | Stale-lock reclaim at boot + on trigger | ✅ | ❌ | |
 | Sidekick watchdog (90s) | ✅ | ❌ | |
 | Clear stuck lock (UI button + `POST /reset`) | ✅ | ❌ | |
-| Progress modal + sessionStorage restore | ✅ | ❌ | Polls `/api/system/mode`; no iframe, no recovery HTTP server |
+| Progress modal + sessionStorage restore | ✅ | ❌ | Polls `/api/system/ready` (3 consecutive 200s gate the redirect) + `/api/self-deploy/status`; no iframe, no recovery HTTP server |
+| Two-gate health check (HTTP `/ready` + Docker healthcheck inspect) | ✅ | ❌ | Sidekick runs gate A then gate B; `unhealthy` triggers auto-rollback |
 | EnvFile injection into sidekick | ✅ | ❌ | |
 | Auto-rollback on failure | ✅ | ❌ | Rename-back pivot, `PreserveContainerNames` |
 

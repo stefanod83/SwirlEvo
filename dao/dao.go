@@ -22,6 +22,13 @@ func Register(name string, builder Builder) {
 type Interface interface {
 	Upgrade(ctx context.Context) error
 
+	// Ping returns nil if the underlying database is reachable. It's
+	// called by the /api/system/ready readiness probe, so it MUST be
+	// cheap (< 1s) and non-retrying — callers pass a tight context
+	// deadline. For Mongo: a `Ping` against the primary. For Bolt: a
+	// trivial read transaction that returns immediately.
+	Ping(ctx context.Context) error
+
 	RoleGet(ctx context.Context, id string) (*Role, error)
 	RoleSearch(ctx context.Context, name string) (roles []*Role, err error)
 	RoleCreate(ctx context.Context, role *Role) error

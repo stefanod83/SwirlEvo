@@ -77,6 +77,18 @@ func (d *Dao) Upgrade(ctx context.Context) error {
 	return nil
 }
 
+// Ping verifies the BoltDB file is reachable by opening a read
+// transaction and returning immediately. No retry, no disk I/O beyond
+// what the boltdb library does internally to acquire the mmap read lock.
+func (d *Dao) Ping(ctx context.Context) error {
+	if d.db == nil {
+		return errors.New("bolt: db handle is nil")
+	}
+	return d.db.View(func(tx *bolt.Tx) error {
+		return nil
+	})
+}
+
 func (d *Dao) replace(bucket, key string, value interface{}) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		buf, err := encode(value)

@@ -15,7 +15,7 @@ import (
 const healthPollInterval = 2 * time.Second
 
 // healthRequestTimeout is the per-request timeout for the GET against
-// /api/system/mode. Kept well below healthPollInterval so a slow
+// /api/system/ready. Kept well below healthPollInterval so a slow
 // response never stacks against the next tick.
 const healthRequestTimeout = 1500 * time.Millisecond
 
@@ -28,9 +28,15 @@ const minHealthTimeout = 30 * time.Second
 // total timeout elapses. The context is honoured — cancelling it aborts
 // the poll loop immediately with ctx.Err().
 //
-// Expected endpoint: /api/system/mode (public, auth:"*"). A 200 OK is
-// considered "alive" per the Phase 4 safety caveat — v2 may introduce
-// /api/system/ready with a DB ping for a stricter signal.
+// Expected endpoint: /api/system/ready (public, auth:"*"). A 200 OK
+// means the new Swirl process has wired up its DB client, Docker
+// client and settings snapshot — i.e. the home page is actually
+// usable. A 503 means "not yet ready, keep polling" (the endpoint
+// returns 503 when any dependency check fails).
+//
+// /api/system/ready replaced /api/system/mode here after the
+// "UI redirects too early → broken home page, need F5" bug: /mode
+// answers as soon as the HTTP server starts (before DB connect).
 //
 // Returns nil on first 2xx. Returns a descriptive error on timeout,
 // including the last observed HTTP status (or network error) so the
@@ -125,3 +131,4 @@ func probeOnce(ctx context.Context, client *http.Client, url string) (int, error
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode, nil
 }
+

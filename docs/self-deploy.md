@@ -7,9 +7,14 @@ Swirl can redeploy itself. The v3 flow is:
 3. When you open that stack's Edit page, the **Deploy** button becomes **Auto-Deploy** (warning-colored). Click it to trigger a short-lived sidekick container that stops the running Swirl, pulls the new image, redeploys the stack, and verifies the new Swirl is healthy.
 
 While the deploy is in flight, the Swirl UI shows a simple **"Deploy in
-progress"** modal. It polls `/api/system/mode` every 3 seconds; when
-the new primary is online, the page full-reloads. There is **no iframe,
-no sidekick HTTP server, no recovery UI** — the sidekick is a silent
+progress"** modal. It polls `/api/system/ready` every 3 seconds and
+requires three consecutive 200 OKs (≈9 s of sustained readiness
+through the reverse proxy) before the page full-reloads on
+`/?_r=<timestamp>` (cache-busting so the browser doesn't reuse a
+stale `index.html` pointing at old content-hashed chunks). The
+readiness check passes only when DB ping + Docker client + settings
+snapshot are all wired up — not just the HTTP server. There is
+**no iframe, no sidekick HTTP server, no recovery UI** — the sidekick is a silent
 one-shot process whose only outputs are `state.json` on the shared
 volume and `docker logs` of its own container. The post-deploy
 Settings page shows the terminal phase + sidekick container logs
@@ -42,7 +47,7 @@ This page is the operator guide. The feature is **standalone mode only**.
 |-----------|------|
 | **Source ComposeStack** | A Swirl-managed compose stack whose YAML describes the currently-running Swirl + its siblings (mongodb, etc.). Lives in Swirl's own DB. |
 | **Main Swirl** | Validates the source YAML, parses `.env`-style variables, writes `job.json` on the shared `/data/self-deploy/` volume, and spawns the sidekick. |
-| **Sidekick container** (`swirl-deploy-agent-<short>`) | Runs with `network_mode: host`. Stops + renames old primary, pulls image, calls `StandaloneEngine.DeployWithResult` on the stack's project name (preserving the renamed backup via `PreserveContainerNames`), health-checks the new Swirl by resolving its container IP from compose labels, then removes the backup. Exits when the deploy resolves. **No HTTP server, no recovery UI** — the sidekick only writes `state.json` and exits with 0 on success / 3 on any non-success terminal. |
+| **Sidekick container** (`swirl-deploy-agent-<short>`) | Runs with `network_mode: host`. Stops + renames old primary, pulls image, calls `StandaloneEngine.DeployWithResult` on the stack's project name (preserving the renamed backup via `PreserveContainerNames`), then runs a **two-gate health check** against the new Swirl (HTTP `/api/system/ready` probe → Docker `inspect` healthcheck polling), then removes the backup. Exits when the deploy resolves. **No HTTP server, no recovery UI** — the sidekick only writes `state.json` and exits with 0 on success / 3 on any non-success terminal. |
 | **Shared volume** (`/data/self-deploy/`) | Contains `job.json`, `state.json`, `.lock`. Survives across container swaps **only** if the Swirl service in the source YAML mounts a persistent volume at `/data`. A preflight check blocks the deploy if this mount is missing. |
 
 ### The rename-then-deploy pivot
@@ -53,7 +58,9 @@ Self-deploy *never removes* the previous Swirl container until the new one is fu
 2. Graceful `docker stop` + **rename** to `swirl-previous` (not remove). Labels are preserved.
 3. Pull the target image.
 4. `StandaloneEngine.DeployWithResult(project, yaml, opts)` with `opts.PreserveContainerNames=["swirl-previous"]`. The engine recreates all services in the stack **except** the renamed backup. Networks/volumes declared in YAML are reused when already present.
-5. Resolve the new Swirl container's IP by compose labels (`com.docker.compose.project=<stack>` + `com.docker.compose.service` containing `swirl`). Poll `http://<ip>:<expose-port>/api/system/mode` until 200 OK or the health budget expires. The URL is **re-resolved per probe** so an in-flight container restart (new IP) is tolerated.
+5. **Two-gate health check** against the new Swirl:
+   - **Gate A (HTTP probe)**: resolve the new Swirl container's IP by compose labels (`com.docker.compose.project=<stack>` + `com.docker.compose.service` containing `swirl`) and poll `http://<ip>:<expose-port>/api/system/ready` until 200 OK or the health budget expires. `/api/system/ready` (not `/mode`) is the probe target because `/mode` returns 200 as soon as the HTTP server starts — before the DB client and settings snapshot are wired up — which caused the "home page loads broken after redirect, need F5" race. The URL is **re-resolved per probe** so an in-flight container restart (new IP) is tolerated.
+   - **Gate B (Docker healthcheck inspect)**: after gate A passes, `waitContainerHealthy` in `cmd/deploy_agent/engine.go` polls `docker inspect` on the new container until `State.Health.Status == "healthy"`. If the container declares **no HEALTHCHECK**, the gate returns immediately (no behaviour change vs. pre-two-gate). On `State.Health.Status == "unhealthy"`: the sidekick fails the deploy and auto-rollback kicks in.
 6. On success: remove `swirl-previous`. On failure: `rollback()` (see below).
 
 ### Why `PreserveContainerNames` matters
@@ -151,7 +158,7 @@ Then:
 3. Navigate to **Stacks → that stack → Edit**. The **Deploy** button is now yellow and labeled **Auto-Deploy**.
 4. Change the `image:` tag in the YAML editor to the new version, then click **Auto-Deploy** (it auto-saves the stack before triggering the deploy).
 5. A small modal appears: "Self-deploy in progress — this page will auto-reload when the new Swirl is online."
-6. When the new Swirl answers `GET /api/system/mode`, the modal closes and the page full-reloads on `/`.
+6. When the new Swirl answers `GET /api/system/ready` with 200 OK (DB + Docker client + settings all hydrated) for **three consecutive polls** (≈9 s) through the reverse proxy, the modal closes and the page full-reloads on `/?_r=<timestamp>` (the query parameter is a cache-buster that forces a conditional GET on `index.html` so the browser picks up the new build's chunk hashes).
 
 ---
 
@@ -198,14 +205,39 @@ from accumulating pending async closures when the primary is down):
 - `GET /api/self-deploy/status` every 2 s — reads state.json on the
   primary. Populates the phase + log tail + error. Silent on
   failure so the modal keeps the last-seen phase during the swap
-  window. **Phase=`success`** (when preceded by an in-flight phase)
-  triggers the modal close + page reload.
-- `GET /api/system/mode` every 3 s — secondary "is the new primary
-  up?" signal. A 200 OK **only** triggers the success path AFTER
-  the status poll has observed an in-progress phase — otherwise the
+  window. **Phase=`success`** is **observational only** — it updates
+  the phase chip but does NOT trigger the redirect. Reason: the
+  sidekick's own gate-A probe goes against the container's direct
+  IP, which returns 200 before the reverse proxy (Traefik) has
+  picked up the new container. Letting Signal B redirect caused
+  momentary Bad-Gateway flashes; the UI now waits for the
+  reverse-proxy to agree (via `/ready`, below).
+- `GET /api/system/ready` every 3 s — the redirect driver. A 200 OK
+  **only** advances the success counter AFTER the status poll has
+  observed an in-progress phase (`sawInProgress`) — otherwise the
   old primary (still alive for the brief window before the sidekick
   calls `docker stop`) would satisfy the check and the modal would
   reload right into a `502 Bad Gateway` from the reverse proxy.
+  `/ready` (not `/mode`) is used so the redirect waits for the DB
+  client and settings snapshot to be wired up — `/mode` answers too
+  early (liveness only), which previously caused a broken home page
+  on reload that required an F5 to recover.
+  **Three consecutive 200s** (`READY_CONFIRMS_REQUIRED = 3`, ≈9 s at
+  the 3 s cadence) are required before `onDeploySuccess` fires. Any
+  non-200 resets the counter. This protects against (a) the new
+  primary answering `/ready` as soon as the DB is pinged and the
+  Docker client is constructed (~2 s after container start — still
+  too early for biz-layer caches) and (b) the reverse proxy
+  flapping between old and new container during the last phase of
+  the swap. The interim state shows the
+  `self_deploy.progress.waiting_settling` label ("new primary
+  responding, confirming…").
+- **Cache-busting redirect**: `onDeploySuccess` does
+  `window.location.assign('/?_r=' + Date.now())` instead of a
+  plain `'/'`. The query string forces a conditional GET on
+  `index.html` so the browser doesn't reuse a cached copy that
+  references content-hashed chunks from the previous build (those
+  404 against the new container's embedded `ui/dist`).
 - **Terminal failure** (phase=`failed` / `rolled_back`) stops the
   polling but **keeps the modal open** with the error + log tail so
   the operator can read them. The session flag is released so the
@@ -230,7 +262,7 @@ Session survival mechanics:
   Settings page checks sessionStorage on mount and re-opens the
   modal via `resumeFromSession()`.
 - **5-minute timeout tag**: after 5 minutes without a 200 from
-  `/api/system/mode`, the modal header shows a "Deploy is taking
+  `/api/system/ready`, the modal header shows a "Deploy is taking
   longer than expected" warning tag. The poll continues.
 
 ---
@@ -385,5 +417,8 @@ Post-fix: the sidekick resolves the target container's IP via `com.docker.compos
 
 - `CHANGELOG.md` — the v3 simplification + hardening entries.
 - `biz/self_deploy.go` — `TriggerDeploy`, `prepareJob`, `checkStackCompatibility`, `reclaimStaleLock`, `ResetLock`.
-- `cmd/deploy_agent/lifecycle.go` — `runDeploy`, `deployNew`, `rollback`, `resolveHealthURL`.
+- `cmd/deploy_agent/lifecycle.go` — `runDeploy`, `deployNew`, `rollback`, `resolveHealthURL` (gate A).
+- `cmd/deploy_agent/engine.go` — `waitContainerHealthy` (gate B: docker-inspect healthcheck polling).
+- `api/system.go::systemReady` — the public `/api/system/ready` endpoint targeted by both gate A and the UI modal.
+- `ui/src/composables/useAutoDeployProgress.ts` — UI polling with `READY_CONFIRMS_REQUIRED = 3` and cache-busting redirect.
 - `docker/compose/standalone.go` — `DeployOptions.PreserveContainerNames`, `RemoveExcept`, DNS-alias-on-shorthand fix.

@@ -37,15 +37,16 @@ services:
     # networks:
     #   - traefik_proxy
 
-    # Self-healthcheck: /api/system/mode is intentionally public (auth:"*")
-    # so it works before any user is logged in — see the swirl-expert
-    # memory "system_mode_public.md". `wget` is part of BusyBox in the
-    # Alpine base image used by the Dockerfile, so no extra package is
-    # required. If you switch to a distroless/scratch base, replace this
-    # probe with a CMD that invokes the binary's own healthcheck or add
-    # `wget` / `curl` to the runtime stage.
+    # Self-healthcheck: /api/system/ready is the readiness probe
+    # (public, auth:"*"). Unlike /api/system/mode (liveness — answers
+    # as soon as the HTTP server starts), /ready returns 200 only
+    # after the DB client, Docker client and settings snapshot are
+    # wired up — i.e. when the UI can actually be used. `wget` is
+    # part of BusyBox in the Alpine base image, so no extra package
+    # is required. If you switch to a distroless/scratch base,
+    # replace this probe with `wget` / `curl` added to the runtime.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8001/api/system/mode || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8001/api/system/ready || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

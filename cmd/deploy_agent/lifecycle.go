@@ -109,7 +109,7 @@ func runDeploy(ctx context.Context, j *biz.SelfDeployJob, sw *stateWriter) error
 		return handleDeployFailure(deployCtx, cli, j, sw, logger, originalName, fmt.Errorf("deploy new stack: %w", err))
 	}
 
-	// Step 5 — wait for the new container to answer /api/system/mode.
+	// Step 5 — wait for the new container to answer /api/system/ready.
 	// The sidekick runs with `network_mode: host`, which means
 	// 127.0.0.1:<port> only works when the YAML publishes the port to
 	// the host. With Traefik fronting Swirl, the YAML typically omits
@@ -118,6 +118,11 @@ func runDeploy(ctx context.Context, j *biz.SelfDeployJob, sw *stateWriter) error
 	// the check survives an in-flight container restart (e.g. Swirl
 	// crashes once while warming up DB connection, restarts, comes up
 	// healthy on a new bridge IP).
+	//
+	// We poll /api/system/ready (not /mode) because /mode answers as
+	// soon as the HTTP server starts, which is too early — the DB
+	// client and settings snapshot may still be initialising. /ready
+	// returns 200 only once the new Swirl is actually usable.
 	sw.SetPhase(biz.SelfDeployPhaseHealthCheck)
 	healthBudget := splitHealthBudget(timeout, pullBudget)
 	resolver := func(rctx context.Context) (string, error) {
@@ -126,10 +131,28 @@ func runDeploy(ctx context.Context, j *biz.SelfDeployJob, sw *stateWriter) error
 	if initial, _ := resolver(deployCtx); initial != "" {
 		sw.Logf("waiting for new Swirl to answer GET %s (budget %s, resolved by label)", initial, healthBudget)
 	} else {
-		sw.Logf("waiting for new Swirl to answer /api/system/mode (budget %s, awaiting container registration)", healthBudget)
+		sw.Logf("waiting for new Swirl to answer /api/system/ready (budget %s, awaiting container registration)", healthBudget)
 	}
 	if err := waitHealthyResolver(deployCtx, resolver, healthBudget); err != nil {
 		return handleDeployFailure(deployCtx, cli, j, sw, logger, originalName, fmt.Errorf("health check: %w", err))
+	}
+
+	// Step 5b — second gate: wait for the Docker healthcheck (declared
+	// in the compose file — wget against /api/system/ready) to report
+	// `healthy`. Rationale: the HTTP probe above returns 200 as soon as
+	// /ready is mounted + DB pinged + Docker client constructed, which
+	// in practice is 1-2 s after container start — too early for the
+	// UI to load cleanly. The Docker healthcheck's `start_period`
+	// (typically 30 s) + `interval` give the process time to warm
+	// biz-layer caches and for the reverse proxy (Traefik) to discover
+	// the new container. If the container has no HEALTHCHECK directive
+	// declared, waitContainerHealthy returns immediately — no behavior
+	// change for operators who haven't adopted the template healthcheck.
+	if cid, cerr := findSwirlContainerID(deployCtx, cli, j.StackName); cerr == nil && cid != "" {
+		sw.Logf("waiting for container %s to report Docker healthcheck=healthy (budget %s)", cid[:12], healthBudget)
+		if herr := waitContainerHealthy(deployCtx, cli, cid, healthBudget); herr != nil {
+			return handleDeployFailure(deployCtx, cli, j, sw, logger, originalName, fmt.Errorf("container healthcheck: %w", herr))
+		}
 	}
 
 	// Step 6 — new version is healthy. Remove the previous container.
@@ -173,7 +196,10 @@ func buildHealthURL(j *biz.SelfDeployJob) string {
 	if port == 0 {
 		port = misc.SelfDeployExposePort
 	}
-	return fmt.Sprintf("http://127.0.0.1:%d/api/system/mode", port)
+	// /api/system/ready — stricter probe than /mode: waits for DB +
+	// Docker client + settings hydration before returning 200. See
+	// api/system.go::systemReady.
+	return fmt.Sprintf("http://127.0.0.1:%d/api/system/ready", port)
 }
 
 // resolveHealthURL finds the IP of the newly-deployed Swirl container
@@ -197,7 +223,8 @@ func resolveHealthURL(ctx context.Context, cli *client.Client, j *biz.SelfDeploy
 		// YAML DOES publish 8001 on the host.
 		return buildHealthURL(j), nil
 	}
-	return fmt.Sprintf("http://%s:%d/api/system/mode", ip, port), nil
+	// /api/system/ready — stricter probe than /mode, see buildHealthURL.
+	return fmt.Sprintf("http://%s:%d/api/system/ready", ip, port), nil
 }
 
 func stopPrimary(ctx context.Context, cli *client.Client, containerID string, grace time.Duration) error {

@@ -1,5 +1,5 @@
 <template>
-  <div :style="{ border: `1px solid ${themeVars.borderColor}`, width: '100%' }">
+  <div ref="wrapperRef" :style="wrapperStyle">
     <textarea ref="editorRef" />
   </div>
 </template>
@@ -51,7 +51,26 @@ export default defineComponent({
     const store = useStore();
     const { modelValue, defaultValue, readonly, height } = toRefs(props);
     const editorRef = ref();
+    const wrapperRef = ref<HTMLElement>();
     let editor: CodeMirror.EditorFromTextArea | null;
+    let resizeObserver: ResizeObserver | null = null;
+
+    // Wrapper style: owns the concrete height so the inner
+    // CodeMirror (which the global `.CodeMirror` rule stretches to
+    // `height: 100%`) fills it exactly. `box-sizing: border-box` +
+    // `overflow: hidden` make the 1 px border count inside the
+    // declared height — otherwise the editor would either overflow
+    // or leave a 2 px gap at the bottom. Callers may override
+    // `height` by passing `:style="{ height: '55vh' }"` on the
+    // component — Vue's style merge lets parent styles win over
+    // these defaults.
+    const wrapperStyle = computed(() => ({
+      border: `1px solid ${themeVars.value.borderColor}`,
+      width: '100%',
+      height: height.value || '450px',
+      boxSizing: 'border-box' as const,
+      overflow: 'hidden' as const,
+    }));
 
     // Track the preference store so the CodeMirror theme updates on the fly
     // when the user toggles dark/light mode without a page refresh. Without
@@ -99,20 +118,37 @@ export default defineComponent({
       } else if (defaultValue.value) {
         editor.setValue(defaultValue.value);
       }
-      if (height.value) {
-        editor.setSize(null, height.value);
-      }
+      // Height is owned by the wrapper style + `.CodeMirror { height:
+      // 100% }` rule in common.css — NOT by editor.setSize. The old
+      // setSize call was redundant and fought the `!important` rule
+      // on odd viewport sizes (editor fixed to setSize value while
+      // wrapper was a vh-based height → gap or overflow).
       // Force a refresh so the editor lays out correctly when mounted inside
       // a previously-hidden tab pane.
       setTimeout(() => editor?.refresh(), 50);
+      // Re-layout when the outer wrapper changes width (window resize,
+      // sidebar toggle, form-item reflow). Without this, CodeMirror
+      // keeps the width it saw at mount time and drifts out of
+      // alignment with the form's borders — the gutters end up
+      // misaligned or the editor overflows the form content box.
+      if (typeof ResizeObserver !== 'undefined' && wrapperRef.value) {
+        resizeObserver = new ResizeObserver(() => {
+          editor?.refresh();
+        });
+        resizeObserver.observe(wrapperRef.value);
+      }
     });
     onBeforeUnmount(() => {
+      if (resizeObserver !== null) {
+        resizeObserver.disconnect();
+        resizeObserver = null;
+      }
       if (null !== editor) {
         editor.toTextArea();
         editor = null;
       }
     });
-    return { themeVars, editorRef };
+    return { wrapperStyle, editorRef, wrapperRef };
   }
 });
 </script>

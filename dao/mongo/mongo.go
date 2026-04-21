@@ -100,6 +100,16 @@ func open(addr string) (*mongo.Database, error) {
 	return client.Database(db), nil
 }
 
+// Ping verifies the Mongo primary is reachable. The caller supplies a
+// tight context deadline (< 1s) to keep the /api/system/ready probe
+// fast even when the replica set is down.
+func (d *Dao) Ping(ctx context.Context) error {
+	if d.db == nil {
+		return nil
+	}
+	return d.db.Client().Ping(ctx, nil)
+}
+
 func (d *Dao) Upgrade(ctx context.Context) (err error) {
 	for name, models := range indexes {
 		c := d.db.Collection(name)

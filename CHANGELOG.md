@@ -754,6 +754,60 @@ stack-as-source-of-truth model:
   persisted `misc.Setting.SelfDeploy` records are silently dropped on
   load — no migration.
 
+### Self-deploy: `/api/system/ready` gate + two-gate health check
+
+* **New readiness endpoint** `GET /api/system/ready` (public, `auth:"*"`).
+  Returns 200 only when DB ping succeeds, the Docker client can be
+  resolved, and the in-memory `*misc.Setting` is hydrated. Returns 503
+  with `failing:[...]` otherwise. Per-check budget 1s; total worst-case
+  response ~3s. `NewSystem(...)` in `api/system.go` gained a
+  `dao.Interface` dependency — auxo DI resolves it.
+* **Sidekick probe** (`cmd/deploy_agent/lifecycle.go::buildHealthURL` +
+  `resolveHealthURL`) polls `/ready` instead of `/mode`. Phase
+  `success` is written only once the new Swirl is actually usable.
+* **Two-gate health check** in the sidekick: after the HTTP probe
+  returns 200, `waitContainerHealthy` in `cmd/deploy_agent/engine.go`
+  polls `docker inspect` on the new container until
+  `State.Health.Status == "healthy"`. If the container has **no
+  HEALTHCHECK** declared, the call returns immediately (pre-two-gate
+  behaviour preserved). On `"unhealthy"` it fails the deploy → auto-
+  rollback kicks in. Catches a class of regressions where the new
+  Swirl answers `/ready` but is otherwise broken (e.g. crashloops on
+  the first heavy request).
+* **UI progress modal** (`ui/src/composables/useAutoDeployProgress.ts`)
+  polls `/ready` for the redirect gate. Fixes "home page loads broken
+  after Auto-Deploy redirect, F5 required to recover" race: `/mode`
+  answered as soon as the HTTP server started, before DB client and
+  settings were wired up.
+* **3-consecutive-confirms rule** on the UI poll:
+  `READY_CONFIRMS_REQUIRED = 3` — Signal A requires three successive
+  200 OKs (~9 s at the 3 s interval) before `onDeploySuccess` fires.
+  Any non-200 resets the counter. Protects against (a) the new
+  primary answering `/ready` too soon (biz caches still cold) and
+  (b) the reverse proxy flapping between old and new container during
+  the last phase of the swap. New i18n key
+  `self_deploy.progress.waiting_settling` (en/it/zh) covers the
+  interim "confirming…" state.
+* **Signal B no longer redirects**. `/api/self-deploy/status`
+  returning `phase === 'success'` updates the phase chip only; it
+  does NOT close the modal. Reason: the sidekick's own gate-A probe
+  hits the container IP directly, answering ~2-5 s before the reverse
+  proxy (Traefik) has picked up the new container. Letting Signal B
+  redirect caused momentary Bad-Gateway flashes. Only the
+  browser-side `/ready` poll (which goes through the reverse proxy)
+  drives the redirect now.
+* **Cache-busting redirect**: `onDeploySuccess` does
+  `window.location.assign('/?_r=' + Date.now())` instead of a plain
+  `'/'`. The query string forces a conditional GET on `index.html`
+  so the browser doesn't reuse a cached copy referencing
+  content-hashed chunks from the previous build (those 404 against
+  the new container's embedded `ui/dist`).
+* **Docker healthcheck** in all four root compose templates updated
+  to probe `/ready` so `docker ps` `healthy` state matches
+  user-visible readiness.
+* **DAO interface** grew a cheap `Ping(ctx)` method. Mongo pings the
+  primary; Bolt runs a trivial `View` transaction.
+
 ### Self-deploy v3 hardening (mega-commit)
 
 Series of fixes to make the v2 flow actually survive real-world
@@ -1109,6 +1163,67 @@ Gateway" during the restart window. The operator sees a small modal,
 the page reloads when the new Swirl answers. Terminal state + docker
 logs of the sidekick are visible from Settings once the new Swirl is
 online.
+
+### Host UX: immutable `local` accepts cosmetic updates
+
+* `biz/host.go::Update` previously refused every write on an
+  immutable host with `ErrHostImmutable`. That locked the color
+  picker out of the auto-registered `local` host.
+* Relaxed: when `existing.Immutable == true`, `Update` now writes
+  **only** `Name`, `Color`, `UpdatedAt`, `UpdatedBy` onto the
+  persisted record. `Endpoint`, `AuthMethod`, `Type`, `SwirlURL`
+  and `Immutable` itself are preserved from the DB — the system
+  host still cannot be repointed or reclassified from the UI.
+* `Delete` is unchanged: still refuses with `ErrHostImmutable`.
+* Event `host.update` is emitted so the audit trail captures the
+  cosmetic change.
+
+### Federation panel gated by `MODE=swarm`
+
+* The standalone portal is a peer-token **consumer** (it pastes a
+  token into Hosts → Add); it never mints peers. The Settings →
+  Federation panel is therefore hidden in standalone mode.
+* `ui/src/pages/setting/Setting.vue`: both the panel render
+  (`v-if="canAdminFederation && store.state.mode === 'swarm'"`)
+  and the `onMounted` call to `loadFederationPeers()` are guarded
+  by the same condition. `federation.admin` alone is no longer
+  sufficient on a standalone instance.
+
+### Swarm host add UX hint
+
+* `ui/src/pages/host/Edit.vue` shows a persistent hint below the
+  Endpoint input:
+  > Standalone Docker host: use `tcp://`, `unix://`, or `ssh://`.
+  > Swarm cluster: deploy Swirl in the cluster and use its HTTPS
+  > URL (e.g. `https://swirl-swarm.example.com`) — the connection
+  > is then federated, never a direct socket to the manager.
+* New i18n key `tips.host_endpoint_types` (en/it/zh).
+* Missing resource labels `objects.self_deploy` and
+  `objects.federation` added to all three locales — every resource
+  in `security/perm.go::Resources` now has a localized label.
+
+### External stack import → hard page reload
+
+* `ui/src/pages/compose_stack/View.vue::doImport(redeploy)` now
+  navigates with `window.location.assign(router.resolve(...).href)`
+  instead of `router.push(...)` so the `std_stack_detail` page
+  re-mounts from scratch. Symptom before: after importing an
+  external stack, the action bar still showed the external-stack
+  button set (no Edit / Delete / Deploy / Shutdown) because the
+  page was re-using the previous route context.
+
+### CodeMirror layout fix
+
+* `ui/src/components/CodeMirror.vue` wrapper: `box-sizing:
+  border-box` + `overflow: hidden` added. The 1 px border was
+  previously pushing the wrapper's total width to
+  `100% + 2 px`, overflowing its form column.
+* **`ResizeObserver`** attached to the wrapper calls
+  `editor.refresh()` on any width change (window resize, sidebar
+  toggle, form-item reflow, tab activation). The old `setTimeout(50)`
+  only ran once at mount → any subsequent layout change left
+  CodeMirror with the width it saw at mount time → gutter
+  misalignment.
 
 ---
 

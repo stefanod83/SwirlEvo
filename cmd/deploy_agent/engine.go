@@ -181,6 +181,97 @@ func findSwirlContainerIP(ctx context.Context, cli *client.Client, projectName s
 	return "", nil
 }
 
+// findSwirlContainerID locates the Swirl container ID by the same
+// label-based lookup used for IP resolution. Returns "" when no
+// candidate is found.
+func findSwirlContainerID(ctx context.Context, cli *client.Client, projectName string) (string, error) {
+	list, err := cli.ContainerList(ctx, dockercontainer.ListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", "com.docker.compose.project="+projectName),
+		),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, c := range list {
+		svc := c.Labels["com.docker.compose.service"]
+		if strings.Contains(strings.ToLower(svc), "swirl") {
+			return c.ID, nil
+		}
+	}
+	return "", nil
+}
+
+// containerHealthPollInterval is the delay between two docker-inspect
+// polls. Kept in line with healthPollInterval (2s) so the two poll loops
+// behave consistently.
+const containerHealthPollInterval = 2 * time.Second
+
+// waitContainerHealthy polls `docker inspect` on the given container ID
+// until its `State.Health.Status == "healthy"` or the context deadline
+// elapses. Used as a second gate after the HTTP probe to give the new
+// Swirl time to fully warm up (DB pool, biz-layer caches, reverse-proxy
+// discovery) — the HTTP probe alone returns 200 as soon as /ready is
+// mounted, which is too early in practice.
+//
+// Behaviour:
+//   - Container without a HEALTHCHECK (no State.Health block): returns
+//     nil immediately. The HTTP probe is then the only readiness gate.
+//   - State.Health.Status == "healthy": returns nil.
+//   - State.Health.Status == "unhealthy": returns an error (deploy fails
+//     → auto-rollback).
+//   - "starting" or missing container: keep polling.
+//
+// Total budget is bounded by `total`. Ctx cancellation aborts immediately.
+func waitContainerHealthy(ctx context.Context, cli *client.Client, containerID string, total time.Duration) error {
+	if containerID == "" {
+		return nil
+	}
+	if total < containerHealthPollInterval {
+		total = containerHealthPollInterval
+	}
+	deadline := time.Now().Add(total)
+
+	var lastStatus string
+	attempts := 0
+	for {
+		attempts++
+		info, err := cli.ContainerInspect(ctx, containerID)
+		if err == nil {
+			if info.State == nil || info.State.Health == nil {
+				return nil
+			}
+			lastStatus = info.State.Health.Status
+			switch lastStatus {
+			case "healthy":
+				return nil
+			case "unhealthy":
+				var failingLog string
+				if n := len(info.State.Health.Log); n > 0 {
+					failingLog = info.State.Health.Log[n-1].Output
+				}
+				return fmt.Errorf("deploy-agent: container %s reported unhealthy after %d inspect polls (last log: %s)", containerID[:12], attempts, failingLog)
+			}
+		}
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		wait := containerHealthPollInterval
+		if wait > remaining {
+			wait = remaining
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return fmt.Errorf("deploy-agent: container %s did not reach healthy status within %s (last=%q, %d attempts)", containerID[:12], total, lastStatus, attempts)
+}
+
 // pullImageRaw is the daemon-side pull. Drains the NDJSON stream to
 // surface embedded errors (the Docker daemon returns HTTP 200 and
 // reports errors in the stream body).

@@ -16,9 +16,15 @@ import { Mutations } from '@/store/mutations'
 //    primary Swirl. Populates the phase chip + recent log lines.
 //    During the brief window when the primary is being swapped, the
 //    fetch fails transparently — the modal keeps the last-seen phase.
-//  - `/api/system/mode` every 3 s — the "is the new primary up?"
-//    signal. First 200 OK triggers onDeploySuccess → close modal +
-//    full reload.
+//  - `/api/system/ready` every 3 s — the "is the new primary
+//    fully-initialised?" signal. Gated on the sidekick having written
+//    an in-progress phase (`sawInProgress`) so the old primary
+//    answering a 200 pre-stop doesn't cause a too-early reload. First
+//    200 OK AFTER `sawInProgress` triggers onDeploySuccess → close
+//    modal + full reload. /ready (not /mode) is used because /mode
+//    answers as soon as the HTTP server starts — before the DB
+//    client and settings snapshot are wired up — which caused the
+//    "home page loads broken, need F5" race.
 //
 // An internal `tick` ref drives the elapsed-time computed so the
 // displayed counter updates once a second.
@@ -42,7 +48,7 @@ export function useAutoDeployProgress() {
 
     // sawInProgress flips true the first time the status poll observes
     // an in-flight phase. Until that happens we must IGNORE any 200
-    // from /api/system/mode — the old primary is still answering, and
+    // from /api/system/ready — the old primary is still answering, and
     // closing the modal now would reload the page in the middle of
     // the container swap ("Bad Gateway" from the reverse proxy).
     const IN_PROGRESS_PHASES = new Set([
@@ -50,6 +56,27 @@ export function useAutoDeployProgress() {
     ])
     const TERMINAL_FAIL_PHASES = new Set(['failed', 'rolled_back'])
     let sawInProgress = false
+    // Require N CUMULATIVE 200s from /api/system/ready via the reverse
+    // proxy before declaring the deploy done. Cumulative (not
+    // consecutive) because reverse proxies (Traefik etc.) can briefly
+    // flap between old and new container during the swap — a single
+    // 404/502 in the middle shouldn't nuke the whole settling window
+    // or the UI gets stuck waiting forever. At 3 s polling × 3 samples
+    // ≈ 9 s minimum of observed readiness before redirect, tolerating
+    // up to a few transient failures along the way.
+    const READY_CONFIRMS_REQUIRED = 3
+    let readyConfirms = 0
+    // Fast-path: once the sidekick has declared phase=success (both
+    // its gates passed — HTTP probe + Docker healthcheck), a single
+    // 200 from /ready via the reverse proxy is enough to confirm
+    // routing landed on the new container. Also arms a
+    // safety-valve timeout: if Traefik is genuinely stuck on the
+    // old routing table, redirect anyway after the grace period so
+    // the operator isn't left watching an infinite spinner when the
+    // backend is actually fine.
+    const FAST_PATH_CONFIRMS = 1
+    const SIDEKICK_SUCCESS_GRACE_MS = 15_000
+    let sidekickSuccessAt: number | null = null
 
     const progressDescription = computed(() =>
         t('self_deploy.progress.description')
@@ -82,6 +109,8 @@ export function useAutoDeployProgress() {
         progressLogTail.value = []
         progressStartedAt.value = Date.now()
         sawInProgress = false
+        readyConfirms = 0
+        sidekickSuccessAt = null
         progressOpen.value = true
 
         store.commit(Mutations.SetSelfDeployInProgress, {
@@ -112,6 +141,8 @@ export function useAutoDeployProgress() {
         // flag could only have been persisted if the deploy was in
         // flight. A subsequent /status poll will confirm.
         sawInProgress = true
+        readyConfirms = 0
+        sidekickSuccessAt = null
         progressOpen.value = true
 
         startProgressPolling()
@@ -132,25 +163,65 @@ export function useAutoDeployProgress() {
         const tick = async () => {
             if (!progressOpen.value) return
             try {
-                const resp = await fetch('/api/system/mode', { cache: 'no-store' })
+                const resp = await fetch('/api/system/ready', { cache: 'no-store' })
                 if (resp.ok) {
                     // CRITICAL: do NOT close the modal on the very
-                    // first 200 OK — the old primary is still running
-                    // for a brief window between /deploy returning 202
-                    // and the sidekick calling docker stop on it. If
-                    // we reload now, the browser hits the reverse
-                    // proxy mid-stop → Bad Gateway. Gate the success
-                    // on sawInProgress (flipped by the /status poll
-                    // when it observes pending/stopping/etc).
+                    // first 200 OK — two reasons.
+                    // (1) The old primary is still running for a brief
+                    // window between /deploy returning 202 and the
+                    // sidekick calling docker stop on it; reloading
+                    // now would hit the reverse proxy mid-stop → Bad
+                    // Gateway. Gate on `sawInProgress` (flipped by
+                    // the /status poll when it observes
+                    // pending/stopping/etc).
+                    // (2) The new primary answers /ready as soon as
+                    // the DB is pinged and the Docker client is
+                    // constructed (~2 s after container start). That
+                    // is too early in practice: biz-layer caches are
+                    // cold, and the reverse proxy can still be
+                    // flapping between the old and new container.
+                    // Require N cumulative 200s before redirecting so
+                    // readiness is sustained through those windows.
                     if (sawInProgress) {
+                        readyConfirms++
+                        // Fast path: once the sidekick has declared
+                        // success (both gates cleared), one 200 via
+                        // the reverse proxy is enough to confirm
+                        // routing has landed on the new container.
+                        const threshold = sidekickSuccessAt !== null
+                            ? FAST_PATH_CONFIRMS
+                            : READY_CONFIRMS_REQUIRED
+                        if (readyConfirms >= threshold) {
+                            onDeploySuccess()
+                            return
+                        }
+                        progressStatus.value = t('self_deploy.progress.waiting_settling')
+                    } else {
+                        progressStatus.value = t('self_deploy.progress.waiting_initial')
+                    }
+                } else {
+                    // Non-200: do NOT reset readyConfirms — a reverse
+                    // proxy flap mid-swap shouldn't discard a partial
+                    // settling window and leave the UI stuck forever.
+                    // Safety valve: if the sidekick has already
+                    // reported success and the grace window has
+                    // elapsed without /ready cooperating (Traefik
+                    // genuinely stuck on stale routes), redirect
+                    // anyway — the backend is fine.
+                    if (sidekickSuccessAt !== null && Date.now() - sidekickSuccessAt > SIDEKICK_SUCCESS_GRACE_MS) {
                         onDeploySuccess()
                         return
                     }
-                    progressStatus.value = t('self_deploy.progress.waiting_initial')
-                } else {
                     progressStatus.value = t('self_deploy.progress.waiting_503')
                 }
             } catch {
+                // Same logic for transport-level errors (connection
+                // refused mid-swap, DNS blip): don't reset, apply
+                // the same safety valve.
+                if (sidekickSuccessAt !== null && Date.now() - sidekickSuccessAt > SIDEKICK_SUCCESS_GRACE_MS) {
+                    onDeploySuccess()
+                    return
+                }
                 progressStatus.value = t('self_deploy.progress.waiting_connecting')
             }
         }
@@ -189,7 +260,24 @@ export function useAutoDeployProgress() {
                         sawInProgress = true
                     }
                     if (data.phase === 'success' && sawInProgress) {
-                        onDeploySuccess()
+                        // Do NOT redirect from here — the sidekick's
+                        // own probe is against the container's direct
+                        // IP, which returns 200 before the reverse
+                        // proxy (Traefik) has picked up the new
+                        // container. Let the /ready poll (which goes
+                        // through the reverse proxy) drive the
+                        // redirect.
+                        //
+                        // We DO arm the fast-path + safety-valve
+                        // timer here: once the sidekick has declared
+                        // success (both gates cleared), the /ready
+                        // poll only needs one more 200 to redirect,
+                        // and if Traefik never cooperates within the
+                        // grace window, the safety valve redirects
+                        // anyway so the operator isn't stuck.
+                        if (sidekickSuccessAt === null) {
+                            sidekickSuccessAt = Date.now()
+                        }
                         return
                     }
                     if (TERMINAL_FAIL_PHASES.has(data.phase) && sawInProgress) {
@@ -263,8 +351,13 @@ export function useAutoDeployProgress() {
         // requests on the fresh page follow the normal 401-redirect
         // logic again.
         store.commit(Mutations.SetSelfDeployInProgress, { jobId: null, inProgress: false })
-        // Full reload so Vuex and the live setting snapshot are fresh.
-        window.location.assign('/')
+        // Full reload with a cache-busting query param so the browser
+        // doesn't serve the old index.html (which references stale
+        // content-hashed chunks from the previous build — those 404
+        // against the new container's embedded ui/dist). Query param
+        // forces a conditional GET on index.html; the new bundle's
+        // fresh chunks are then loaded normally.
+        window.location.assign('/?_r=' + Date.now())
     }
 
     function cleanup() {

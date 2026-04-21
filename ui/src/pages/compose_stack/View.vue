@@ -428,7 +428,13 @@ async function doImport(redeploy: boolean) {
     }, redeploy, pullImages.value)
     message.success(t('buttons.import') || 'Imported')
     if (r.data?.id) {
-      router.push({ name: 'std_stack_detail', params: { id: r.data.id } })
+      // Full page load (not router.push) so the managed-stack detail
+      // page re-mounts from scratch: the action bar (Edit / Delete /
+      // Deploy / Shutdown) is computed from store + API data fetched
+      // onMounted — a SPA transition between external→managed routes
+      // reuses the component instance and leaves the old bar in place.
+      const href = router.resolve({ name: 'std_stack_detail', params: { id: r.data.id } }).href
+      window.location.assign(href)
     }
   } catch (e: any) {
     message.error(e?.message || String(e))

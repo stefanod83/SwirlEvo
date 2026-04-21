@@ -880,6 +880,7 @@ export default {
             "waiting_restored": "Deploy already in progress — reconnecting…",
             "waiting_connecting": "Primary Swirl unreachable — waiting for the new container to respond.",
             "waiting_503": "New Swirl is coming up — holding for readiness.",
+            "waiting_settling": "New Swirl answering — waiting for steady-state readiness before reloading…",
             "timeout": "Deploy is taking longer than expected."
         },
         "errors": {

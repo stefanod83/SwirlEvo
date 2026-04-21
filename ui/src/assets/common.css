@@ -31,6 +31,13 @@
 .n-input-group-label {
     text-align: center;
 }
+/* CodeMirror fills its wrapper. The wrapper sets the concrete height
+   (either via the `height` prop in CodeMirror.vue or an inline style
+   from the parent form-item). Without `height: 100%` here, the editor
+   falls back to its built-in 300 px default and leaves a visible gap
+   at the bottom of the wrapper (or overflows when the wrapper is
+   shorter). Keep `!important` because CodeMirror ships its own height
+   rule in `codemirror/lib/codemirror.css`. */
 .CodeMirror {
-    height: 450px !important;
+    height: 100% !important;
 }

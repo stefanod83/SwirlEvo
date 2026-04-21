@@ -92,7 +92,12 @@ Response (token shown **once**, copy immediately):
 ```
 
 A UI panel for token management lives in Settings → Federation on
-the swarm-side Swirl (same endpoints, same flow).
+the swarm-side Swirl (same endpoints, same flow). The Settings panel
+is **gated on `MODE=swarm`** — it appears only on Swirl instances
+running inside a cluster, never on the portal. Rationale: the
+standalone portal is a token **consumer** (it receives a peer token
+pasted into Hosts → Add), not a minter. The panel is also hidden
+unless the logged-in user holds the `federation.admin` permission.
 
 ### 3. Register the cluster on the portal
 
@@ -182,9 +187,13 @@ is ready in the DAO + the security filter.)
   lists the cluster's manager addresses so the operator can switch
   to the correct target without digging through Docker Info output.
 - The `local` host (auto-registered at boot in standalone mode,
-  pointing at `unix:///var/run/docker.sock`) is immutable — it
-  cannot be edited or deleted via the API (403). This prevents
-  accidental loss of the self-deploy target.
+  pointing at `unix:///var/run/docker.sock`) is immutable: its
+  `Endpoint`, `AuthMethod`, `Type`, `SwirlURL` and `Immutable`
+  flags are frozen and cannot be changed via the API. Delete is
+  refused with 403 (`ErrHostImmutable`). **Cosmetic** updates —
+  `Name` and `Color` — ARE accepted, so the UI's color picker
+  still works on the local host; the biz layer applies them onto
+  the persisted record while preserving every other field.
 
 ---
 

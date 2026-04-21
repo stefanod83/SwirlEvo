@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
+	"net/http"
 	"runtime"
+	"time"
 
 	"github.com/cuigh/auxo/app"
 	"github.com/cuigh/auxo/data"
@@ -24,18 +27,28 @@ type SystemHandler struct {
 	// bootstrap — before the user logs in — to decide which menu (Swarm/Docker)
 	// to render. Gating it behind auth would cause a 401 that the ajax interceptor
 	// turns into a redirect to /login, breaking the login page rendering.
-	Mode          web.HandlerFunc `path:"/mode" auth:"*" desc:"get operating mode"`
+	Mode web.HandlerFunc `path:"/mode" auth:"*" desc:"get operating mode"`
+	// Ready is the readiness probe (public — the self-deploy sidekick
+	// and the UI both poll it unauthenticated). Returns 200 only when
+	// the DB is reachable, a Docker client can be resolved and the
+	// settings snapshot has been hydrated. Returns 503 with a
+	// "failing" list otherwise. See api/system.go::systemReady for the
+	// full check set + rationale. Used instead of /mode as the gating
+	// signal for self-deploy redirect-to-home to avoid the
+	// "broken home page, need F5" race.
+	Ready         web.HandlerFunc `path:"/ready" auth:"*" desc:"readiness probe (DB + Docker client + settings)"`
 	AuthProviders web.HandlerFunc `path:"/auth-providers" auth:"*" desc:"list enabled external IdPs"`
 }
 
 // NewSystem creates an instance of SystemHandler
-func NewSystem(d *docker.Docker, b biz.SystemBiz, ub biz.UserBiz, hb biz.HostBiz, setting *misc.Setting) *SystemHandler {
+func NewSystem(d *docker.Docker, b biz.SystemBiz, ub biz.UserBiz, hb biz.HostBiz, di dao.Interface, setting *misc.Setting) *SystemHandler {
 	return &SystemHandler{
 		CheckState:    systemCheckState(b),
 		CreateAdmin:   systemCreateAdmin(ub),
 		Version:       systemVersion,
 		Summarize:     systemSummarize(d, hb),
 		Mode:          systemMode,
+		Ready:         systemReady(d, di, setting),
 		AuthProviders: systemAuthProviders(setting),
 	}
 }
@@ -157,6 +170,93 @@ func systemSummarize(d *docker.Docker, hb biz.HostBiz) web.HandlerFunc {
 
 func systemMode(c web.Context) error {
 	return success(c, data.Map{"mode": misc.Options.Mode})
+}
+
+// readinessCheckTimeout is the per-check budget. Deliberately tight: the
+// endpoint is polled at 3s intervals by the self-deploy UI, so every
+// individual check must answer well under that cadence even when the
+// dependency is fully down.
+const readinessCheckTimeout = 1 * time.Second
+
+// systemReady is the readiness probe that both the self-deploy sidekick
+// (cmd/deploy_agent/lifecycle.go::resolveHealthURL) and the UI progress
+// modal (ui/src/composables/useAutoDeployProgress.ts) gate on before
+// declaring the freshly-deployed Swirl "ready for users".
+//
+// Why a separate endpoint from /mode:
+//   - /mode is the liveness probe — it answers as soon as the HTTP
+//     server starts. That was the root cause of the "UI redirects too
+//     early → broken home page → F5 to recover" race: the new process
+//     was listening but the DB client / Docker client / settings
+//     snapshot weren't wired up yet. /ready pushes the success signal
+//     to the moment all of those are usable.
+//   - /mode stays auth:"*" and cheap (no DB, no Docker) so the UI
+//     bootstrap (login page before auth) still works when the DB is
+//     down.
+//
+// Response contract:
+//
+//	200 OK   { "mode": "<swarm|standalone>", "ready": true }
+//	503      { "mode": "...", "ready": false, "failing": [<names>] }
+//
+// All checks run SEQUENTIALLY with a 1s budget each — worst-case
+// response time is bounded to ~3s even with all dependencies down.
+// Sequential (not parallel) because the N=3 check set is tiny and
+// sequential is easier to reason about + to add/remove checks.
+func systemReady(d *docker.Docker, di dao.Interface, setting *misc.Setting) web.HandlerFunc {
+	return func(c web.Context) error {
+		failing := make([]string, 0, 3)
+
+		// 1. DB ping. Always runs. The DAO interface hides the backend
+		// choice — MongoDB pings the primary, BoltDB does a trivial
+		// read transaction. The 1s deadline keeps both fast.
+		if di == nil {
+			failing = append(failing, "db")
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), readinessCheckTimeout)
+			if err := di.Ping(ctx); err != nil {
+				failing = append(failing, "db")
+			}
+			cancel()
+		}
+
+		// 2. Docker client. We only assert that a client can be
+		// resolved — no ping against the daemon. Rationale: creating
+		// the client is what subsequent API calls need; a daemon that
+		// is briefly unresponsive should not make the whole app
+		// unready (the per-host Ping surface already handles that at
+		// feature level). In standalone mode the client might be
+		// resolved later per host; here we just need the primary
+		// client construction to succeed.
+		if d == nil {
+			failing = append(failing, "docker")
+		} else if _, err := d.Client(); err != nil {
+			failing = append(failing, "docker")
+		}
+
+		// 3. Settings snapshot hydrated. The in-memory *misc.Setting
+		// is populated by main.loadSetting at startup; subsystems
+		// (Vault client, backup provider) hold that pointer through
+		// closures. A nil pointer here means DI wiring hasn't
+		// completed yet. We don't assert on any specific field value
+		// (LDAP/Vault/Keycloak may all be legitimately disabled on a
+		// fresh install) — only that the struct exists.
+		if setting == nil {
+			failing = append(failing, "settings")
+		}
+
+		if len(failing) > 0 {
+			return c.Status(http.StatusServiceUnavailable).Result(1, "not ready", data.Map{
+				"mode":    misc.Options.Mode,
+				"ready":   false,
+				"failing": failing,
+			})
+		}
+		return success(c, data.Map{
+			"mode":  misc.Options.Mode,
+			"ready": true,
+		})
+	}
 }
 
 func systemCreateAdmin(ub biz.UserBiz) web.HandlerFunc {

@@ -874,6 +874,7 @@ export default {
             "waiting_restored": "部署已在进行中 — 正在重新连接…",
             "waiting_connecting": "无法连接主 Swirl — 等待新容器响应。",
             "waiting_503": "新 Swirl 正在启动 — 等待就绪。",
+            "waiting_settling": "新 Swirl 已响应 — 等待稳定就绪后刷新页面…",
             "timeout": "部署耗时超出预期。"
         },
         "errors": {
