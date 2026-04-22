@@ -27,6 +27,11 @@ type ComposeStackBiz interface {
 	FindDetail(ctx context.Context, hostID, name string) (*ComposeStackDetail, error)
 	// Save persists the compose stack without deploying. Pass an empty ID to create a new one.
 	Save(ctx context.Context, stack *dao.ComposeStack, user web.User) (string, error)
+	// SaveWithAddons is the wizard-tab aware sibling of Save: when
+	// addons != nil, the stack.Content is mutated (wizard labels
+	// injected, resources applied) before persisting. A nil addons is
+	// equivalent to calling Save directly.
+	SaveWithAddons(ctx context.Context, stack *dao.ComposeStack, addons *AddonsConfig, user web.User) (string, error)
 	// Deploy is async: it persists the stack, performs self-protection
 	// checks synchronously, then spawns a goroutine that runs the actual
 	// engine deploy against a background context (so it survives the
@@ -34,6 +39,15 @@ type ComposeStackBiz interface {
 	// stack's Status field moves from "deploying" to "active" or "error"
 	// as the deploy progresses.
 	Deploy(ctx context.Context, stack *dao.ComposeStack, pullImages bool, user web.User) (string, error)
+	// DeployByID redeploys a previously-persisted stack without going
+	// through the editor — content and envFile are read from the DB
+	// record. Used by the List page's Deploy button and by Start as a
+	// fallback when Stop has already torn the containers down.
+	DeployByID(ctx context.Context, id string, pullImages bool, user web.User) (string, error)
+	// DeployWithAddons wraps Deploy the same way SaveWithAddons wraps
+	// Save — injecting wizard labels/resources into the content before
+	// the deploy pipeline runs.
+	DeployWithAddons(ctx context.Context, stack *dao.ComposeStack, addons *AddonsConfig, pullImages bool, user web.User) (string, error)
 	// Import promotes an external stack to managed. If stack.Content is empty,
 	// the engine reconstructs a YAML from running containers. If redeploy is
 	// true, the stack is (re)deployed against the imported/edited YAML.
@@ -57,6 +71,27 @@ type ComposeStackBiz interface {
 	// the source host — the operator is responsible for any data
 	// transfer.
 	Migrate(ctx context.Context, id, targetHostID string, redeploy bool, user web.User) error
+
+	// ListVersions returns the content-history snapshots for a stack,
+	// newest-first. Bodies are omitted to keep the list cheap; fetch
+	// them with GetVersion.
+	ListVersions(ctx context.Context, stackID string) ([]*dao.ComposeStackVersion, error)
+	// GetVersion returns a single snapshot with its full Content +
+	// EnvFile so the UI can render a diff against the current stack.
+	GetVersion(ctx context.Context, versionID string) (*dao.ComposeStackVersion, error)
+	// RestoreVersion replaces the stack's Content + EnvFile with those
+	// of a prior snapshot. The current state is captured as a new
+	// snapshot first (reason="restore:rev<N>") so every restore is
+	// reversible.
+	RestoreVersion(ctx context.Context, stackID, versionID string, user web.User) error
+
+	// ParseAddons is the authoritative reverse parser for the addon
+	// wizard tabs: given a compose YAML it returns the AddonsConfig
+	// rebuilt by scanning `# swirl-managed`-stamped labels/fields.
+	// Exposed through the API so the editor loads the same state the
+	// backend would emit on the next save — avoids drift between a
+	// TS approximation and the Go canonical emitter.
+	ParseAddons(content string) (*AddonsConfig, error)
 }
 
 // VolumesContainDataError wraps a list of project volumes that contain data,
@@ -226,6 +261,14 @@ func (b *composeStackBiz) Find(ctx context.Context, id string) (*dao.ComposeStac
 }
 
 func (b *composeStackBiz) Save(ctx context.Context, stack *dao.ComposeStack, user web.User) (string, error) {
+	return b.saveWithReason(ctx, stack, "save", user)
+}
+
+// saveWithReason is the shared write path for both plain Save and
+// SaveWithAddons. The `reason` value is carried into ComposeStackVersion
+// snapshots so the History dropdown can tell routine saves apart from
+// wizard-driven label injections.
+func (b *composeStackBiz) saveWithReason(ctx context.Context, stack *dao.ComposeStack, reason string, user web.User) (string, error) {
 	if stack.HostID == "" || stack.Name == "" {
 		return "", errors.New("hostId and name are required")
 	}
@@ -243,12 +286,93 @@ func (b *composeStackBiz) Save(ctx context.Context, stack *dao.ComposeStack, use
 		}
 		b.eb.CreateStack(EventActionCreate, stack.HostID, stack.Name, user)
 	} else {
+		// Snapshot the pre-save state so the operator can diff/restore
+		// from the editor's History dropdown. Best-effort: failures are
+		// silently dropped — losing the history entry is strictly better
+		// than refusing to save.
+		b.snapshotIfChanged(ctx, stack, reason, user)
 		if err := b.di.ComposeStackUpdate(ctx, stack); err != nil {
 			return "", err
 		}
 		b.eb.CreateStack(EventActionUpdate, stack.HostID, stack.Name, user)
 	}
 	return stack.ID, nil
+}
+
+// SaveWithAddons injects the wizard-generated labels and resources into the
+// compose Content (when addons != nil) and then runs the standard save path.
+// The mode (standalone vs swarm) is inferred from the target host's Type so
+// label placement lands in the right spot (top-level labels vs deploy.labels,
+// cpus/mem_limit vs deploy.resources).
+func (b *composeStackBiz) SaveWithAddons(ctx context.Context, stack *dao.ComposeStack, addons *AddonsConfig, user web.User) (string, error) {
+	reason := "save"
+	if addons != nil && hasAnyAddon(addons) {
+		mode, mErr := b.modeForHost(ctx, stack.HostID)
+		if mErr != nil {
+			return "", mErr
+		}
+		newContent, iErr := injectAddonLabels(stack.Content, addons, mode)
+		if iErr != nil {
+			return "", iErr
+		}
+		if newContent != stack.Content {
+			stack.Content = newContent
+			reason = "addon-inject"
+		}
+	}
+	return b.saveWithReason(ctx, stack, reason, user)
+}
+
+// DeployByID loads the persisted stack record and redeploys it without
+// going through the editor. Content + envFile are whatever the DB has —
+// callers that need to edit must go through Save/Deploy on the editor
+// path instead. Surfaced to the UI from the stack list's Deploy button
+// and used internally by Start when the stack has no live containers
+// (Stop has torn them down).
+func (b *composeStackBiz) DeployByID(ctx context.Context, id string, pullImages bool, user web.User) (string, error) {
+	stack, err := b.loadStack(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return b.Deploy(ctx, stack, pullImages, user)
+}
+
+// DeployWithAddons performs the same pre-save injection as SaveWithAddons
+// and then delegates to the standard Deploy pipeline so the async engine
+// flow is unchanged.
+func (b *composeStackBiz) DeployWithAddons(ctx context.Context, stack *dao.ComposeStack, addons *AddonsConfig, pullImages bool, user web.User) (string, error) {
+	if addons != nil && hasAnyAddon(addons) {
+		mode, mErr := b.modeForHost(ctx, stack.HostID)
+		if mErr != nil {
+			return "", mErr
+		}
+		newContent, iErr := injectAddonLabels(stack.Content, addons, mode)
+		if iErr != nil {
+			return "", iErr
+		}
+		stack.Content = newContent
+	}
+	return b.Deploy(ctx, stack, pullImages, user)
+}
+
+// modeForHost maps Host.Type into the "standalone" | "swarm" label used by
+// the YAML injector. swarm_via_swirl federates to a Swirl running in swarm
+// mode, so labels must land under deploy.labels on the remote side too.
+func (b *composeStackBiz) modeForHost(ctx context.Context, hostID string) (string, error) {
+	if hostID == "" {
+		return "standalone", nil
+	}
+	host, err := b.hb.Find(ctx, hostID)
+	if err != nil {
+		return "", err
+	}
+	if host == nil {
+		return "standalone", nil
+	}
+	if host.Type == "swarm_via_swirl" {
+		return "swarm", nil
+	}
+	return "standalone", nil
 }
 
 func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, pullImages bool, user web.User) (string, error) {
@@ -396,6 +520,12 @@ func (b *composeStackBiz) checkSelfDeploy(ctx context.Context, cli *dockerclient
 	return nil
 }
 
+// Start either boots the existing project containers back up, or — when
+// Stop has already torn them down — falls back to a full Deploy using
+// the persisted stack content. This keeps the UI's Start button useful
+// after the new Stop semantics (which removes containers + networks).
+// The fallback does NOT pull new images; operators who want a fresh pull
+// go through Deploy explicitly.
 func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) error {
 	stack, err := b.loadStack(ctx, id)
 	if err != nil {
@@ -406,6 +536,17 @@ func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) e
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
+	// If the project has no containers (typical post-Stop state), Start
+	// is a no-op at engine level. Redirect to Deploy so the stack comes
+	// back up from scratch using the stored YAML.
+	containers, listErr := engine.ListContainers(ctx, stack.Name, true)
+	if listErr == nil && len(containers) == 0 {
+		if _, dErr := b.Deploy(ctx, stack, false, user); dErr != nil {
+			return dErr
+		}
+		// Deploy handles status updates + event emission on its own.
+		return nil
+	}
 	if err := engine.Start(ctx, stack.Name); err != nil {
 		return wrapStackOpError("start", stack.Name, host, err)
 	}
@@ -414,6 +555,13 @@ func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) e
 	return nil
 }
 
+// Stop tears down the running instance of a managed stack: containers are
+// stopped AND removed, project networks (and helper artifacts like secret
+// tmpfs volumes, via the cleanup hook) are cleaned up. Persistent named
+// volumes are left intact so data survives the lifecycle — matches the
+// semantics of `docker compose down` without `-v`. The DAO record is
+// preserved (status flips to "inactive"); a subsequent Deploy recreates
+// the stack from the same stored YAML.
 func (b *composeStackBiz) Stop(ctx context.Context, id string, user web.User) error {
 	stack, err := b.loadStack(ctx, id)
 	if err != nil {
@@ -424,7 +572,10 @@ func (b *composeStackBiz) Stop(ctx context.Context, id string, user web.User) er
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
-	if err := engine.Stop(ctx, stack.Name); err != nil {
+	// removeVolumes=false — named project volumes carry data and are
+	// preserved. The cleanup hook still drops helper artifacts (secret
+	// tmpfs / volume mounts) that are recreated on the next Deploy.
+	if err := engine.Remove(ctx, stack.Name, false, b.sec.NewCleanupHook()); err != nil {
 		return wrapStackOpError("stop", stack.Name, host, err)
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "inactive")
@@ -473,6 +624,9 @@ func (b *composeStackBiz) Remove(ctx context.Context, id string, removeVolumes, 
 	}
 	// Drop persisted bindings — the values live in Vault and are unaffected.
 	_ = b.di.ComposeStackSecretBindingDeleteByStack(ctx, id)
+	// Drop snapshot history — keeping it after the stack itself is gone
+	// would accumulate orphans nobody can restore.
+	_ = b.di.ComposeStackVersionDeleteByStack(ctx, id)
 	if err := b.di.ComposeStackDelete(ctx, id); err != nil {
 		return err
 	}
@@ -689,14 +843,16 @@ func (b *composeStackBiz) StartExternal(ctx context.Context, hostID, name string
 	return nil
 }
 
-// StopExternal stops all running containers of an unmanaged project on a host.
+// StopExternal mirrors Stop for an unmanaged (CLI-discovered) project:
+// containers are removed, project networks cleaned, named volumes kept.
+// Same `docker compose down` without `-v` semantics.
 func (b *composeStackBiz) StopExternal(ctx context.Context, hostID, name string, user web.User) error {
 	cli, host, err := b.hostClient(ctx, hostID)
 	if err != nil {
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
-	if err := engine.Stop(ctx, name); err != nil {
+	if err := engine.Remove(ctx, name, false, b.sec.NewCleanupHook()); err != nil {
 		return wrapStackOpError("stop", name, host, err)
 	}
 	b.eb.CreateStack(EventActionShutdown, hostID, name, user)
@@ -810,6 +966,19 @@ func (b *composeStackBiz) Migrate(ctx context.Context, id, targetHostID string, 
 	}
 	if targetHost == nil {
 		return errors.New("target host not found")
+	}
+
+	// 3b. Cross-mode migration guard. Hosts of different Type (e.g.
+	//     "standalone" vs "swarm_via_swirl") expose structurally
+	//     different label placement (top-level labels vs deploy.labels)
+	//     and resource shapes (cpus/mem_limit vs deploy.resources).
+	//     Wizard-managed labels injected for one mode would silently
+	//     break on the other — refuse up front so operators notice at
+	//     the action site instead of post-deploy.
+	sourceHost, hErr := b.hb.Find(ctx, stack.HostID)
+	if hErr == nil && sourceHost != nil && sourceHost.Type != targetHost.Type {
+		return misc.Error(misc.ErrCrossModeMigrate,
+			fmt.Errorf("cannot migrate across host modes (%q → %q)", sourceHost.Type, targetHost.Type))
 	}
 
 	// 4. Name-conflict check — cover both managed (our DB) and external

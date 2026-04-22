@@ -233,7 +233,7 @@ const columns = [
         actionButton('warning', StopOutline, t('buttons.stop'), s.status === 'inactive',
           () => runAction(() => composeStackApi.stop({ id: s.id }), t('buttons.stop'))),
         actionButton('info', RefreshOutline, t('buttons.deploy'), false,
-          () => router.push({ name: 'std_stack_edit', params: { id: s.id } })),
+          () => runAction(() => composeStackApi.deployById(s.id), t('buttons.deploy'))),
         actionButton('default', CreateOutline, t('buttons.edit'), false,
           () => router.push({ name: 'std_stack_edit', params: { id: s.id } })),
         actionButton('default', DownloadOutline, t('buttons.download') || 'Download', false,

@@ -90,6 +90,13 @@ type Interface interface {
 	HostCreate(ctx context.Context, host *Host) error
 	HostUpdate(ctx context.Context, host *Host) error
 	HostUpdateStatus(ctx context.Context, id, status, errMsg, engineVer, os, arch string, cpus int, memory int64) error
+	// HostUpdateAddonConfigExtract writes (or clears) the raw JSON blob
+	// that carries lists extracted from uploaded add-on config files
+	// (e.g. traefik.yml → entryPoints/certResolvers). A dedicated method
+	// so the writes don't go through HostUpdate's full payload — that
+	// path would require the caller to hold the current TLSKey/SSHKey
+	// plaintext, which the API does not have after the initial save.
+	HostUpdateAddonConfigExtract(ctx context.Context, id, extractJSON string) error
 	HostDelete(ctx context.Context, id string) error
 
 	ComposeStackGet(ctx context.Context, id string) (*ComposeStack, error)
@@ -101,6 +108,17 @@ type Interface interface {
 	ComposeStackUpdateError(ctx context.Context, id, errorMessage string) error
 	ComposeStackUpdateWarnings(ctx context.Context, id string, warnings []string) error
 	ComposeStackDelete(ctx context.Context, id string) error
+
+	// ComposeStackVersion snapshots the pre-Save state of a stack so the
+	// operator can diff/restore prior revisions from the editor's History
+	// dropdown. List returns newest-first (revision desc); pass limit=0
+	// to fetch them all. Prune keeps only the newest `keep` versions for
+	// a given StackID.
+	ComposeStackVersionCreate(ctx context.Context, v *ComposeStackVersion) error
+	ComposeStackVersionList(ctx context.Context, stackID string, limit int) ([]*ComposeStackVersion, error)
+	ComposeStackVersionGet(ctx context.Context, id string) (*ComposeStackVersion, error)
+	ComposeStackVersionDeleteByStack(ctx context.Context, stackID string) error
+	ComposeStackVersionPrune(ctx context.Context, stackID string, keep int) error
 
 	BackupGet(ctx context.Context, id string) (*Backup, error)
 	BackupGetAll(ctx context.Context) ([]*Backup, error)

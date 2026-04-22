@@ -15,26 +15,58 @@ type ComposeStackHandler struct {
 	FindDetail web.HandlerFunc `path:"/find-detail" auth:"stack.view" desc:"find detail by hostId+name"`
 	Save       web.HandlerFunc `path:"/save" method:"post" auth:"stack.edit" desc:"save compose stack without deploying"`
 	Deploy     web.HandlerFunc `path:"/deploy" method:"post" auth:"stack.deploy" desc:"deploy compose stack"`
+	// DeployByID redeploys an existing stack using the persisted YAML
+	// without going through the editor payload. Used by the stack list's
+	// Deploy button and by Start's fallback path.
+	DeployByID web.HandlerFunc `path:"/deploy-by-id" method:"post" auth:"stack.deploy" desc:"redeploy a persisted stack"`
 	Import     web.HandlerFunc `path:"/import" method:"post" auth:"stack.edit" desc:"import an external stack"`
 	Start      web.HandlerFunc `path:"/start" method:"post" auth:"stack.deploy" desc:"start compose stack"`
 	Stop       web.HandlerFunc `path:"/stop" method:"post" auth:"stack.shutdown" desc:"stop compose stack"`
 	Remove     web.HandlerFunc `path:"/remove" method:"post" auth:"stack.delete" desc:"remove compose stack"`
 	Migrate    web.HandlerFunc `path:"/migrate" method:"post" auth:"stack.edit" desc:"migrate stack to another host"`
+	// HostAddons feeds the compose editor wizard tabs with runtime
+	// configuration of add-on containers (Traefik entrypoints, Sablier
+	// URL, Watchtower schedule, backup env) detected on the target host.
+	// Auth: stack.view — the payload is public container metadata, no
+	// secret values, so we reuse the same permission the editor itself
+	// needs to read the stack.
+	HostAddons web.HandlerFunc `path:"/host-addons" auth:"stack.view" desc:"discover add-on runtime config on a host"`
+
+	// Version history endpoints — list/get are read-only (stack.view),
+	// restore mutates the stack record (stack.edit). The list payload
+	// strips Content/EnvFile bodies; clients fetch them via VersionGet
+	// when rendering a diff.
+	Versions       web.HandlerFunc `path:"/versions" auth:"stack.view" desc:"list content-history versions of a stack"`
+	VersionGet     web.HandlerFunc `path:"/version-get" auth:"stack.view" desc:"fetch a single version with body"`
+	VersionRestore web.HandlerFunc `path:"/version-restore" method:"post" auth:"stack.edit" desc:"restore a prior version of a stack"`
+
+	// ParseAddons is the authoritative reverse-parser for the addon
+	// wizard tabs: given a compose YAML it returns the AddonsConfig
+	// rebuilt from `# swirl-managed` markers. Called by the editor at
+	// load time + after a version restore so the tabs start in sync
+	// with the persisted content. POST to keep the body out of the URL.
+	ParseAddons web.HandlerFunc `path:"/parse-addons" method:"post" auth:"stack.view" desc:"reverse-parse addon wizard state from compose YAML"`
 }
 
 // NewComposeStack is registered in api.init.
-func NewComposeStack(b biz.ComposeStackBiz) *ComposeStackHandler {
+func NewComposeStack(b biz.ComposeStackBiz, ad biz.AddonDiscoveryBiz) *ComposeStackHandler {
 	return &ComposeStackHandler{
 		Search:     composeStackSearch(b),
 		Find:       composeStackFind(b),
 		FindDetail: composeStackFindDetail(b),
 		Save:       composeStackSave(b),
 		Deploy:     composeStackDeploy(b),
+		DeployByID: composeStackDeployByID(b),
 		Import:     composeStackImport(b),
 		Start:      composeStackStart(b),
 		Stop:       composeStackStop(b),
 		Remove:     composeStackRemove(b),
-		Migrate:    composeStackMigrate(b),
+		Migrate:        composeStackMigrate(b),
+		HostAddons:     composeStackHostAddons(ad),
+		Versions:       composeStackVersions(b),
+		VersionGet:     composeStackVersionGet(b),
+		VersionRestore: composeStackVersionRestore(b),
+		ParseAddons:    composeStackParseAddons(b),
 	}
 }
 
@@ -69,14 +101,22 @@ func composeStackFind(b biz.ComposeStackBiz) web.HandlerFunc {
 }
 
 func composeStackSave(b biz.ComposeStackBiz) web.HandlerFunc {
+	type Args struct {
+		dao.ComposeStack
+		// AddonsConfig carries the wizard state for Traefik/Sablier/
+		// Watchtower/Backup/Resources tabs. When present, the biz layer
+		// mutates Content to inject the corresponding labels before
+		// persisting — the DB stores the final, label-bearing YAML.
+		AddonsConfig *biz.AddonsConfig `json:"addonsConfig,omitempty"`
+	}
 	return func(c web.Context) error {
-		stack := &dao.ComposeStack{}
-		if err := c.Bind(stack, true); err != nil {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
 			return err
 		}
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
-		id, err := b.Save(ctx, stack, c.User())
+		id, err := b.SaveWithAddons(ctx, &args.ComposeStack, args.AddonsConfig, c.User())
 		if err != nil {
 			return err
 		}
@@ -87,7 +127,8 @@ func composeStackSave(b biz.ComposeStackBiz) web.HandlerFunc {
 func composeStackDeploy(b biz.ComposeStackBiz) web.HandlerFunc {
 	type Args struct {
 		dao.ComposeStack
-		PullImages bool `json:"pullImages"`
+		PullImages   bool              `json:"pullImages"`
+		AddonsConfig *biz.AddonsConfig `json:"addonsConfig,omitempty"`
 	}
 	return func(c web.Context) error {
 		args := &Args{}
@@ -97,7 +138,31 @@ func composeStackDeploy(b biz.ComposeStackBiz) web.HandlerFunc {
 		// deploy may take longer than defaultTimeout due to image pulls
 		ctx, cancel := misc.Context(5 * defaultTimeout)
 		defer cancel()
-		id, err := b.Deploy(ctx, &args.ComposeStack, args.PullImages, c.User())
+		id, err := b.DeployWithAddons(ctx, &args.ComposeStack, args.AddonsConfig, args.PullImages, c.User())
+		if err != nil {
+			return err
+		}
+		return success(c, data.Map{"id": id})
+	}
+}
+
+func composeStackDeployByID(b biz.ComposeStackBiz) web.HandlerFunc {
+	type Args struct {
+		ID         string `json:"id"`
+		PullImages bool   `json:"pullImages"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		// Same envelope as /deploy — the async engine run survives past
+		// the HTTP response, but we still give the caller a generous
+		// deadline for the synchronous self-protection check + image
+		// pulls it kicks off.
+		ctx, cancel := misc.Context(5 * defaultTimeout)
+		defer cancel()
+		id, err := b.DeployByID(ctx, args.ID, args.PullImages, c.User())
 		if err != nil {
 			return err
 		}
@@ -211,6 +276,78 @@ func composeStackMigrate(b biz.ComposeStackBiz) web.HandlerFunc {
 		ctx, cancel := misc.Context(5 * defaultTimeout)
 		defer cancel()
 		return ajax(c, b.Migrate(ctx, args.ID, args.TargetHostID, args.Redeploy, c.User()))
+	}
+}
+
+func composeStackVersions(b biz.ComposeStackBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		stackID := c.Query("stackId")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		items, err := b.ListVersions(ctx, stackID)
+		if err != nil {
+			return err
+		}
+		return success(c, data.Map{"items": items})
+	}
+}
+
+func composeStackVersionGet(b biz.ComposeStackBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		versionID := c.Query("id")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		v, err := b.GetVersion(ctx, versionID)
+		if err != nil {
+			return err
+		}
+		return success(c, v)
+	}
+}
+
+func composeStackVersionRestore(b biz.ComposeStackBiz) web.HandlerFunc {
+	type Args struct {
+		StackID   string `json:"stackId"`
+		VersionID string `json:"versionId"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.RestoreVersion(ctx, args.StackID, args.VersionID, c.User()))
+	}
+}
+
+func composeStackParseAddons(b biz.ComposeStackBiz) web.HandlerFunc {
+	type Args struct {
+		Content string `json:"content"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		cfg, err := b.ParseAddons(args.Content)
+		if err != nil {
+			return err
+		}
+		return success(c, cfg)
+	}
+}
+
+func composeStackHostAddons(ad biz.AddonDiscoveryBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		hostID := c.Query("hostId")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		addons, err := ad.Discover(ctx, hostID)
+		if err != nil {
+			return err
+		}
+		return success(c, addons)
 	}
 }
 

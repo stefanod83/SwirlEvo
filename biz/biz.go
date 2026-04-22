@@ -140,4 +140,5 @@ func init() {
 	container.Put(NewSelfDeploy)
 	container.Put(NewFederation)
 	container.Put(NewFederationRotator)
+	container.Put(NewAddonDiscovery)
 }

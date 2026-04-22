@@ -66,17 +66,72 @@ type HostHandler struct {
 	Save   web.HandlerFunc `path:"/save" method:"post" auth:"host.edit" desc:"create or update host"`
 	Test   web.HandlerFunc `path:"/test" method:"post" auth:"host.edit" desc:"test host connection"`
 	Sync   web.HandlerFunc `path:"/sync" method:"post" auth:"host.edit" desc:"sync host status"`
+	// Addon config extract — JSON blob with lists parsed from addon
+	// config files uploaded by the operator (e.g. traefik.yml). The
+	// file itself is parsed client-side; only the resulting lists
+	// travel here.
+	AddonExtractGet   web.HandlerFunc `path:"/addon-extract-get" auth:"host.view" desc:"read addon config extract for a host"`
+	AddonExtractSave  web.HandlerFunc `path:"/addon-extract-save" method:"post" auth:"host.edit" desc:"save addon config extract for a host"`
+	AddonExtractClear web.HandlerFunc `path:"/addon-extract-clear" method:"post" auth:"host.edit" desc:"clear addon config extract for a host (optionally a single addon)"`
 }
 
 // NewHost creates an instance of HostHandler.
 func NewHost(b biz.HostBiz) *HostHandler {
 	return &HostHandler{
-		Search: hostSearch(b),
-		Find:   hostFind(b),
-		Delete: hostDelete(b),
-		Save:   hostSave(b),
-		Test:   hostTest(b),
-		Sync:   hostSync(b),
+		Search:            hostSearch(b),
+		Find:              hostFind(b),
+		Delete:            hostDelete(b),
+		Save:              hostSave(b),
+		Test:              hostTest(b),
+		Sync:              hostSync(b),
+		AddonExtractGet:   hostAddonExtractGet(b),
+		AddonExtractSave:  hostAddonExtractSave(b),
+		AddonExtractClear: hostAddonExtractClear(b),
+	}
+}
+
+func hostAddonExtractGet(b biz.HostBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		hostID := c.Query("hostId")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		extract, err := b.GetAddonConfigExtract(ctx, hostID)
+		if err != nil {
+			return err
+		}
+		return success(c, extract)
+	}
+}
+
+func hostAddonExtractSave(b biz.HostBiz) web.HandlerFunc {
+	type Args struct {
+		HostID  string                   `json:"hostId"`
+		Extract *biz.AddonConfigExtract  `json:"extract"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.UpdateAddonConfigExtract(ctx, args.HostID, args.Extract, c.User()))
+	}
+}
+
+func hostAddonExtractClear(b biz.HostBiz) web.HandlerFunc {
+	type Args struct {
+		HostID string `json:"hostId"`
+		Addon  string `json:"addon"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		return ajax(c, b.ClearAddonConfigExtract(ctx, args.HostID, args.Addon))
 	}
 }
 

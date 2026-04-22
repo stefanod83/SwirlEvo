@@ -111,6 +111,16 @@
       </template>
       <template v-else>{{ testResult.error }}</template>
     </n-alert>
+
+    <!--
+      Addon integrations — one panel per supported addon. Only surfaces in
+      edit mode: at create time the host record doesn't exist yet, so there
+      is nothing for AddonConfigExtract to attach to. Phase 3 ships Traefik;
+      Sablier/Watchtower/Backup follow in later phases.
+    -->
+    <div v-if="isEdit && !isFederation && model.id" style="margin-top: 24px">
+      <HostAddonTraefik :host-id="model.id" />
+    </div>
   </div>
 </template>
 
@@ -136,6 +146,7 @@ import {
 } from "naive-ui";
 import { ArrowBackCircleOutline as ArrowBackIcon } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
+import HostAddonTraefik from "@/components/host-addons/HostAddonTraefik.vue";
 import * as hostApi from "@/api/host";
 import type { HostInfo } from "@/api/host";
 import { useStore } from "vuex";

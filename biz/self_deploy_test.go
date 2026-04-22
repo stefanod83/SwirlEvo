@@ -124,6 +124,9 @@ func (s *stubComposeStackBiz) Save(_ context.Context, stack *dao.ComposeStack, _
 func (s *stubComposeStackBiz) Deploy(context.Context, *dao.ComposeStack, bool, web.User) (string, error) {
 	return "", nil
 }
+func (s *stubComposeStackBiz) DeployByID(context.Context, string, bool, web.User) (string, error) {
+	return "", nil
+}
 func (s *stubComposeStackBiz) Import(context.Context, *dao.ComposeStack, bool, bool, web.User) (string, error) {
 	return "", nil
 }
@@ -143,6 +146,28 @@ func (s *stubComposeStackBiz) RemoveExternal(context.Context, string, string, bo
 }
 func (s *stubComposeStackBiz) Migrate(context.Context, string, string, bool, web.User) error {
 	return nil
+}
+func (s *stubComposeStackBiz) SaveWithAddons(_ context.Context, stack *dao.ComposeStack, _ *AddonsConfig, _ web.User) (string, error) {
+	if stack.ID == "" {
+		stack.ID = "generated"
+	}
+	s.stacks[stack.ID] = stack
+	return stack.ID, nil
+}
+func (s *stubComposeStackBiz) DeployWithAddons(context.Context, *dao.ComposeStack, *AddonsConfig, bool, web.User) (string, error) {
+	return "", nil
+}
+func (s *stubComposeStackBiz) ListVersions(context.Context, string) ([]*dao.ComposeStackVersion, error) {
+	return nil, nil
+}
+func (s *stubComposeStackBiz) GetVersion(context.Context, string) (*dao.ComposeStackVersion, error) {
+	return nil, nil
+}
+func (s *stubComposeStackBiz) RestoreVersion(context.Context, string, string, web.User) error {
+	return nil
+}
+func (s *stubComposeStackBiz) ParseAddons(string) (*AddonsConfig, error) {
+	return &AddonsConfig{}, nil
 }
 
 var _ ComposeStackBiz = (*stubComposeStackBiz)(nil)

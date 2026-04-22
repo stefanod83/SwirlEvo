@@ -53,6 +53,12 @@ var indexes = map[string][]mongo.IndexModel{
 		mongo.IndexModel{Keys: bson.D{{"stack_id", 1}}},
 		mongo.IndexModel{Keys: bson.D{{"vault_secret_id", 1}}},
 	},
+	"compose_stack_version": {
+		// Compound index for the List query (filter by stack, sort by
+		// revision desc). The driver uses this efficiently both for the
+		// History dropdown and the Prune's "keep newest N" projection.
+		mongo.IndexModel{Keys: bson.D{{"stack_id", 1}, {"revision", -1}}},
+	},
 }
 
 type Dao struct {

@@ -192,6 +192,18 @@ type HostBiz interface {
 	// ProbeHost classifies a candidate endpoint. Returns a
 	// `*WorkerRejectedError` when the endpoint is a swarm worker.
 	ProbeHost(ctx context.Context, endpoint string) (*HostProbeResult, error)
+
+	// GetAddonConfigExtract returns the decoded blob of lists extracted
+	// from uploaded add-on config files (e.g. Traefik static config).
+	// Consumed by AddonDiscoveryBiz to augment dropdowns of the stack-
+	// editor wizard tabs.
+	GetAddonConfigExtract(ctx context.Context, hostID string) (*AddonConfigExtract, error)
+	// UpdateAddonConfigExtract replaces a given addon's subtree in the
+	// host's extract JSON blob. Non-specified subtrees are preserved.
+	UpdateAddonConfigExtract(ctx context.Context, hostID string, extract *AddonConfigExtract, user web.User) error
+	// ClearAddonConfigExtract wipes a single addon subtree (e.g. "traefik")
+	// from the host's extract. Passing an empty addon resets the whole blob.
+	ClearAddonConfigExtract(ctx context.Context, hostID, addon string) error
 }
 
 type HostInfo struct {
