@@ -5,15 +5,21 @@
 import type { TraefikServiceCfg } from '@/api/compose_stack'
 
 export function buildTraefikLabels(svc: string, cfg: TraefikServiceCfg): Record<string, string> {
-  if (!cfg.enabled) return {}
+  // Start from the passthrough set. Structured fields below override
+  // on key collision — the wizard always wins over the extras, by design.
+  const out: Record<string, string> = {}
+  if (cfg.extraLabels) {
+    for (const k of Object.keys(cfg.extraLabels)) {
+      if (k.startsWith('traefik.')) out[k] = cfg.extraLabels[k]
+    }
+  }
+  if (!cfg.enabled) return out
   const router = (cfg.router || svc).trim() || svc
   const rule = buildTraefikRule(cfg)
-  if (!rule || !cfg.port || cfg.port <= 0) return {}
-  const out: Record<string, string> = {
-    'traefik.enable': 'true',
-    [`traefik.http.routers.${router}.rule`]: rule,
-    [`traefik.http.services.${router}.loadbalancer.server.port`]: String(cfg.port),
-  }
+  if (!rule || !cfg.port || cfg.port <= 0) return out
+  out['traefik.enable'] = 'true'
+  out[`traefik.http.routers.${router}.rule`] = rule
+  out[`traefik.http.services.${router}.loadbalancer.server.port`] = String(cfg.port)
   if (cfg.entrypoint) out[`traefik.http.routers.${router}.entrypoints`] = cfg.entrypoint
   if (cfg.tls) {
     out[`traefik.http.routers.${router}.tls`] = 'true'

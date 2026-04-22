@@ -39,6 +39,11 @@ type ComposeStackBiz interface {
 	// stack's Status field moves from "deploying" to "active" or "error"
 	// as the deploy progresses.
 	Deploy(ctx context.Context, stack *dao.ComposeStack, pullImages bool, user web.User) (string, error)
+	// DeployByID redeploys a previously-persisted stack without going
+	// through the editor — content and envFile are read from the DB
+	// record. Used by the List page's Deploy button and by Start as a
+	// fallback when Stop has already torn the containers down.
+	DeployByID(ctx context.Context, id string, pullImages bool, user web.User) (string, error)
 	// DeployWithAddons wraps Deploy the same way SaveWithAddons wraps
 	// Save — injecting wizard labels/resources into the content before
 	// the deploy pipeline runs.
@@ -318,6 +323,20 @@ func (b *composeStackBiz) SaveWithAddons(ctx context.Context, stack *dao.Compose
 	return b.saveWithReason(ctx, stack, reason, user)
 }
 
+// DeployByID loads the persisted stack record and redeploys it without
+// going through the editor. Content + envFile are whatever the DB has —
+// callers that need to edit must go through Save/Deploy on the editor
+// path instead. Surfaced to the UI from the stack list's Deploy button
+// and used internally by Start when the stack has no live containers
+// (Stop has torn them down).
+func (b *composeStackBiz) DeployByID(ctx context.Context, id string, pullImages bool, user web.User) (string, error) {
+	stack, err := b.loadStack(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return b.Deploy(ctx, stack, pullImages, user)
+}
+
 // DeployWithAddons performs the same pre-save injection as SaveWithAddons
 // and then delegates to the standard Deploy pipeline so the async engine
 // flow is unchanged.
@@ -501,6 +520,12 @@ func (b *composeStackBiz) checkSelfDeploy(ctx context.Context, cli *dockerclient
 	return nil
 }
 
+// Start either boots the existing project containers back up, or — when
+// Stop has already torn them down — falls back to a full Deploy using
+// the persisted stack content. This keeps the UI's Start button useful
+// after the new Stop semantics (which removes containers + networks).
+// The fallback does NOT pull new images; operators who want a fresh pull
+// go through Deploy explicitly.
 func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) error {
 	stack, err := b.loadStack(ctx, id)
 	if err != nil {
@@ -511,6 +536,17 @@ func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) e
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
+	// If the project has no containers (typical post-Stop state), Start
+	// is a no-op at engine level. Redirect to Deploy so the stack comes
+	// back up from scratch using the stored YAML.
+	containers, listErr := engine.ListContainers(ctx, stack.Name, true)
+	if listErr == nil && len(containers) == 0 {
+		if _, dErr := b.Deploy(ctx, stack, false, user); dErr != nil {
+			return dErr
+		}
+		// Deploy handles status updates + event emission on its own.
+		return nil
+	}
 	if err := engine.Start(ctx, stack.Name); err != nil {
 		return wrapStackOpError("start", stack.Name, host, err)
 	}
@@ -519,6 +555,13 @@ func (b *composeStackBiz) Start(ctx context.Context, id string, user web.User) e
 	return nil
 }
 
+// Stop tears down the running instance of a managed stack: containers are
+// stopped AND removed, project networks (and helper artifacts like secret
+// tmpfs volumes, via the cleanup hook) are cleaned up. Persistent named
+// volumes are left intact so data survives the lifecycle — matches the
+// semantics of `docker compose down` without `-v`. The DAO record is
+// preserved (status flips to "inactive"); a subsequent Deploy recreates
+// the stack from the same stored YAML.
 func (b *composeStackBiz) Stop(ctx context.Context, id string, user web.User) error {
 	stack, err := b.loadStack(ctx, id)
 	if err != nil {
@@ -529,7 +572,10 @@ func (b *composeStackBiz) Stop(ctx context.Context, id string, user web.User) er
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
-	if err := engine.Stop(ctx, stack.Name); err != nil {
+	// removeVolumes=false — named project volumes carry data and are
+	// preserved. The cleanup hook still drops helper artifacts (secret
+	// tmpfs / volume mounts) that are recreated on the next Deploy.
+	if err := engine.Remove(ctx, stack.Name, false, b.sec.NewCleanupHook()); err != nil {
 		return wrapStackOpError("stop", stack.Name, host, err)
 	}
 	_ = b.di.ComposeStackUpdateStatus(ctx, id, "inactive")
@@ -797,14 +843,16 @@ func (b *composeStackBiz) StartExternal(ctx context.Context, hostID, name string
 	return nil
 }
 
-// StopExternal stops all running containers of an unmanaged project on a host.
+// StopExternal mirrors Stop for an unmanaged (CLI-discovered) project:
+// containers are removed, project networks cleaned, named volumes kept.
+// Same `docker compose down` without `-v` semantics.
 func (b *composeStackBiz) StopExternal(ctx context.Context, hostID, name string, user web.User) error {
 	cli, host, err := b.hostClient(ctx, hostID)
 	if err != nil {
 		return err
 	}
 	engine := compose.NewStandaloneEngine(cli)
-	if err := engine.Stop(ctx, name); err != nil {
+	if err := engine.Remove(ctx, name, false, b.sec.NewCleanupHook()); err != nil {
 		return wrapStackOpError("stop", name, host, err)
 	}
 	b.eb.CreateStack(EventActionShutdown, hostID, name, user)

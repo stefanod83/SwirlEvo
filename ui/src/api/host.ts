@@ -58,14 +58,23 @@ export function sync(id: string) {
   return ajax.post('/host/sync', { id })
 }
 
-// Addon config extract — persisted JSON blob with lists parsed from an
-// uploaded addon config file (e.g. traefik.yml). Consumed by the compose
-// stack editor wizard tabs to augment dropdown options.
+// Addon config extract — persisted JSON blob scoped to a host. Curated
+// from the Host edit page: lists extracted from an uploaded addon config
+// file (e.g. traefik.yml), pointers to the stack/container that serves the
+// addon, default values pre-filled by the stack-editor wizard tab, and
+// free-form overrides for fields the structured form doesn't capture.
 export interface TraefikExtract {
+  enabled?: boolean
   entryPoints?: string[]
   certResolvers?: string[]
   middlewares?: string[]
   networks?: string[]
+  stackId?: string
+  containerName?: string
+  defaultDomain?: string
+  defaultEntrypoint?: string
+  defaultCertResolver?: string
+  overrides?: Record<string, string>
   sourceFile?: string
   uploadedAt?: string
   uploadedBy?: string

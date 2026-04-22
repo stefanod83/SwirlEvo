@@ -124,6 +124,9 @@ func (s *stubComposeStackBiz) Save(_ context.Context, stack *dao.ComposeStack, _
 func (s *stubComposeStackBiz) Deploy(context.Context, *dao.ComposeStack, bool, web.User) (string, error) {
 	return "", nil
 }
+func (s *stubComposeStackBiz) DeployByID(context.Context, string, bool, web.User) (string, error) {
+	return "", nil
+}
 func (s *stubComposeStackBiz) Import(context.Context, *dao.ComposeStack, bool, bool, web.User) (string, error) {
 	return "", nil
 }

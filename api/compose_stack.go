@@ -15,6 +15,10 @@ type ComposeStackHandler struct {
 	FindDetail web.HandlerFunc `path:"/find-detail" auth:"stack.view" desc:"find detail by hostId+name"`
 	Save       web.HandlerFunc `path:"/save" method:"post" auth:"stack.edit" desc:"save compose stack without deploying"`
 	Deploy     web.HandlerFunc `path:"/deploy" method:"post" auth:"stack.deploy" desc:"deploy compose stack"`
+	// DeployByID redeploys an existing stack using the persisted YAML
+	// without going through the editor payload. Used by the stack list's
+	// Deploy button and by Start's fallback path.
+	DeployByID web.HandlerFunc `path:"/deploy-by-id" method:"post" auth:"stack.deploy" desc:"redeploy a persisted stack"`
 	Import     web.HandlerFunc `path:"/import" method:"post" auth:"stack.edit" desc:"import an external stack"`
 	Start      web.HandlerFunc `path:"/start" method:"post" auth:"stack.deploy" desc:"start compose stack"`
 	Stop       web.HandlerFunc `path:"/stop" method:"post" auth:"stack.shutdown" desc:"stop compose stack"`
@@ -52,6 +56,7 @@ func NewComposeStack(b biz.ComposeStackBiz, ad biz.AddonDiscoveryBiz) *ComposeSt
 		FindDetail: composeStackFindDetail(b),
 		Save:       composeStackSave(b),
 		Deploy:     composeStackDeploy(b),
+		DeployByID: composeStackDeployByID(b),
 		Import:     composeStackImport(b),
 		Start:      composeStackStart(b),
 		Stop:       composeStackStop(b),
@@ -134,6 +139,30 @@ func composeStackDeploy(b biz.ComposeStackBiz) web.HandlerFunc {
 		ctx, cancel := misc.Context(5 * defaultTimeout)
 		defer cancel()
 		id, err := b.DeployWithAddons(ctx, &args.ComposeStack, args.AddonsConfig, args.PullImages, c.User())
+		if err != nil {
+			return err
+		}
+		return success(c, data.Map{"id": id})
+	}
+}
+
+func composeStackDeployByID(b biz.ComposeStackBiz) web.HandlerFunc {
+	type Args struct {
+		ID         string `json:"id"`
+		PullImages bool   `json:"pullImages"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		// Same envelope as /deploy — the async engine run survives past
+		// the HTTP response, but we still give the caller a generous
+		// deadline for the synchronous self-protection check + image
+		// pulls it kicks off.
+		ctx, cancel := misc.Context(5 * defaultTimeout)
+		defer cancel()
+		id, err := b.DeployByID(ctx, args.ID, args.PullImages, c.User())
 		if err != nil {
 			return err
 		}

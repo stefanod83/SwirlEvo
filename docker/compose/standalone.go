@@ -720,6 +720,13 @@ func (e *StandaloneEngine) listProjectContainers(ctx context.Context, project st
 	})
 }
 
+// ListContainers is the exported form of listProjectContainers — biz layers
+// need it to decide whether a project is live (has containers) or has been
+// fully torn down (e.g. post-Stop).
+func (e *StandaloneEngine) ListContainers(ctx context.Context, project string, includeStopped bool) ([]container.Summary, error) {
+	return e.listProjectContainers(ctx, project, includeStopped)
+}
+
 func (e *StandaloneEngine) removeProjectContainers(ctx context.Context, project string, removeAll bool, preserveNames ...string) error {
 	list, err := e.listProjectContainers(ctx, project, true)
 	if err != nil {

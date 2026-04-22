@@ -17,17 +17,44 @@ type AddonConfigExtract struct {
 	Traefik *TraefikExtract `json:"traefik,omitempty"`
 }
 
-// TraefikExtract carries the subset of Traefik static configuration the
-// editor wizard needs, stripped of ACME keys / secrets. What lands in the DB
-// is only the NAMES (of entrypoints, cert resolvers, etc.) — the raw file is
-// never persisted.
+// TraefikExtract carries the host-level Traefik configuration the operator
+// curates in the Host edit page: lists discovered/uploaded + pointers to
+// the stack or container actually running Traefik + default values the
+// wizard pre-fills in the stack editor + free-form overrides. The raw
+// traefik.yml is never persisted (may contain ACME keys).
 type TraefikExtract struct {
-	EntryPoints   []string  `json:"entryPoints"`
-	CertResolvers []string  `json:"certResolvers"`
-	Middlewares   []string  `json:"middlewares"`
-	Networks      []string  `json:"networks"`
-	// SourceFile is the filename the operator uploaded (display-only,
-	// e.g. "traefik.yml"). No path, just the basename.
+	// Enabled gates the Traefik tab in the stack editor. When false the
+	// stack-editor Traefik tab is hidden entirely — the operator must
+	// opt in from the Host edit page before configuring services.
+	Enabled bool `json:"enabled"`
+	// Lists — union of docker-inspect + uploaded file extraction.
+	EntryPoints   []string `json:"entryPoints"`
+	CertResolvers []string `json:"certResolvers"`
+	Middlewares   []string `json:"middlewares"`
+	Networks      []string `json:"networks"`
+
+	// Pointers — which managed stack and/or container actually runs
+	// Traefik on this host. Informational for the operator; the stack
+	// editor tab surfaces them as a badge so users know "this Traefik
+	// is served by stack X on container Y". Both optional: the operator
+	// can leave them blank when the Traefik deploy is managed outside
+	// Swirl.
+	StackID       string `json:"stackId,omitempty"`
+	ContainerName string `json:"containerName,omitempty"`
+
+	// Defaults — pre-fill values for the stack-editor Traefik tab when
+	// neither docker-inspect nor the uploaded config can derive them.
+	// Empty = no default; the stack editor keeps its empty form state.
+	DefaultDomain       string `json:"defaultDomain,omitempty"`
+	DefaultEntrypoint   string `json:"defaultEntrypoint,omitempty"`
+	DefaultCertResolver string `json:"defaultCertResolver,omitempty"`
+
+	// Overrides — free-form key/value pairs the operator can set when
+	// a field of interest isn't captured by the structured fields above.
+	// Displayed in the stack editor as read-only hints.
+	Overrides map[string]string `json:"overrides,omitempty"`
+
+	// Provenance of the last upload.
 	SourceFile string    `json:"sourceFile,omitempty"`
 	UploadedAt time.Time `json:"uploadedAt,omitempty"`
 	UploadedBy string    `json:"uploadedBy,omitempty"`
@@ -64,7 +91,10 @@ func (b *hostBiz) UpdateAddonConfigExtract(ctx context.Context, hostID string, e
 	}
 	// Merge with the existing extract: callers may provide just one
 	// addon subtree (e.g. only Traefik) without wanting to nuke the
-	// others. Unset subtrees are left as-is.
+	// others. Unset subtrees are left as-is. The upload timestamp /
+	// SourceFile only flip when the uploaded-lists fields actually
+	// changed — editing just StackID or Defaults must not rewrite the
+	// "last upload" provenance.
 	current := decodeAddonConfigExtract(host.AddonConfigExtract)
 	if extract != nil && extract.Traefik != nil {
 		t := *extract.Traefik
@@ -72,11 +102,38 @@ func (b *hostBiz) UpdateAddonConfigExtract(ctx context.Context, hostID string, e
 		t.CertResolvers = dedup(t.CertResolvers)
 		t.Middlewares = dedup(t.Middlewares)
 		t.Networks = dedup(t.Networks)
-		if t.UploadedAt.IsZero() {
-			t.UploadedAt = time.Now()
-		}
-		if t.UploadedBy == "" && user != nil {
-			t.UploadedBy = user.Name()
+		// Only stamp upload provenance when the caller actually
+		// provided a SourceFile — gives the API two calling patterns
+		// (upload vs metadata edit) without a second endpoint.
+		if t.SourceFile != "" {
+			if t.UploadedAt.IsZero() {
+				t.UploadedAt = time.Now()
+			}
+			if t.UploadedBy == "" && user != nil {
+				t.UploadedBy = user.Name()
+			}
+		} else if current.Traefik != nil {
+			// Metadata-only edit: preserve the previous upload's
+			// provenance so the UI keeps showing "traefik.yml ·
+			// 2026-04-21 · stefaweb" accurately.
+			t.SourceFile = current.Traefik.SourceFile
+			t.UploadedAt = current.Traefik.UploadedAt
+			t.UploadedBy = current.Traefik.UploadedBy
+			// Same for the list fields when the caller deliberately
+			// sent them empty (nil slice = "don't touch"): a Save
+			// that only mutates StackID keeps the imported lists.
+			if len(t.EntryPoints) == 0 {
+				t.EntryPoints = current.Traefik.EntryPoints
+			}
+			if len(t.CertResolvers) == 0 {
+				t.CertResolvers = current.Traefik.CertResolvers
+			}
+			if len(t.Middlewares) == 0 {
+				t.Middlewares = current.Traefik.Middlewares
+			}
+			if len(t.Networks) == 0 {
+				t.Networks = current.Traefik.Networks
+			}
 		}
 		current.Traefik = &t
 	}

@@ -152,6 +152,11 @@ export interface TraefikServiceCfg {
     tls?: boolean;
     certResolver?: string;
     middlewares?: string[];
+    // extraLabels is the passthrough set for every traefik.* label the
+    // wizard doesn't model natively (extra routers, tls.options,
+    // middlewares with provider qualifiers, plugins, ...). Populated by
+    // the backend reverse parser and re-emitted verbatim on save.
+    extraLabels?: Record<string, string>;
 }
 
 export interface ResourcesServiceCfg {
@@ -201,6 +206,13 @@ export class ComposeStackApi {
     deploy(stack: ComposeStack, pullImages = false, addonsConfig?: AddonsConfig) {
         return ajax.post<{ id: string }>('/compose-stack/deploy',
             { ...stack, pullImages, addonsConfig })
+    }
+
+    // deployById redeploys an existing stack using the YAML already
+    // persisted on the record — no editor roundtrip needed. Used by
+    // the list's Deploy button.
+    deployById(id: string, pullImages = false) {
+        return ajax.post<{ id: string }>('/compose-stack/deploy-by-id', { id, pullImages })
     }
 
     import_(stack: ComposeStack, redeploy = false, pullImages = false) {

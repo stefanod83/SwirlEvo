@@ -10,15 +10,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// swirlManagedMarker is the trailing line-comment stamped on every label the
-// addon wizard writes. On re-save we overwrite keys carrying the marker and
-// preserve keys without it (user-managed). Anchored to a stable prefix so a
-// later revision of the marker text stays detectable.
-const swirlManagedMarker = "swirl-managed"
-
 // AddonsConfig carries the wizard state for every enabled addon, keyed by
 // service name. The tab UI emits exactly the shape persisted here; the
 // backend turns it into labels + YAML mutations.
+//
+// Merge model (post marker-abandonment): every addon owns its label
+// namespace entirely. For each service present in cfg.<Addon> the backend
+// REMOVES every label carrying the addon's prefix (e.g. `traefik.*`) and
+// rewrites it with the labels computed from the form. Services not present
+// in cfg.<Addon> are left untouched. Resources follow the same model at
+// scalar level: a service listed in cfg.Resources has its resource fields
+// overwritten; services not listed are ignored.
 type AddonsConfig struct {
 	Traefik    map[string]TraefikServiceCfg    `json:"traefik,omitempty"`
 	Sablier    map[string]SablierServiceCfg    `json:"sablier,omitempty"`
@@ -27,10 +29,6 @@ type AddonsConfig struct {
 	Resources  map[string]ResourcesServiceCfg  `json:"resources,omitempty"`
 }
 
-// TraefikServiceCfg holds the wizard state for a single compose service.
-// Empty / zero-valued fields mean "don't emit that label". Required fields
-// (Domain/Path/Port) are validated at injection time — a toggled-off
-// service emits no labels at all.
 type TraefikServiceCfg struct {
 	Enabled      bool     `json:"enabled"`
 	Router       string   `json:"router"`
@@ -42,10 +40,18 @@ type TraefikServiceCfg struct {
 	TLS          bool     `json:"tls"`
 	CertResolver string   `json:"certResolver"`
 	Middlewares  []string `json:"middlewares,omitempty"`
+	// ExtraLabels is the passthrough for every Traefik-prefixed label the
+	// wizard doesn't model natively — e.g. extra routers for the same
+	// service, tls.options, provider-qualified middlewares (`@file`,
+	// `@kubernetes`), service-level loadBalancer tweaks, plugins, etc.
+	// The reverse parser fills this with anything NOT mapped into the
+	// structured fields above; the builder re-emits the map verbatim on
+	// save, alongside the structured labels. This lets operators use the
+	// wizard for common cases without losing hand-written advanced
+	// configuration.
+	ExtraLabels map[string]string `json:"extraLabels,omitempty"`
 }
 
-// Placeholders for later phases — declared here so the backend + frontend
-// types stay aligned from Phase 3 onwards.
 type SablierServiceCfg struct {
 	Enabled         bool   `json:"enabled"`
 	Group           string `json:"group"`
@@ -61,9 +67,7 @@ type WatchtowerServiceCfg struct {
 }
 
 type BackupServiceCfg struct {
-	Enabled bool `json:"enabled"`
-	// Coarse placeholders for Phase 5. Kept as strings/maps so the JSON
-	// stays stable even as we flesh out the backup-tab form.
+	Enabled  bool              `json:"enabled"`
 	Schedule string            `json:"schedule,omitempty"`
 	Plugin   string            `json:"plugin,omitempty"`
 	Extra    map[string]string `json:"extra,omitempty"`
@@ -76,17 +80,29 @@ type ResourcesServiceCfg struct {
 	MemoryReservation string `json:"memoryReservation,omitempty"`
 }
 
-// injectAddonLabels rewrites the compose YAML in-place, upserting every
-// wizard-managed label across the services listed in cfg. The mode decides
+// addonPrefixes lists the label key prefixes each addon claims. When a
+// service appears in cfg.<Addon>, every existing label with one of these
+// prefixes is stripped from the service before the new label set is
+// written. Keeping the list in one place makes the replace-all policy
+// auditable at a glance.
+var addonPrefixes = map[string][]string{
+	"traefik":    {"traefik."},
+	"sablier":    {"sablier.", "traefik.http.middlewares."},
+	"watchtower": {"com.centurylinklabs.watchtower."},
+	"backup":     {"backup."},
+}
+
+// injectAddonLabels rewrites the compose YAML in-place, replacing every
+// addon-owned label set across the services listed in cfg. The mode decides
 // WHERE the labels land:
 //
 //	standalone → services.<svc>.labels
 //	swarm      → services.<svc>.deploy.labels
 //
-// Labels carrying swirlManagedMarker are overwritten; user-managed labels
-// (same key, no marker) are preserved as-is. Returns the re-serialised YAML.
-// A nil cfg (or one with only empty addon maps) is a no-op — the function
-// returns content verbatim.
+// Labels carrying a prefix that belongs to a wizard-touched addon on a
+// service are dropped and re-emitted from cfg; labels of addons NOT touched
+// by the operator on that service are preserved as-is. Resources work the
+// same way at scalar-field level.
 func injectAddonLabels(content string, cfg *AddonsConfig, mode string) (string, error) {
 	if cfg == nil || !hasAnyAddon(cfg) {
 		return content, nil
@@ -103,28 +119,45 @@ func injectAddonLabels(content string, cfg *AddonsConfig, mode string) (string, 
 
 	services := mappingFieldNode(doc, "services")
 	if services == nil {
-		// Nothing to label — return the content unchanged. The validator
-		// upstream (Parse) already rejected malformed YAML.
 		return content, nil
 	}
 
-	// Pre-compute labels per service so we only walk the service list once.
-	labelsPerService := buildLabelsPerService(cfg)
+	// Compute, per service, (a) which addon prefixes must be purged and
+	// (b) the new label set to write. A service appears in the map if
+	// AT LEAST ONE addon has an entry for it.
+	purgePerService := map[string][]string{}
+	labelsPerService := map[string]map[string]string{}
 
-	for svcName, labels := range labelsPerService {
-		svcNode := mappingFieldNode(services, svcName)
+	for svc, t := range cfg.Traefik {
+		purgePerService[svc] = append(purgePerService[svc], addonPrefixes["traefik"]...)
+		for k, v := range buildTraefikLabels(svc, t) {
+			if labelsPerService[svc] == nil {
+				labelsPerService[svc] = map[string]string{}
+			}
+			labelsPerService[svc][k] = v
+		}
+	}
+	// Future phases wire Sablier/Watchtower/Backup the same way — the
+	// prefix-based purge makes their addition a one-liner.
+
+	for svc, prefixes := range purgePerService {
+		svcNode := mappingFieldNode(services, svc)
 		if svcNode == nil || svcNode.Kind != yaml.MappingNode {
-			// Service not in the YAML (may have been renamed between
-			// wizard edits and save). Skip silently — emitting an error
-			// would break the save for an otherwise valid compose.
 			continue
 		}
+		// Purge owned prefixes from every labels location (standalone +
+		// swarm), then write to the mode-correct target. Cross-location
+		// purge avoids orphan labels when a stack migrates between modes.
+		for _, loc := range labelLocations(svcNode) {
+			stripPrefixes(loc, prefixes)
+		}
 		target := resolveLabelsNode(svcNode, mode)
-		upsertLabels(target, labels)
+		if labels := labelsPerService[svc]; labels != nil {
+			writeLabels(target, labels)
+		}
 	}
 
-	// Apply resources — different path, same pre-serialize moment so the
-	// whole doc round-trips once.
+	// Resources — mode-specific path, not labels.
 	if len(cfg.Resources) > 0 {
 		applyResources(services, cfg.Resources, mode)
 	}
@@ -136,14 +169,12 @@ func injectAddonLabels(content string, cfg *AddonsConfig, mode string) (string, 
 	return buf, nil
 }
 
-// extractAddonConfig is the reverse parser: reads a YAML document, looks at
-// every service's labels (both standalone and swarm-style placements) and
-// reconstructs the AddonsConfig for the wizard tabs. Only labels carrying
-// swirlManagedMarker are considered wizard-owned — everything else is left
-// alone and the tab starts blank on those services.
-//
-// Phase 3 wires Traefik only. Other addons return empty maps and are
-// filled in by later phases.
+// extractAddonConfig is the reverse parser: walks every service's labels and
+// reconstructs the AddonsConfig for the wizard tabs. All labels carrying a
+// recognised addon prefix are considered wizard-gestibili — the marker is
+// gone, so user-authored entries and wizard-authored entries are treated
+// identically. That matches the new save semantics: the wizard owns the
+// entire addon namespace on a given service.
 func extractAddonConfig(content string) (*AddonsConfig, error) {
 	out := &AddonsConfig{
 		Traefik:   map[string]TraefikServiceCfg{},
@@ -172,17 +203,19 @@ func extractAddonConfig(content string) (*AddonsConfig, error) {
 		}
 		svc := keyNode.Value
 
-		// Labels could live either under labels (standalone) or
-		// deploy.labels (swarm). Scan both.
-		managedLabels := map[string]string{}
+		labels := map[string]string{}
 		for _, target := range labelLocations(svcNode) {
-			collectSwirlManagedLabels(target, managedLabels)
+			collectLabels(target, labels)
 		}
-		if cfg := traefikCfgFromLabels(managedLabels); cfg.Enabled {
+		cfg := traefikCfgFromLabelsFor(labels, svc)
+		// Surface the cfg when ANY traefik.* label exists on the
+		// service — the UI shows the wizard state for known keys and
+		// a passthrough box for the rest. Services with no traefik
+		// footprint stay out of the map.
+		if cfg.Enabled || len(cfg.ExtraLabels) > 0 {
 			out.Traefik[svc] = cfg
 		}
 
-		// Resources: swarm and standalone have different paths.
 		if rc, ok := resourcesCfgFromService(svcNode); ok {
 			out.Resources[svc] = rc
 		}
@@ -200,8 +233,6 @@ func hasAnyAddon(cfg *AddonsConfig) bool {
 		len(cfg.Resources) > 0
 }
 
-// documentNode peels off the top DocumentNode wrapper that yaml.v3 hands back
-// from Unmarshal, returning the root mapping/sequence. Handles empty docs.
 func documentNode(root *yaml.Node) *yaml.Node {
 	if root == nil {
 		return nil
@@ -215,8 +246,6 @@ func documentNode(root *yaml.Node) *yaml.Node {
 	return root
 }
 
-// mappingFieldNode finds a child by key in a MappingNode. Returns nil when
-// the parent isn't a mapping or the key is absent.
 func mappingFieldNode(parent *yaml.Node, key string) *yaml.Node {
 	if parent == nil || parent.Kind != yaml.MappingNode {
 		return nil
@@ -231,8 +260,7 @@ func mappingFieldNode(parent *yaml.Node, key string) *yaml.Node {
 }
 
 // ensureMappingChild fetches-or-creates a MappingNode child under a mapping
-// parent, returning it for further mutation. Used to materialise `deploy:`
-// and `deploy.labels:` when absent.
+// parent, returning it for further mutation.
 func ensureMappingChild(parent *yaml.Node, key string) *yaml.Node {
 	if parent == nil || parent.Kind != yaml.MappingNode {
 		return nil
@@ -241,8 +269,6 @@ func ensureMappingChild(parent *yaml.Node, key string) *yaml.Node {
 		if existing.Kind == yaml.MappingNode {
 			return existing
 		}
-		// Replace non-mapping scalar with an empty map — an uncommon
-		// mid-edit state but safer than refusing to write.
 		existing.Kind = yaml.MappingNode
 		existing.Tag = "!!map"
 		existing.Value = ""
@@ -255,90 +281,190 @@ func ensureMappingChild(parent *yaml.Node, key string) *yaml.Node {
 	return v
 }
 
-// resolveLabelsNode returns the labels MappingNode for a service, creating
-// intermediate parents where needed. Swarm mode lands under deploy.labels;
-// standalone under top-level labels.
+// removeMappingChild removes a child by key from a mapping node. No-op when
+// the parent isn't a mapping or the key is absent. Used to delete empty
+// labels / deploy / resources containers after pruning.
+func removeMappingChild(parent *yaml.Node, key string) {
+	if parent == nil || parent.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i < len(parent.Content); i += 2 {
+		k := parent.Content[i]
+		if k != nil && k.Value == key {
+			parent.Content = append(parent.Content[:i], parent.Content[i+2:]...)
+			return
+		}
+	}
+}
+
+// resolveLabelsNode returns the labels node for a service (mapping OR
+// sequence — see Docker Compose spec: both forms are valid), creating an
+// empty mapping if the field is absent. Swarm mode lands under
+// deploy.labels; standalone under top-level labels. Callers must treat
+// the returned node as-is: sequence nodes keep their `- "k=v"` style,
+// mapping nodes keep their `k: v` style.
 func resolveLabelsNode(svcNode *yaml.Node, mode string) *yaml.Node {
 	if mode == "swarm" {
 		deploy := ensureMappingChild(svcNode, "deploy")
-		return ensureMappingChild(deploy, "labels")
+		return ensureLabelsChild(deploy)
 	}
-	return ensureMappingChild(svcNode, "labels")
+	return ensureLabelsChild(svcNode)
 }
 
-// labelLocations returns the set of existing label MappingNodes on a
-// service — used by the reverse parser which has to look at both mode-
-// specific placements regardless of which mode the host is in today.
+// ensureLabelsChild returns the `labels` child verbatim when it exists
+// (preserving mapping vs sequence form), or creates an empty mapping when
+// absent. Unlike ensureMappingChild, this NEVER converts a sequence to a
+// mapping — that conversion would drop every hand-written label in the
+// common `- "k=v"` form used by most compose files.
+func ensureLabelsChild(parent *yaml.Node) *yaml.Node {
+	if parent == nil || parent.Kind != yaml.MappingNode {
+		return nil
+	}
+	if existing := mappingFieldNode(parent, "labels"); existing != nil {
+		return existing
+	}
+	k := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "labels"}
+	v := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	parent.Content = append(parent.Content, k, v)
+	return v
+}
+
+// labelLocations returns the set of existing label nodes on a service —
+// mapping OR sequence — across both mode-specific placements. Reverse
+// parser and prefix purger walk every location.
 func labelLocations(svcNode *yaml.Node) []*yaml.Node {
 	var out []*yaml.Node
-	if lbl := mappingFieldNode(svcNode, "labels"); lbl != nil && lbl.Kind == yaml.MappingNode {
+	if lbl := mappingFieldNode(svcNode, "labels"); isLabelsNode(lbl) {
 		out = append(out, lbl)
 	}
 	if dep := mappingFieldNode(svcNode, "deploy"); dep != nil {
-		if lbl := mappingFieldNode(dep, "labels"); lbl != nil && lbl.Kind == yaml.MappingNode {
+		if lbl := mappingFieldNode(dep, "labels"); isLabelsNode(lbl) {
 			out = append(out, lbl)
 		}
 	}
 	return out
 }
 
-// upsertLabels writes the key/value pairs under a labels MappingNode.
-// Policy:
-//   - key exists AND has swirl-managed marker → overwrite value.
-//   - key exists AND no marker              → leave untouched (user-managed).
-//   - key absent                            → insert with marker.
-//
-// Keys are written in deterministic (sorted) order when appended so the
-// resulting YAML diff stays reviewable between saves.
-func upsertLabels(labelsNode *yaml.Node, pairs map[string]string) {
-	if labelsNode == nil || labelsNode.Kind != yaml.MappingNode {
+// isLabelsNode classifies a YAML node as a valid labels container:
+// either a mapping (`k: v` entries) or a sequence (`- "k=v"` entries).
+func isLabelsNode(n *yaml.Node) bool {
+	if n == nil {
+		return false
+	}
+	return n.Kind == yaml.MappingNode || n.Kind == yaml.SequenceNode
+}
+
+// stripPrefixes drops every label whose key starts with any of the given
+// prefixes, handling BOTH mapping-form and sequence-form nodes. Called
+// before writeLabels so the wizard always emits a clean addon namespace.
+func stripPrefixes(labelsNode *yaml.Node, prefixes []string) {
+	if !isLabelsNode(labelsNode) {
 		return
 	}
-	existing := map[string]int{} // key -> index of its value node
-	for i := 0; i < len(labelsNode.Content); i += 2 {
-		existing[labelsNode.Content[i].Value] = i
-	}
-
-	// Deterministic order for new keys keeps diffs reviewable.
-	newKeys := make([]string, 0, len(pairs))
-	for k := range pairs {
-		newKeys = append(newKeys, k)
-	}
-	sort.Strings(newKeys)
-
-	for _, k := range newKeys {
-		v := pairs[k]
-		if idx, ok := existing[k]; ok {
-			valNode := labelsNode.Content[idx+1]
-			if !strings.Contains(valNode.LineComment, swirlManagedMarker) {
-				// user-managed — leave alone.
-				continue
+	if labelsNode.Kind == yaml.MappingNode {
+		kept := make([]*yaml.Node, 0, len(labelsNode.Content))
+		for i := 0; i < len(labelsNode.Content); i += 2 {
+			k := labelsNode.Content[i]
+			if !hasAnyPrefix(k.Value, prefixes) {
+				kept = append(kept, labelsNode.Content[i], labelsNode.Content[i+1])
 			}
-			valNode.Value = v
-			valNode.Tag = "!!str"
-			valNode.Style = 0
-			valNode.LineComment = swirlManagedMarker
-			continue
 		}
-		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: k}
-		valNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v, LineComment: swirlManagedMarker}
-		labelsNode.Content = append(labelsNode.Content, keyNode, valNode)
+		labelsNode.Content = kept
+		return
+	}
+	// SequenceNode: each Content item is a scalar `"key=value"` or
+	// sometimes `"key"` (flag-style). We match on the key half.
+	kept := make([]*yaml.Node, 0, len(labelsNode.Content))
+	for _, item := range labelsNode.Content {
+		k, _ := splitSeqLabel(item)
+		if !hasAnyPrefix(k, prefixes) {
+			kept = append(kept, item)
+		}
+	}
+	labelsNode.Content = kept
+}
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// splitSeqLabel pulls the "key" / "value" out of a single sequence-form
+// label node. Accepts `"k=v"`, `"k"` (value defaults to ""), and quoted
+// variants. Non-scalar items return ("", "").
+func splitSeqLabel(item *yaml.Node) (string, string) {
+	if item == nil || item.Kind != yaml.ScalarNode {
+		return "", ""
+	}
+	s := item.Value
+	if eq := strings.Index(s, "="); eq >= 0 {
+		return s[:eq], s[eq+1:]
+	}
+	return s, ""
+}
+
+// writeLabels appends key/value pairs to a labels node in deterministic
+// order, preserving the node's form (mapping vs sequence). Callers are
+// expected to have purged the addon prefix already via stripPrefixes.
+func writeLabels(labelsNode *yaml.Node, pairs map[string]string) {
+	if !isLabelsNode(labelsNode) {
+		return
+	}
+	keys := make([]string, 0, len(pairs))
+	for k := range pairs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if labelsNode.Kind == yaml.MappingNode {
+		for _, k := range keys {
+			keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: k}
+			valNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: pairs[k]}
+			labelsNode.Content = append(labelsNode.Content, keyNode, valNode)
+		}
+		return
+	}
+	// SequenceNode: emit `- "key=value"`. The DoubleQuotedStyle gives
+	// visual parity with the rules operators hand-write (which
+	// typically quote the whole entry because values contain backticks,
+	// dots, etc.).
+	for _, k := range keys {
+		entry := &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: k + "=" + pairs[k],
+			Style: yaml.DoubleQuotedStyle,
+		}
+		labelsNode.Content = append(labelsNode.Content, entry)
 	}
 }
 
-// collectSwirlManagedLabels picks out only labels carrying the marker from a
-// labels MappingNode — the reverse parser never touches user-managed entries.
-func collectSwirlManagedLabels(labelsNode *yaml.Node, into map[string]string) {
-	if labelsNode == nil || labelsNode.Kind != yaml.MappingNode {
+// collectLabels copies every key/value pair of a labels node (mapping OR
+// sequence) into `into`. Used by the reverse parser — all entries are
+// surfaced regardless of origin.
+func collectLabels(labelsNode *yaml.Node, into map[string]string) {
+	if !isLabelsNode(labelsNode) {
 		return
 	}
-	for i := 0; i < len(labelsNode.Content); i += 2 {
-		k := labelsNode.Content[i]
-		v := labelsNode.Content[i+1]
-		if v == nil || !strings.Contains(v.LineComment, swirlManagedMarker) {
-			continue
+	if labelsNode.Kind == yaml.MappingNode {
+		for i := 0; i < len(labelsNode.Content); i += 2 {
+			k := labelsNode.Content[i]
+			v := labelsNode.Content[i+1]
+			if v == nil {
+				continue
+			}
+			into[k.Value] = v.Value
 		}
-		into[k.Value] = v.Value
+		return
+	}
+	for _, item := range labelsNode.Content {
+		k, v := splitSeqLabel(item)
+		if k != "" {
+			into[k] = v
+		}
 	}
 }
 
@@ -355,30 +481,33 @@ func marshalYAMLNode(root *yaml.Node) (string, error) {
 
 // ---------- Traefik-specific builder/reverse ----------
 
-// buildLabelsPerService flattens cfg into service → label map, merging the
-// output of every per-addon builder. When a service is listed in multiple
-// addons (e.g. Traefik + Sablier) their label maps are merged — Sablier
-// emits traefik.http.middlewares entries that must coexist with Traefik's.
-func buildLabelsPerService(cfg *AddonsConfig) map[string]map[string]string {
-	out := map[string]map[string]string{}
-	for svc, t := range cfg.Traefik {
-		for k, v := range buildTraefikLabels(svc, t) {
-			if out[svc] == nil {
-				out[svc] = map[string]string{}
-			}
-			out[svc][k] = v
+// buildTraefikLabels emits the label set that makes the service routable
+// through a Traefik v3 instance. The structured wizard fields produce the
+// minimum-viable routing; ExtraLabels (passthrough) is merged on top so
+// advanced operator-authored entries round-trip verbatim.
+//
+// Return value semantics:
+//   - Wizard disabled AND no extras → nil, caller purges the namespace.
+//   - Wizard disabled BUT extras present → only the extras (preserving
+//     multi-router / tls.options / middleware@file on a service the
+//     operator doesn't want fully wizard-managed).
+//   - Wizard enabled but missing rule/port → extras only (the wizard
+//     row is incomplete, we don't emit a half-broken router).
+func buildTraefikLabels(svc string, cfg TraefikServiceCfg) map[string]string {
+	// Start with passthrough. Structured fields below override on key
+	// collision — if the operator typed `traefik.enable` in the extras
+	// list, the wizard toggle still wins.
+	out := map[string]string{}
+	for k, v := range cfg.ExtraLabels {
+		if strings.HasPrefix(k, "traefik.") {
+			out[k] = v
 		}
 	}
-	return out
-}
-
-// buildTraefikLabels emits the minimum label set that makes the service
-// routable through a Traefik v3 instance. Returns an empty map when the
-// wizard entry is disabled or missing required fields — nothing is written
-// to the YAML in that case.
-func buildTraefikLabels(svc string, cfg TraefikServiceCfg) map[string]string {
 	if !cfg.Enabled {
-		return nil
+		if len(out) == 0 {
+			return nil
+		}
+		return out
 	}
 	router := strings.TrimSpace(cfg.Router)
 	if router == "" {
@@ -386,16 +515,14 @@ func buildTraefikLabels(svc string, cfg TraefikServiceCfg) map[string]string {
 	}
 	rule := buildTraefikRule(cfg)
 	if rule == "" || cfg.Port <= 0 {
-		// Incomplete form — skip the service. The UI enforces
-		// required-field validation; this is a safety net for API
-		// callers that bypass it.
-		return nil
+		if len(out) == 0 {
+			return nil
+		}
+		return out
 	}
-	out := map[string]string{
-		"traefik.enable": "true",
-		fmt.Sprintf("traefik.http.routers.%s.rule", router):                                rule,
-		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", router):            fmt.Sprintf("%d", cfg.Port),
-	}
+	out["traefik.enable"] = "true"
+	out[fmt.Sprintf("traefik.http.routers.%s.rule", router)] = rule
+	out[fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", router)] = fmt.Sprintf("%d", cfg.Port)
 	if cfg.Entrypoint != "" {
 		out[fmt.Sprintf("traefik.http.routers.%s.entrypoints", router)] = cfg.Entrypoint
 	}
@@ -411,9 +538,6 @@ func buildTraefikLabels(svc string, cfg TraefikServiceCfg) map[string]string {
 	return out
 }
 
-// buildTraefikRule assembles the router.rule value out of the UI builder
-// (Host / PathPrefix / both). Returns "" when the chosen combination has
-// unfilled required fields.
 func buildTraefikRule(cfg TraefikServiceCfg) string {
 	domain := strings.TrimSpace(cfg.Domain)
 	path := strings.TrimSpace(cfg.Path)
@@ -434,7 +558,6 @@ func buildTraefikRule(cfg TraefikServiceCfg) string {
 		}
 		return fmt.Sprintf("Host(`%s`) && PathPrefix(`%s`)", domain, path)
 	default:
-		// Empty/unknown — default to Host when a domain is given.
 		if domain != "" {
 			return fmt.Sprintf("Host(`%s`)", domain)
 		}
@@ -442,51 +565,125 @@ func buildTraefikRule(cfg TraefikServiceCfg) string {
 	}
 }
 
-// traefikCfgFromLabels is the reverse of buildTraefikLabels: walks a
-// map of marker-tagged labels and rebuilds the wizard state. Router name
-// is inferred from the first `traefik.http.routers.<router>.*` key
-// encountered.
+// traefikCfgFromLabels rebuilds the wizard state from every traefik.*
+// label. Recognised keys of a single "primary" router fill the
+// structured fields; everything else — extra routers, tls.options,
+// middlewares with provider qualifiers (`@file`, `@kubernetes`),
+// service-level loadBalancer tweaks, plugins, etc. — lands verbatim in
+// ExtraLabels so the next save preserves it.
+//
+// Router selection (preserveDeterministic):
+//   - prefer `<svcName>` when a router with that name exists (matches
+//     the Docker Compose convention);
+//   - fallback to the lexicographically-first router name (comparing
+//     just the NAME, not the full label key — avoids `-` < `.` ASCII
+//     surprises that made keycloak-int beat keycloak);
+//   - only actually CONSUME the router's labels into structured fields
+//     if the router has BOTH `rule` AND a loadbalancer port. Otherwise
+//     we leave everything in ExtraLabels and the builder re-emits it
+//     verbatim — round-trip safe for hand-authored configs the wizard
+//     can't fully reconstruct.
 func traefikCfgFromLabels(labels map[string]string) TraefikServiceCfg {
-	cfg := TraefikServiceCfg{}
-	if labels["traefik.enable"] != "true" {
+	return traefikCfgFromLabelsFor(labels, "")
+}
+
+// traefikCfgFromLabelsFor is the service-aware variant used when we know
+// the compose service name — lets us prefer `<svcName>` as the primary
+// router when both exist.
+func traefikCfgFromLabelsFor(labels map[string]string, svcName string) TraefikServiceCfg {
+	cfg := TraefikServiceCfg{ExtraLabels: map[string]string{}}
+	for k, v := range labels {
+		if strings.HasPrefix(k, "traefik.") {
+			cfg.ExtraLabels[k] = v
+		}
+	}
+	enable, hasEnable := labels["traefik.enable"]
+	if !hasEnable || enable != "true" {
 		return cfg
 	}
 	cfg.Enabled = true
-	router := ""
-	for k := range labels {
-		if strings.HasPrefix(k, "traefik.http.routers.") {
-			parts := strings.SplitN(k[len("traefik.http.routers."):], ".", 2)
-			if len(parts) > 0 && parts[0] != "" {
-				router = parts[0]
+	delete(cfg.ExtraLabels, "traefik.enable")
+
+	routers := collectRouterNames(labels)
+	if len(routers) == 0 {
+		if len(cfg.ExtraLabels) == 0 {
+			cfg.ExtraLabels = nil
+		}
+		return cfg
+	}
+	// Prefer a router whose name matches the compose service.
+	router := routers[0]
+	if svcName != "" {
+		for _, r := range routers {
+			if r == svcName {
+				router = r
 				break
 			}
 		}
 	}
-	cfg.Router = router
-	if rule, ok := labels[fmt.Sprintf("traefik.http.routers.%s.rule", router)]; ok {
-		cfg.RuleType, cfg.Domain, cfg.Path = parseTraefikRule(rule)
+	ruleKey := fmt.Sprintf("traefik.http.routers.%s.rule", router)
+	portKey := fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", router)
+	rule, hasRule := labels[ruleKey]
+	_, hasPort := labels[portKey]
+	kind, domain, path := parseTraefikRule(rule)
+
+	// Consume the router into structured fields only when we can rebuild
+	// it end-to-end (needs rule + port). Otherwise leave everything in
+	// ExtraLabels so the builder doesn't drop anything.
+	if hasRule && hasPort && kind != "" {
+		cfg.Router = router
+		cfg.RuleType, cfg.Domain, cfg.Path = kind, domain, path
+		delete(cfg.ExtraLabels, ruleKey)
+		consume := func(key string, apply func(string)) {
+			if v, ok := labels[key]; ok {
+				apply(v)
+				delete(cfg.ExtraLabels, key)
+			}
+		}
+		consume(fmt.Sprintf("traefik.http.routers.%s.entrypoints", router), func(v string) { cfg.Entrypoint = v })
+		consume(portKey, func(v string) { fmt.Sscanf(v, "%d", &cfg.Port) })
+		consume(fmt.Sprintf("traefik.http.routers.%s.tls", router), func(v string) {
+			if v == "true" {
+				cfg.TLS = true
+			}
+		})
+		consume(fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", router), func(v string) { cfg.CertResolver = v })
+		consume(fmt.Sprintf("traefik.http.routers.%s.middlewares", router), func(v string) {
+			if v != "" {
+				cfg.Middlewares = strings.Split(v, ",")
+			}
+		})
 	}
-	if ep, ok := labels[fmt.Sprintf("traefik.http.routers.%s.entrypoints", router)]; ok {
-		cfg.Entrypoint = ep
-	}
-	if portStr, ok := labels[fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", router)]; ok {
-		fmt.Sscanf(portStr, "%d", &cfg.Port)
-	}
-	if tls, ok := labels[fmt.Sprintf("traefik.http.routers.%s.tls", router)]; ok && tls == "true" {
-		cfg.TLS = true
-	}
-	if cr, ok := labels[fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", router)]; ok {
-		cfg.CertResolver = cr
-	}
-	if mws, ok := labels[fmt.Sprintf("traefik.http.routers.%s.middlewares", router)]; ok && mws != "" {
-		cfg.Middlewares = strings.Split(mws, ",")
+
+	if len(cfg.ExtraLabels) == 0 {
+		cfg.ExtraLabels = nil
 	}
 	return cfg
 }
 
-// parseTraefikRule is a minimal reverse of the Host/PathPrefix builder.
-// Anything it cannot recognise returns empty strings so the UI falls back
-// to treating the service as "custom rule" (editor shows a warning).
+// collectRouterNames returns the set of router names present in the label
+// map (`traefik.http.routers.<name>.*`), sorted alphabetically by NAME.
+// Used for deterministic primary-router selection.
+func collectRouterNames(labels map[string]string) []string {
+	seen := map[string]struct{}{}
+	for k := range labels {
+		const prefix = "traefik.http.routers."
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		rest := k[len(prefix):]
+		if dot := strings.Index(rest, "."); dot > 0 {
+			seen[rest[:dot]] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 var (
 	hostRe        = regexp.MustCompile("^Host\\(`([^`]+)`\\)$")
 	pathRe        = regexp.MustCompile("^PathPrefix\\(`([^`]+)`\\)$")
@@ -511,8 +708,9 @@ func parseTraefikRule(rule string) (kind, domain, path string) {
 
 // applyResources mutates services.<svc>.deploy.resources (swarm) or
 // services.<svc>.{cpus,mem_limit,mem_reservation} (standalone) for every
-// service listed in cfg. Keeps the label-injection semantics symmetrical
-// even though resources are not labels.
+// service listed in cfg. Empty strings in the cfg delete the corresponding
+// field — a service listed in cfg.Resources owns its resource fields for
+// the duration of the save.
 func applyResources(services *yaml.Node, cfg map[string]ResourcesServiceCfg, mode string) {
 	if services == nil || services.Kind != yaml.MappingNode {
 		return
@@ -531,96 +729,101 @@ func applyResources(services *yaml.Node, cfg map[string]ResourcesServiceCfg, mod
 }
 
 func applySwarmResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
+	if r.CPUsLimit == "" && r.MemoryLimit == "" && r.CPUsReservation == "" && r.MemoryReservation == "" {
+		// All-empty: purge the whole resources block so the wizard
+		// tab can clear a service back to "no limit".
+		if deploy := mappingFieldNode(svcNode, "deploy"); deploy != nil {
+			removeMappingChild(deploy, "resources")
+			if len(deploy.Content) == 0 {
+				removeMappingChild(svcNode, "deploy")
+			}
+		}
+		return
+	}
 	deploy := ensureMappingChild(svcNode, "deploy")
 	resources := ensureMappingChild(deploy, "resources")
 	if r.CPUsLimit != "" || r.MemoryLimit != "" {
 		limits := ensureMappingChild(resources, "limits")
-		setScalarField(limits, "cpus", r.CPUsLimit)
-		setScalarField(limits, "memory", r.MemoryLimit)
+		setOrRemoveScalar(limits, "cpus", r.CPUsLimit)
+		setOrRemoveScalar(limits, "memory", r.MemoryLimit)
+	} else {
+		removeMappingChild(resources, "limits")
 	}
 	if r.CPUsReservation != "" || r.MemoryReservation != "" {
 		res := ensureMappingChild(resources, "reservations")
-		setScalarField(res, "cpus", r.CPUsReservation)
-		setScalarField(res, "memory", r.MemoryReservation)
+		setOrRemoveScalar(res, "cpus", r.CPUsReservation)
+		setOrRemoveScalar(res, "memory", r.MemoryReservation)
+	} else {
+		removeMappingChild(resources, "reservations")
 	}
 }
 
 func applyStandaloneResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
-	setScalarField(svcNode, "cpus", r.CPUsLimit)
-	setScalarField(svcNode, "mem_limit", r.MemoryLimit)
-	setScalarField(svcNode, "mem_reservation", r.MemoryReservation)
-	// cpu_shares maps to reservation on standalone Compose v2 spec; skip
-	// unless the wizard eventually exposes it explicitly.
+	setOrRemoveScalar(svcNode, "cpus", r.CPUsLimit)
+	setOrRemoveScalar(svcNode, "mem_limit", r.MemoryLimit)
+	setOrRemoveScalar(svcNode, "mem_reservation", r.MemoryReservation)
 }
 
-func setScalarField(parent *yaml.Node, key, value string) {
+// setOrRemoveScalar writes `value` at `key` under `parent`, or removes the
+// key entirely when value is empty. No marker tracking: the wizard owns
+// the namespace once it's in the form.
+func setOrRemoveScalar(parent *yaml.Node, key, value string) {
 	if parent == nil || parent.Kind != yaml.MappingNode {
 		return
 	}
 	if value == "" {
+		removeMappingChild(parent, key)
 		return
 	}
 	if existing := mappingFieldNode(parent, key); existing != nil {
-		// Same merge policy as upsertLabels: wizard touches only values
-		// carrying the marker; user-authored entries stay intact. A
-		// value without the marker survives a subsequent wizard save
-		// untouched, and the reverse parser will not pick it up as
-		// wizard state (see resourcesCfgFromService).
-		if existing.Kind == yaml.ScalarNode && !strings.Contains(existing.LineComment, swirlManagedMarker) {
-			return
-		}
 		existing.Kind = yaml.ScalarNode
 		existing.Tag = "!!str"
 		existing.Value = value
-		existing.LineComment = swirlManagedMarker
+		existing.LineComment = ""
 		existing.Content = nil
 		return
 	}
 	k := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
-	v := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value, LineComment: swirlManagedMarker}
+	v := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 	parent.Content = append(parent.Content, k, v)
 }
 
-// resourcesCfgFromService walks the YAML to reconstruct the ResourcesServiceCfg
-// from either deploy.resources (swarm) or top-level cpus/mem_limit keys
-// (standalone). Only values stamped with the swirl-managed marker are
-// included — operator-managed resource declarations are left out of the
-// wizard state so the tab stays empty for them.
+// resourcesCfgFromService reads resource fields (swarm + standalone paths)
+// into a ResourcesServiceCfg. No marker filtering: every resource field is
+// surfaced to the tab so the operator sees the actual state.
 func resourcesCfgFromService(svcNode *yaml.Node) (ResourcesServiceCfg, bool) {
 	out := ResourcesServiceCfg{}
 	seen := false
-	// Standalone: direct cpus/mem_limit at service level.
-	if v := scalarIfManaged(svcNode, "cpus"); v != "" {
+	if v := scalarValue(svcNode, "cpus"); v != "" {
 		out.CPUsLimit = v
 		seen = true
 	}
-	if v := scalarIfManaged(svcNode, "mem_limit"); v != "" {
+	if v := scalarValue(svcNode, "mem_limit"); v != "" {
 		out.MemoryLimit = v
 		seen = true
 	}
-	if v := scalarIfManaged(svcNode, "mem_reservation"); v != "" {
+	if v := scalarValue(svcNode, "mem_reservation"); v != "" {
 		out.MemoryReservation = v
 		seen = true
 	}
-	// Swarm: deploy.resources.{limits,reservations}.{cpus,memory}
 	if deploy := mappingFieldNode(svcNode, "deploy"); deploy != nil {
 		if resources := mappingFieldNode(deploy, "resources"); resources != nil {
 			if limits := mappingFieldNode(resources, "limits"); limits != nil {
-				if v := scalarIfManaged(limits, "cpus"); v != "" {
+				if v := scalarValue(limits, "cpus"); v != "" {
 					out.CPUsLimit = v
 					seen = true
 				}
-				if v := scalarIfManaged(limits, "memory"); v != "" {
+				if v := scalarValue(limits, "memory"); v != "" {
 					out.MemoryLimit = v
 					seen = true
 				}
 			}
 			if res := mappingFieldNode(resources, "reservations"); res != nil {
-				if v := scalarIfManaged(res, "cpus"); v != "" {
+				if v := scalarValue(res, "cpus"); v != "" {
 					out.CPUsReservation = v
 					seen = true
 				}
-				if v := scalarIfManaged(res, "memory"); v != "" {
+				if v := scalarValue(res, "memory"); v != "" {
 					out.MemoryReservation = v
 					seen = true
 				}
@@ -630,10 +833,9 @@ func resourcesCfgFromService(svcNode *yaml.Node) (ResourcesServiceCfg, bool) {
 	return out, seen
 }
 
-// scalarIfManaged returns the scalar value of a child field only when the
-// value node carries the swirl-managed marker. Used by the reverse parsers
-// so operator-authored entries stay invisible to the wizard state.
-func scalarIfManaged(parent *yaml.Node, key string) string {
+// scalarValue returns the string form of a mapping's scalar child, or ""
+// when the child is absent or not a scalar.
+func scalarValue(parent *yaml.Node, key string) string {
 	if parent == nil || parent.Kind != yaml.MappingNode {
 		return ""
 	}
@@ -643,11 +845,10 @@ func scalarIfManaged(parent *yaml.Node, key string) string {
 		if k == nil || k.Value != key || v == nil {
 			continue
 		}
-		if v.Kind != yaml.ScalarNode || !strings.Contains(v.LineComment, swirlManagedMarker) {
+		if v.Kind != yaml.ScalarNode {
 			return ""
 		}
 		return v.Value
 	}
 	return ""
 }
-
