@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	auxoerrors "github.com/cuigh/auxo/errors"
 	"github.com/cuigh/auxo/net/web"
@@ -73,6 +74,12 @@ type HostHandler struct {
 	AddonExtractGet   web.HandlerFunc `path:"/addon-extract-get" auth:"host.view" desc:"read addon config extract for a host"`
 	AddonExtractSave  web.HandlerFunc `path:"/addon-extract-save" method:"post" auth:"host.edit" desc:"save addon config extract for a host"`
 	AddonExtractClear web.HandlerFunc `path:"/addon-extract-clear" method:"post" auth:"host.edit" desc:"clear addon config extract for a host (optionally a single addon)"`
+	// Registry Cache addon: per-host opt-in + live-generated daemon.json
+	// snippet + bootstrap script. Separate auth scope (registry_cache.*)
+	// from the generic addon-extract endpoints so ops can grant access to
+	// this feature without touching the rest of the host configuration.
+	RegistryCacheGet  web.HandlerFunc `path:"/registry-cache-get" auth:"registry_cache.view" desc:"read registry cache state + snippet for a host"`
+	RegistryCacheSave web.HandlerFunc `path:"/registry-cache-save" method:"post" auth:"registry_cache.edit" desc:"save registry cache opt-in state for a host"`
 }
 
 // NewHost creates an instance of HostHandler.
@@ -87,6 +94,8 @@ func NewHost(b biz.HostBiz) *HostHandler {
 		AddonExtractGet:   hostAddonExtractGet(b),
 		AddonExtractSave:  hostAddonExtractSave(b),
 		AddonExtractClear: hostAddonExtractClear(b),
+		RegistryCacheGet:  hostRegistryCacheGet(b),
+		RegistryCacheSave: hostRegistryCacheSave(b),
 	}
 }
 
@@ -132,6 +141,82 @@ func hostAddonExtractClear(b biz.HostBiz) web.HandlerFunc {
 		ctx, cancel := misc.Context(defaultTimeout)
 		defer cancel()
 		return ajax(c, b.ClearAddonConfigExtract(ctx, args.HostID, args.Addon))
+	}
+}
+
+// hostRegistryCacheGet returns the persisted per-host registry cache
+// opt-in state plus a LIVE-generated daemon.json snippet and bootstrap
+// script derived from the current Setting.RegistryCache. Regenerating
+// on every read keeps the UI in sync with config rotations (hostname,
+// port, CA cert) without the operator having to re-click anything.
+//
+// Never echoes CACertPEM in cleartext beyond what the snippet/script
+// embeds (needed for the copy-paste bootstrap to install the CA).
+func hostRegistryCacheGet(b biz.HostBiz) web.HandlerFunc {
+	return func(c web.Context) error {
+		hostID := c.Query("hostId")
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		extract, err := b.GetAddonConfigExtract(ctx, hostID)
+		if err != nil {
+			return err
+		}
+		rc := extract.RegistryCache
+		if rc == nil {
+			rc = &biz.RegistryCacheExtract{}
+		}
+		out := map[string]interface{}{
+			"enabled":            rc.Enabled,
+			"insecureMode":       rc.InsecureMode,
+			"appliedAt":          rc.AppliedAt,
+			"appliedBy":          rc.AppliedBy,
+			"appliedFingerprint": rc.AppliedFingerprint,
+			"mirrorEnabled":      false,
+		}
+		if live := biz.LiveRegistryCacheParams(); live != nil {
+			out["mirrorEnabled"] = true
+			out["mirrorHostname"] = live.Hostname
+			out["mirrorPort"] = live.Port
+			out["mirrorFingerprint"] = live.Fingerprint
+			out["daemonSnippet"] = biz.BuildDaemonSnippet(live, rc.InsecureMode)
+			out["bootstrapScript"] = biz.BuildBootstrapScript(live, rc.InsecureMode)
+		}
+		return success(c, out)
+	}
+}
+
+// hostRegistryCacheSave persists the per-host registry cache opt-in
+// state. When `markApplied` is set, stamps AppliedAt=now and captures
+// the current mirror CA fingerprint so Phase 5 can flag drift after a
+// CA rotation. Never touches daemon.json on the target host — that
+// remains a manual copy-paste step.
+func hostRegistryCacheSave(b biz.HostBiz) web.HandlerFunc {
+	type Args struct {
+		HostID       string `json:"hostId"`
+		Enabled      bool   `json:"enabled"`
+		InsecureMode bool   `json:"insecureMode"`
+		MarkApplied  bool   `json:"markApplied"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+		ext := &biz.AddonConfigExtract{
+			RegistryCache: &biz.RegistryCacheExtract{
+				Enabled:      args.Enabled,
+				InsecureMode: args.InsecureMode,
+			},
+		}
+		if args.MarkApplied {
+			ext.RegistryCache.AppliedAt = time.Now()
+			if live := biz.LiveRegistryCacheParams(); live != nil {
+				ext.RegistryCache.AppliedFingerprint = live.Fingerprint
+			}
+		}
+		return ajax(c, b.UpdateAddonConfigExtract(ctx, args.HostID, ext, c.User()))
 	}
 }
 

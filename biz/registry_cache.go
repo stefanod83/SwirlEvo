@@ -230,3 +230,183 @@ func GenerateCAPair(subjectCN string) (certPEM, keyPEM string, err error) {
 	keyPEM = string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
 	return certPEM, keyPEM, nil
 }
+
+// RegistryCacheParams collapses the live Setting.RegistryCache subtree
+// into the subset of fields the snippet + script builders actually need.
+// Keeps the helpers independent from the misc.Setting struct layout so
+// unit tests can pass ad-hoc values without building a full Setting.
+type RegistryCacheParams struct {
+	Enabled     bool
+	Hostname    string
+	Port        int
+	CACertPEM   string
+	// Derived; included so callers do not have to recompute.
+	Fingerprint string
+}
+
+// LiveRegistryCacheParams returns a snapshot of the currently-enabled
+// Registry Cache mirror configuration, or nil when the feature is not
+// enabled (or no live *misc.Setting has been installed — happens in
+// tests). Callers must treat the returned value as read-only.
+//
+// The returned struct carries CACertPEM verbatim (needed to generate
+// the bootstrap script's heredoc) but is only consumed inside the biz
+// + API layers; the API handler strips secrets before returning the
+// DTO to the UI.
+func LiveRegistryCacheParams() *RegistryCacheParams {
+	liveSettingsMu.RLock()
+	defer liveSettingsMu.RUnlock()
+	if liveSettings == nil || !liveSettings.RegistryCache.Enabled {
+		return nil
+	}
+	rc := liveSettings.RegistryCache
+	return &RegistryCacheParams{
+		Enabled:     rc.Enabled,
+		Hostname:    rc.Hostname,
+		Port:        rc.Port,
+		CACertPEM:   rc.CACertPEM,
+		Fingerprint: rc.CAFingerprint,
+	}
+}
+
+// BuildMirrorURL returns the canonical https://<hostname>:<port> URL
+// the daemon points at via `registry-mirrors`. Empty hostname returns
+// an empty string — callers must guard.
+func BuildMirrorURL(p *RegistryCacheParams) string {
+	if p == nil || p.Hostname == "" {
+		return ""
+	}
+	port := p.Port
+	if port == 0 {
+		port = 5000
+	}
+	return fmt.Sprintf("https://%s:%d", p.Hostname, port)
+}
+
+// BuildDaemonSnippet produces the fragment of /etc/docker/daemon.json
+// the operator must merge into the remote host's existing config.
+// Returns valid JSON (pretty-printed) so operators can also diff /
+// merge visually. The output is intentionally a FRAGMENT — the
+// bootstrap script merges it into whatever already lives on the host.
+//
+// insecure=true uses the `insecure-registries` route (no cert
+// distribution). insecure=false adds only `registry-mirrors` and
+// relies on the CA being placed in /etc/docker/certs.d/.
+func BuildDaemonSnippet(p *RegistryCacheParams, insecure bool) string {
+	url := BuildMirrorURL(p)
+	if url == "" {
+		return ""
+	}
+	if insecure {
+		endpoint := fmt.Sprintf("%s:%d", p.Hostname, portOrDefault(p.Port))
+		return fmt.Sprintf(`{
+  "registry-mirrors": [%q],
+  "insecure-registries": [%q]
+}
+`, url, endpoint)
+	}
+	return fmt.Sprintf(`{
+  "registry-mirrors": [%q]
+}
+`, url)
+}
+
+// BuildBootstrapScript produces a shell script the operator copy-pastes
+// onto the target host. Merges the snippet into /etc/docker/daemon.json,
+// installs the CA (when not insecure), and reloads dockerd so the new
+// mirror takes effect. Uses `jq` for the merge — the script guards
+// against missing jq with a clear error.
+//
+// The script is intentionally conservative:
+//   - Never overwrites an existing daemon.json blindly; always merges.
+//   - Backs up the current daemon.json to .bak before writing.
+//   - Uses `systemctl reload docker` with a SIGHUP fallback.
+//   - Idempotent: re-running it repeats the merge without harm.
+func BuildBootstrapScript(p *RegistryCacheParams, insecure bool) string {
+	url := BuildMirrorURL(p)
+	if url == "" {
+		return ""
+	}
+	endpoint := fmt.Sprintf("%s:%d", p.Hostname, portOrDefault(p.Port))
+	certBlock := ""
+	if !insecure && strings.TrimSpace(p.CACertPEM) != "" {
+		// Heredoc with explicit delimiter + trimmed body so the
+		// certificate lands as-is on the remote filesystem.
+		certBlock = fmt.Sprintf(`
+# --- Trust the Swirl Registry Cache CA ------------------------------
+sudo mkdir -p /etc/docker/certs.d/%s
+sudo tee /etc/docker/certs.d/%s/ca.crt >/dev/null <<'SWIRL_CA_PEM_EOF'
+%s
+SWIRL_CA_PEM_EOF
+sudo chmod 0644 /etc/docker/certs.d/%s/ca.crt
+`,
+			endpoint, endpoint, strings.TrimSpace(p.CACertPEM), endpoint)
+	}
+	snippet := strings.TrimSpace(BuildDaemonSnippet(p, insecure))
+	return fmt.Sprintf(`#!/usr/bin/env bash
+# Swirl Registry Cache — host bootstrap
+# Generated for mirror: %s
+# Mode: %s
+#
+# What this does:
+#   1. Merges registry-mirrors (+ insecure-registries on demand) into
+#      /etc/docker/daemon.json, preserving unrelated keys.
+#   2. (TLS mode) Installs the Swirl-issued CA into
+#      /etc/docker/certs.d/<host>:<port>/ca.crt so docker trusts the
+#      mirror without flagging it as insecure.
+#   3. Reloads dockerd so the change takes effect without a full
+#      restart when possible (SIGHUP → registry-mirrors hot-reload).
+set -euo pipefail
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "swirl: this script requires jq — install it and retry" >&2
+  exit 2
+fi
+
+SNIPPET=$(cat <<'SWIRL_SNIPPET_EOF'
+%s
+SWIRL_SNIPPET_EOF
+)
+
+DAEMON=/etc/docker/daemon.json
+if [ -f "$DAEMON" ]; then
+  sudo cp -a "$DAEMON" "${DAEMON}.bak.$(date +%%Y%%m%%d%%H%%M%%S)"
+  MERGED=$(sudo jq -s '.[0] * .[1]' "$DAEMON" <(printf '%%s' "$SNIPPET"))
+else
+  MERGED="$SNIPPET"
+fi
+printf '%%s\n' "$MERGED" | sudo tee "$DAEMON" >/dev/null
+sudo chmod 0644 "$DAEMON"
+%s
+# Reload dockerd: SIGHUP is enough for registry-mirrors; fall back to
+# reload/restart if the daemon does not honor it.
+if sudo systemctl is-active --quiet docker; then
+  sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker
+elif command -v pidof >/dev/null 2>&1; then
+  sudo kill -HUP "$(pidof dockerd || true)" 2>/dev/null || true
+fi
+
+echo "swirl: Registry Cache bootstrap applied — %s → %s"
+`,
+		url,
+		modeLabel(insecure),
+		snippet,
+		certBlock,
+		endpoint,
+		url,
+	)
+}
+
+func portOrDefault(p int) int {
+	if p == 0 {
+		return 5000
+	}
+	return p
+}
+
+func modeLabel(insecure bool) string {
+	if insecure {
+		return "insecure-registries (HTTP, lab/dev only)"
+	}
+	return "TLS with distributed CA"
+}

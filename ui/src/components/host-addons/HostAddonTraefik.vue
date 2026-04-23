@@ -3,9 +3,22 @@
     title="Traefik"
     :subtitle="t('host_addon_traefik.subtitle')"
     divider="bottom"
+    :collapsed="effectiveCollapsed"
   >
     <template #action>
       <n-space :size="12" align="center">
+        <!-- Collapse toggle — only rendered when the parent controls
+             the panel state (opt-in via the `collapsed` prop). Keeps
+             the component backward-compatible with callers that embed
+             it as a single always-expanded addon. -->
+        <n-button
+          v-if="isControlled"
+          secondary
+          strong
+          size="small"
+          style="min-width: 75px"
+          @click="() => emit('toggle')"
+        >{{ effectiveCollapsed ? t('buttons.expand') : t('buttons.collapse') }}</n-button>
         <!-- Master enable switch: when off the stack-editor Traefik tab
              disappears for every stack on this host. Config below stays
              persisted so flipping back on restores the previous state. -->
@@ -202,9 +215,24 @@ import {
 import composeStackApi from '@/api/compose_stack'
 import type { TraefikAddon, DiscoveryValue } from '@/api/compose_stack'
 
-const props = defineProps<{ hostId: string }>()
+const props = defineProps<{
+  hostId: string
+  // When set, the parent controls the expanded/collapsed state of the
+  // inner panel (Settings-style). Leaving it undefined keeps the
+  // legacy behavior: panel is always expanded and no toggle button
+  // appears in the action slot.
+  collapsed?: boolean
+}>()
+const emit = defineEmits<{
+  (e: 'toggle'): void
+}>()
 const { t } = useI18n()
 const message = useMessage()
+
+// Controlled = parent passes `collapsed` (true OR false). Uncontrolled
+// = prop is undefined → always expanded, no toggle button.
+const isControlled = computed(() => props.collapsed !== undefined)
+const effectiveCollapsed = computed(() => isControlled.value ? !!props.collapsed : false)
 
 const saving = ref(false)
 const discovery = ref<TraefikAddon | null>(null)

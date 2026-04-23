@@ -872,6 +872,32 @@ export default {
         "extras_empty": "没有 passthrough 标签。",
         "add_extra": "添加标签"
     },
+    "host": {
+        "panel_connection": "连接",
+        "panel_connection_subtitle": "主机标识 + Docker endpoint + 鉴权。"
+    },
+    "host_addon_registry_cache": {
+        "title": "Registry Cache",
+        "subtitle": "为部署到本主机的栈启用通过 Swirl 注册的镜像拉取镜像。",
+        "enabled": "启用",
+        "mirror_disabled": "Registry Cache 未在全局配置中启用。请先在 设置 → Registry Cache 中注册你的镜像。",
+        "disabled_hint": "未启用：部署到本主机时将直接从原始上游 registry 拉取镜像。",
+        "mirror_url": "镜像地址",
+        "fingerprint": "CA 指纹",
+        "insecure_mode": "视为不安全 registry",
+        "insecure_hint": "启用后，生成的 daemon.json 使用 insecure-registries（明文 HTTP），跳过 CA 分发。仅限实验/开发 — 镜像必须部署在受信任的网络上。",
+        "bootstrap_script": "Bootstrap 脚本",
+        "daemon_snippet": "daemon.json 片段",
+        "applied_title": "已在主机上应用",
+        "applied_pending": "尚未应用 — 请在此主机上运行上述 bootstrap 脚本，然后点击 '标记为已应用'。",
+        "applied_ok": "已应用 — CA 同步",
+        "applied_stale": "已应用 — CA 指纹漂移，请重新执行 bootstrap",
+        "applied_meta": "{date} · {who}",
+        "mark_applied": "标记为已应用",
+        "save_ok": "已保存。",
+        "clear_ok": "已清除本主机的 Registry Cache 启用状态。",
+        "clear_confirm": "从本主机移除 Registry Cache 启用状态？daemon 上已应用的 bootstrap 保留不变 — 你可以手动回退。"
+    },
     "host_addon_traefik": {
         "enabled": "启用",
         "disabled_hint": "此主机上的 Traefik 已禁用：栈编辑器中的 Traefik 标签页已隐藏。启用后向导重新显示。",
@@ -1002,7 +1028,7 @@ export default {
     "registry_cache": {
         "title": "Registry Cache",
         "subtitle": "使用由运维自行部署的 pull-through 镜像，远端主机无需访问公共 registry。",
-        "tip": "Swirl 不管理镜像本身 — 请在外部部署 registry:2（或 Harbor / Nexus），然后在此处注册其连接参数。每台主机的 bootstrap 脚本在 Host 编辑页生成。",
+        "tip": "在此注册你已有的 pull-through 镜像 (registry:2、Harbor、Nexus 等)。Swirl 会保存连接参数，在部署时重写 compose 的 image 引用，并在 Host 编辑页为每台主机生成 bootstrap 脚本 (daemon.json + CA 证书)。",
         "hostname": "Hostname",
         "hostname_placeholder": "mirror.lan",
         "port": "端口",

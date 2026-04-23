@@ -783,8 +783,12 @@
          prefix mapping here, distributes the CA via bootstrap script
          (Phase 2), and rewrites compose image: references at deploy
          time (Phase 3). -->
+    <!-- No outer permission gate: the panel renders for everyone that
+         can reach the Settings page, matching the LDAP / Keycloak /
+         Vault / SelfDeploy panels. Save + Gen CA buttons below carry
+         the `registry_cache.edit` guard so read-only viewers simply
+         see the current state without the write controls. -->
     <x-panel
-      v-if="canViewRegistryCache"
       :title="t('registry_cache.title')"
       :subtitle="t('registry_cache.subtitle')"
       divider="bottom"
@@ -1036,6 +1040,26 @@ import registryCacheApi, { type GenCAResult } from "@/api/registry-cache";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+
+// Defaults for the Registry Cache settings subtree. Kept as a pure
+// function so we can re-apply on initial state + after every load
+// without accidentally sharing a mutable reference with the reactive
+// state.
+function rcDefaults() {
+  return {
+    enabled: false,
+    hostname: '',
+    port: 5000,
+    ca_cert_pem: '',
+    ca_fingerprint: '',
+    username: '',
+    password: '',
+    upstreams: [] as { upstream: string; prefix: string }[],
+    rewrite_mode: 'per-host' as 'off' | 'per-host' | 'always',
+    preserve_digests: true,
+  }
+}
+
 const setting = ref({
   ldap: {
     security: 0,
@@ -1079,18 +1103,7 @@ const setting = ref({
     storage_mode: 'fs',
     vault_prefix: 'backups',
   },
-  registry_cache: {
-    enabled: false,
-    hostname: '',
-    port: 5000,
-    ca_cert_pem: '',
-    ca_fingerprint: '',
-    username: '',
-    password: '',
-    upstreams: [],
-    rewrite_mode: 'per-host',
-    preserve_digests: true,
-  },
+  registry_cache: rcDefaults(),
 // The literal above is a partial defaults template — fields get
 // hydrated from the backend in fetchData(). The cast is kept
 // intentional-partial (via unknown) so TS does not block on missing
@@ -1498,29 +1511,26 @@ async function fetchData() {
   if (!setting.value.backup) {
     setting.value.backup = { storage_mode: 'fs', vault_prefix: 'backups' }
   }
-  if (!setting.value.registry_cache) {
-    setting.value.registry_cache = {
-      enabled: false,
-      hostname: '',
-      port: 5000,
-      ca_cert_pem: '',
-      ca_fingerprint: '',
-      username: '',
-      password: '',
-      upstreams: [],
-      rewrite_mode: 'per-host',
-      preserve_digests: true,
-    }
-  } else {
-    // Existing records may lack newer fields (upstreams, rewrite_mode,
-    // preserve_digests) when Swirl is upgraded with an already-populated
-    // registry_cache blob. Hydrate defaults defensively so the form
-    // controls never bind to undefined and the dynamic-input renders.
-    const rc = setting.value.registry_cache
-    if (!Array.isArray(rc.upstreams)) rc.upstreams = []
-    if (!rc.rewrite_mode) rc.rewrite_mode = 'per-host'
-    if (typeof rc.preserve_digests !== 'boolean') rc.preserve_digests = true
-    if (typeof rc.port !== 'number' || rc.port === 0) rc.port = 5000
+  // Merge defaults with whatever the backend returned so every field
+  // the template binds to is guaranteed defined. Object.assign here
+  // fills gaps but preserves any saved value. Assigning back as a
+  // whole object keeps Vue's reactivity tracking the proxy.
+  setting.value.registry_cache = Object.assign(
+    rcDefaults(),
+    setting.value.registry_cache || {},
+  ) as any
+  // n-dynamic-input + the radio group misbehave on non-array /
+  // non-matching values — coerce just in case a legacy blob ships
+  // something unexpected.
+  if (!Array.isArray(setting.value.registry_cache.upstreams)) {
+    setting.value.registry_cache.upstreams = []
+  }
+  const rcRm = setting.value.registry_cache.rewrite_mode
+  if (rcRm !== 'off' && rcRm !== 'per-host' && rcRm !== 'always') {
+    setting.value.registry_cache.rewrite_mode = 'per-host'
+  }
+  if (typeof setting.value.registry_cache.port !== 'number' || setting.value.registry_cache.port === 0) {
+    setting.value.registry_cache.port = 5000
   }
 
   // load roles for the dropdown

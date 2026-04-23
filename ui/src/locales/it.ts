@@ -878,6 +878,32 @@ export default {
         "extras_empty": "Nessuna label passthrough.",
         "add_extra": "Aggiungi label"
     },
+    "host": {
+        "panel_connection": "Connessione",
+        "panel_connection_subtitle": "Identità dell'host + endpoint Docker + autenticazione."
+    },
+    "host_addon_registry_cache": {
+        "title": "Registry Cache",
+        "subtitle": "Abilita il pull delle immagini tramite il mirror Swirl-registrato per gli stack deployati su questo host.",
+        "enabled": "Abilitato",
+        "mirror_disabled": "Registry Cache non è configurato globalmente. Vai in Impostazioni → Registry Cache e registra prima il tuo mirror.",
+        "disabled_hint": "Opt-in disattivato: i deploy verso questo host pulleranno direttamente dai registry upstream originali.",
+        "mirror_url": "URL mirror",
+        "fingerprint": "Fingerprint CA",
+        "insecure_mode": "Tratta come registry insicuro",
+        "insecure_hint": "Se attivo, il daemon.json generato usa insecure-registries (HTTP in chiaro) e salta la distribuzione della CA. Solo lab/dev — il mirror deve essere raggiungibile su rete fidata.",
+        "bootstrap_script": "Script bootstrap",
+        "daemon_snippet": "Fragment daemon.json",
+        "applied_title": "Applicato sull'host",
+        "applied_pending": "Non ancora applicato — esegui lo script bootstrap qui sopra sull'host, poi clicca su Marca come applicato.",
+        "applied_ok": "Applicato — CA sincronizzata",
+        "applied_stale": "Applicato — drift del fingerprint CA, riesegui il bootstrap",
+        "applied_meta": "{date} · {who}",
+        "mark_applied": "Marca come applicato",
+        "save_ok": "Salvato.",
+        "clear_ok": "Opt-in Registry Cache rimosso per questo host.",
+        "clear_confirm": "Rimuovere l'opt-in Registry Cache da questo host? Il bootstrap applicato sul daemon resta: puoi revertirlo manualmente."
+    },
     "host_addon_traefik": {
         "enabled": "Abilitato",
         "disabled_hint": "Traefik è disabilitato su questo host: il tab Traefik nell'editor stack è nascosto. Abilitalo per renderlo visibile.",
@@ -1008,7 +1034,7 @@ export default {
     "registry_cache": {
         "title": "Registry Cache",
         "subtitle": "Usa un mirror pull-through deployato dall'operatore: gli host remoti non contatteranno mai registry pubblici.",
-        "tip": "Swirl non gestisce il mirror — deploya registry:2 (o Harbor / Nexus) esternamente, poi registra qui i parametri di connessione. Gli script di bootstrap per-host vengono generati dalla pagina Edit dell'host.",
+        "tip": "Registra qui il tuo mirror pull-through esistente (registry:2, Harbor, Nexus, …). Swirl salva i parametri di connessione, riscrive i riferimenti image: nei compose al deploy e genera gli script di bootstrap per-host (daemon.json + CA) dalla pagina Edit dell'host.",
         "hostname": "Hostname",
         "hostname_placeholder": "mirror.lan",
         "port": "Porta",

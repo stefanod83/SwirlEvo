@@ -10,117 +10,148 @@
     </template>
   </x-page-header>
   <div class="page-body">
-    <n-form ref="formRef" :model="model" :rules="rules" label-placement="left" label-width="120">
-      <n-form-item :label="t('fields.name')" path="name">
-        <n-input v-model:value="model.name" placeholder="My Docker Host" />
-      </n-form-item>
-      <n-form-item label="Endpoint" path="endpoint">
-        <div style="width: 100%">
-          <n-input v-model:value="model.endpoint"
-            placeholder="tcp://host:2375 · unix:///var/run/docker.sock · ssh://user@host · https://swirl-swarm.example.com"
-          />
-          <div class="host-endpoint-hint">
-            {{ t('tips.host_endpoint_types') }}
-          </div>
-        </div>
-      </n-form-item>
-      <n-alert v-if="isFederation" type="info" :show-icon="true" style="margin-bottom: 12px">
-        {{ t('tips.host_federation_detected') }}
-      </n-alert>
-      <n-form-item v-if="!isFederation" label="Auth Method">
-        <n-select v-model:value="model.authMethod" :options="authOptions" />
-      </n-form-item>
-      <!-- Federation-specific fields -->
-      <n-form-item v-if="isFederation" :label="t('fields.swirl_token')" path="swirlToken">
-        <n-input
-          v-model:value="model.swirlToken"
-          type="password"
-          show-password-on="click"
-          placeholder="Paste the federation peer token generated on the target Swirl"
-        />
-      </n-form-item>
-      <n-form-item v-if="isFederation" :label="t('fields.token_auto_refresh')">
-        <n-switch v-model:value="model.tokenAutoRefresh" />
-      </n-form-item>
-      <n-form-item v-if="isFederation && isEdit" :label="t('fields.token_status')">
-        <n-space :size="8" align="center">
-          <n-tag
-            :type="tokenExpired ? 'error' : (tokenExpiringSoon ? 'warning' : 'success')"
+    <n-space vertical :size="12">
+      <!-- Connection panel — the core host identity + auth fields.
+           Expanded by default so operators see (and fill) them on
+           create and edit. -->
+      <x-panel
+        :title="t('host.panel_connection')"
+        :subtitle="t('host.panel_connection_subtitle')"
+        divider="bottom"
+        :collapsed="panel !== 'connection'"
+      >
+        <template #action>
+          <n-button
+            secondary
+            strong
             size="small"
-          >
-            {{ tokenExpired ? t('fields.token_expired') : (tokenExpiringSoon ? t('fields.token_expiring') : t('fields.token_valid')) }}
-          </n-tag>
-          <span v-if="model.tokenExpiresAt" class="muted">
-            {{ t('fields.token_expires_at') }}: {{ formatDate(model.tokenExpiresAt) }}
-          </span>
-        </n-space>
-      </n-form-item>
-      <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS CA Cert" path="tlsCaCert">
-        <n-input v-model:value="model.tlsCaCert" type="textarea" :rows="3" placeholder="CA certificate (PEM)" />
-      </n-form-item>
-      <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS Cert">
-        <n-input v-model:value="model.tlsCert" type="textarea" :rows="3" placeholder="Client certificate (PEM)" />
-      </n-form-item>
-      <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS Key">
-        <n-input v-model:value="model.tlsKey" type="textarea" :rows="3" placeholder="Client key (PEM)" />
-      </n-form-item>
-      <n-form-item v-if="model.authMethod === 'ssh'" label="SSH User" path="sshUser">
-        <n-input v-model:value="model.sshUser" placeholder="root" />
-      </n-form-item>
-      <n-form-item v-if="model.authMethod === 'ssh'" label="SSH Key">
-        <n-input v-model:value="model.sshKey" type="textarea" :rows="3" placeholder="SSH private key (PEM)" />
-      </n-form-item>
-      <n-form-item :label="t('fields.color')">
-        <div class="host-color-field">
-          <div class="host-color-row">
-            <n-color-picker
-              v-model:value="model.color"
-              :swatches="colorSwatches"
-              :show-alpha="false"
-              :modes="['hex']"
-              size="small"
-              class="host-color-picker"
+            style="min-width: 75px"
+            @click="togglePanel('connection')"
+          >{{ panel === 'connection' ? t('buttons.collapse') : t('buttons.expand') }}</n-button>
+        </template>
+        <n-form ref="formRef" :model="model" :rules="rules" label-placement="left" label-width="120">
+          <n-form-item :label="t('fields.name')" path="name">
+            <n-input v-model:value="model.name" placeholder="My Docker Host" />
+          </n-form-item>
+          <n-form-item label="Endpoint" path="endpoint">
+            <div style="width: 100%">
+              <n-input v-model:value="model.endpoint"
+                placeholder="tcp://host:2375 · unix:///var/run/docker.sock · ssh://user@host · https://swirl-swarm.example.com"
+              />
+              <div class="host-endpoint-hint">
+                {{ t('tips.host_endpoint_types') }}
+              </div>
+            </div>
+          </n-form-item>
+          <n-alert v-if="isFederation" type="info" :show-icon="true" style="margin-bottom: 12px">
+            {{ t('tips.host_federation_detected') }}
+          </n-alert>
+          <n-form-item v-if="!isFederation" label="Auth Method">
+            <n-select v-model:value="model.authMethod" :options="authOptions" />
+          </n-form-item>
+          <!-- Federation-specific fields -->
+          <n-form-item v-if="isFederation" :label="t('fields.swirl_token')" path="swirlToken">
+            <n-input
+              v-model:value="model.swirlToken"
+              type="password"
+              show-password-on="click"
+              placeholder="Paste the federation peer token generated on the target Swirl"
             />
-            <n-button
-              v-if="model.color"
-              size="small"
-              quaternary
-              @click="model.color = ''"
-              style="margin-left: 8px"
-            >{{ t('buttons.clear') }}</n-button>
-          </div>
-          <div class="host-color-hint">
-            {{ t('tips.host_color') }}
-          </div>
-        </div>
-      </n-form-item>
-      <n-form-item>
-        <n-space>
-          <n-button type="primary" @click="save">
-            {{ t('buttons.save') }}
-          </n-button>
-          <n-button @click="testConnection" :loading="testing">
-            Test Connection
-          </n-button>
-        </n-space>
-      </n-form-item>
-    </n-form>
-    <n-alert v-if="testResult" :type="testResult.success ? 'success' : 'error'" :title="testResult.success ? 'Connection OK' : 'Connection Failed'" style="margin-top: 16px">
-      <template v-if="testResult.success">
-        {{ testResult.info?.hostname }} - Engine {{ testResult.info?.engineVersion }} ({{ testResult.info?.os }}/{{ testResult.info?.arch }})
-      </template>
-      <template v-else>{{ testResult.error }}</template>
-    </n-alert>
+          </n-form-item>
+          <n-form-item v-if="isFederation" :label="t('fields.token_auto_refresh')">
+            <n-switch v-model:value="model.tokenAutoRefresh" />
+          </n-form-item>
+          <n-form-item v-if="isFederation && isEdit" :label="t('fields.token_status')">
+            <n-space :size="8" align="center">
+              <n-tag
+                :type="tokenExpired ? 'error' : (tokenExpiringSoon ? 'warning' : 'success')"
+                size="small"
+              >
+                {{ tokenExpired ? t('fields.token_expired') : (tokenExpiringSoon ? t('fields.token_expiring') : t('fields.token_valid')) }}
+              </n-tag>
+              <span v-if="model.tokenExpiresAt" class="muted">
+                {{ t('fields.token_expires_at') }}: {{ formatDate(model.tokenExpiresAt) }}
+              </span>
+            </n-space>
+          </n-form-item>
+          <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS CA Cert" path="tlsCaCert">
+            <n-input v-model:value="model.tlsCaCert" type="textarea" :rows="3" placeholder="CA certificate (PEM)" />
+          </n-form-item>
+          <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS Cert">
+            <n-input v-model:value="model.tlsCert" type="textarea" :rows="3" placeholder="Client certificate (PEM)" />
+          </n-form-item>
+          <n-form-item v-if="model.authMethod === 'tcp+tls'" label="TLS Key">
+            <n-input v-model:value="model.tlsKey" type="textarea" :rows="3" placeholder="Client key (PEM)" />
+          </n-form-item>
+          <n-form-item v-if="model.authMethod === 'ssh'" label="SSH User" path="sshUser">
+            <n-input v-model:value="model.sshUser" placeholder="root" />
+          </n-form-item>
+          <n-form-item v-if="model.authMethod === 'ssh'" label="SSH Key">
+            <n-input v-model:value="model.sshKey" type="textarea" :rows="3" placeholder="SSH private key (PEM)" />
+          </n-form-item>
+          <n-form-item :label="t('fields.color')">
+            <div class="host-color-field">
+              <div class="host-color-row">
+                <n-color-picker
+                  v-model:value="model.color"
+                  :swatches="colorSwatches"
+                  :show-alpha="false"
+                  :modes="['hex']"
+                  size="small"
+                  class="host-color-picker"
+                />
+                <n-button
+                  v-if="model.color"
+                  size="small"
+                  quaternary
+                  @click="model.color = ''"
+                  style="margin-left: 8px"
+                >{{ t('buttons.clear') }}</n-button>
+              </div>
+              <div class="host-color-hint">
+                {{ t('tips.host_color') }}
+              </div>
+            </div>
+          </n-form-item>
+          <n-form-item>
+            <n-space>
+              <n-button type="primary" @click="save">
+                {{ t('buttons.save') }}
+              </n-button>
+              <n-button @click="testConnection" :loading="testing">
+                Test Connection
+              </n-button>
+            </n-space>
+          </n-form-item>
+        </n-form>
+        <n-alert v-if="testResult" :type="testResult.success ? 'success' : 'error'" :title="testResult.success ? 'Connection OK' : 'Connection Failed'" style="margin-top: 16px">
+          <template v-if="testResult.success">
+            {{ testResult.info?.hostname }} - Engine {{ testResult.info?.engineVersion }} ({{ testResult.info?.os }}/{{ testResult.info?.arch }})
+          </template>
+          <template v-else>{{ testResult.error }}</template>
+        </n-alert>
+      </x-panel>
 
-    <!--
-      Addon integrations — one panel per supported addon. Only surfaces in
-      edit mode: at create time the host record doesn't exist yet, so there
-      is nothing for AddonConfigExtract to attach to. Phase 3 ships Traefik;
-      Sablier/Watchtower/Backup follow in later phases.
-    -->
-    <div v-if="isEdit && !isFederation && model.id" style="margin-top: 24px">
-      <HostAddonTraefik :host-id="model.id" />
-    </div>
+      <!--
+        Addon integrations — one panel per supported addon, parent-
+        controlled collapse like the Settings page so the Host edit
+        stays navigable as more addons land. Only surface in edit
+        mode: at create time the host record doesn't exist yet, so
+        AddonConfigExtract has nothing to attach to.
+      -->
+      <HostAddonTraefik
+        v-if="isEdit && !isFederation && model.id"
+        :host-id="model.id"
+        :collapsed="panel !== 'traefik'"
+        @toggle="togglePanel('traefik')"
+      />
+      <HostAddonRegistryCache
+        v-if="isEdit && !isFederation && model.id"
+        :host-id="model.id"
+        :collapsed="panel !== 'registry_cache'"
+        @toggle="togglePanel('registry_cache')"
+      />
+    </n-space>
   </div>
 </template>
 
@@ -146,7 +177,9 @@ import {
 } from "naive-ui";
 import { ArrowBackCircleOutline as ArrowBackIcon } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
+import XPanel from "@/components/Panel.vue";
 import HostAddonTraefik from "@/components/host-addons/HostAddonTraefik.vue";
+import HostAddonRegistryCache from "@/components/host-addons/HostAddonRegistryCache.vue";
 import * as hostApi from "@/api/host";
 import type { HostInfo } from "@/api/host";
 import { useStore } from "vuex";
@@ -163,6 +196,14 @@ const message = useMessage();
 const formRef = ref<FormInst | null>(null);
 const testing = ref(false);
 const testResult = ref(null as null | { success: boolean; info?: HostInfo; error?: string });
+
+// Active panel name — Settings-style single-expanded accordion so the
+// Host edit stays navigable as more addons land. Defaults to
+// 'connection' so the main form is visible on mount.
+const panel = ref('connection')
+function togglePanel(name: string) {
+  panel.value = panel.value === name ? '' : name
+}
 
 const model = reactive({
   id: '',

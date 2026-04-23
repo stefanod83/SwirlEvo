@@ -878,6 +878,32 @@ export default {
         "extras_empty": "No passthrough labels.",
         "add_extra": "Add label"
     },
+    "host": {
+        "panel_connection": "Connection",
+        "panel_connection_subtitle": "Host identity + Docker endpoint + authentication."
+    },
+    "host_addon_registry_cache": {
+        "title": "Registry Cache",
+        "subtitle": "Opt in to pull images via the Swirl-registered mirror for stacks deployed to this host.",
+        "enabled": "Enabled",
+        "mirror_disabled": "Registry Cache is not configured globally. Open Settings → Registry Cache and register your mirror first.",
+        "disabled_hint": "Opt-in is off: deploys to this host will pull directly from the authored upstream registries.",
+        "mirror_url": "Mirror URL",
+        "fingerprint": "CA fingerprint",
+        "insecure_mode": "Treat as insecure registry",
+        "insecure_hint": "When on, the generated daemon.json uses insecure-registries (plain HTTP) and skips the CA distribution. Lab/dev only — the mirror must be reachable on a trusted network.",
+        "bootstrap_script": "Bootstrap script",
+        "daemon_snippet": "daemon.json fragment",
+        "applied_title": "Applied on host",
+        "applied_pending": "Not applied yet — run the bootstrap script above on this host, then click Mark as applied.",
+        "applied_ok": "Applied — CA in sync",
+        "applied_stale": "Applied — CA fingerprint drift, re-run bootstrap",
+        "applied_meta": "{date} · {who}",
+        "mark_applied": "Mark as applied",
+        "save_ok": "Saved.",
+        "clear_ok": "Registry Cache opt-in cleared for this host.",
+        "clear_confirm": "Remove the Registry Cache opt-in from this host? The bootstrap applied on the daemon stays in place — you can revert it manually."
+    },
     "host_addon_traefik": {
         "enabled": "Enabled",
         "disabled_hint": "Traefik is disabled on this host: the Traefik tab is currently hidden in the stack editor. Enable it to expose the wizard.",
@@ -1008,7 +1034,7 @@ export default {
     "registry_cache": {
         "title": "Registry Cache",
         "subtitle": "Use an operator-deployed pull-through mirror so remote hosts never reach public registries.",
-        "tip": "Swirl does not manage the mirror itself — deploy registry:2 (or Harbor / Nexus) externally, then register its connection parameters here. Per-host bootstrap snippets are generated from the Host edit page.",
+        "tip": "Register your existing pull-through mirror (registry:2, Harbor, Nexus, …) here. Swirl stores its connection details, rewrites compose image references at deploy time, and generates per-host bootstrap snippets (daemon.json + CA cert) from the Host edit page.",
         "hostname": "Hostname",
         "hostname_placeholder": "mirror.lan",
         "port": "Port",
