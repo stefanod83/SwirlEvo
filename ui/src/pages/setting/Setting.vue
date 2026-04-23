@@ -775,6 +775,246 @@
           class="sd-log"
           style="max-height: 260px; overflow: auto; font-size: 12px; margin: 0"
         >{{ progressLogTail.join('\n') }}</pre>
+        <!-- Manual "Reload now" escape hatch shown when the new primary
+             is up (phase=success) but the SPA bundle still isn't being
+             served within the grace window. Operator decides whether
+             to reload on a possibly-half-ready server. -->
+        <n-space v-if="readyStuck" justify="end">
+          <n-button type="primary" size="small" @click="reloadNow">
+            {{ t('self_deploy.progress.reload_now') }}
+          </n-button>
+        </n-space>
+      </n-space>
+    </n-modal>
+
+    <!-- Registry Cache: global configuration of the operator-deployed
+         pull-through mirror. Swirl stores connection info + upstream
+         prefix mapping here, distributes the CA via bootstrap script
+         (Phase 2), and rewrites compose image: references at deploy
+         time (Phase 3). -->
+    <!-- No outer permission gate: the panel renders for everyone that
+         can reach the Settings page, matching the LDAP / Keycloak /
+         Vault / SelfDeploy panels. Save + Gen CA buttons below carry
+         the `registry_cache.edit` guard so read-only viewers simply
+         see the current state without the write controls. -->
+    <x-panel
+      :title="t('registry_cache.title')"
+      :subtitle="t('registry_cache.subtitle')"
+      divider="bottom"
+      :collapsed="panel !== 'registry_cache'"
+    >
+      <template #action>
+        <n-button
+          secondary
+          strong
+          class="toggle"
+          size="small"
+          @click="togglePanel('registry_cache')"
+        >{{ panel === 'registry_cache' ? t('buttons.collapse') : t('buttons.expand') }}</n-button>
+      </template>
+      <n-alert type="info" style="margin: 4px 0 12px 0">
+        {{ t('registry_cache.tip') }}
+      </n-alert>
+      <!-- Render guard: the reactive state defines registry_cache in
+           the initial ref + fetchData hydrates it with defensive
+           defaults, so this branch should never show. It exists as a
+           last-resort diagnostic if a future refactor accidentally
+           breaks the reactive chain. -->
+      <n-alert v-if="!setting.registry_cache" type="error" style="margin-bottom: 12px">
+        Internal error: registry_cache state is missing. Check the browser console.
+      </n-alert>
+      <n-form
+        v-if="setting.registry_cache"
+        :model="setting"
+        ref="formRegistryCache"
+        label-placement="left"
+        style="padding: 4px 0 0 12px"
+        label-width="auto"
+      >
+        <n-form-item :label="t('fields.enabled')" path="registry_cache.enabled" label-align="right">
+          <n-switch v-model:value="setting.registry_cache.enabled" />
+        </n-form-item>
+        <!-- Link to Registry catalog: single source of truth for
+             hostname / port / credentials / CA. When selected, the
+             inline mirror fields become read-only (overlayed on Save
+             from the Registry). Clearing reverts to inline mode. -->
+        <n-form-item :label="t('registry_cache.linked_registry')" path="registry_cache.registry_id" label-align="right">
+          <n-select
+            v-model:value="setting.registry_cache.registry_id"
+            :options="registryOptions"
+            :placeholder="t('registry_cache.linked_registry_placeholder')"
+            clearable
+            style="min-width: 320px"
+          />
+        </n-form-item>
+        <div v-if="rcIsLinked" class="hint">
+          <strong>{{ t('registry_cache.linked_registry') }}:</strong>
+          {{ t('registry_cache.linked_registry_hint') }}
+        </div>
+        <n-form-item :label="t('registry_cache.hostname')" path="registry_cache.hostname" label-align="right">
+          <n-input
+            :placeholder="t('registry_cache.hostname_placeholder')"
+            :disabled="rcIsLinked"
+            v-model:value="setting.registry_cache.hostname"
+          />
+        </n-form-item>
+        <n-form-item :label="t('registry_cache.port')" path="registry_cache.port" label-align="right">
+          <n-input-number
+            :min="1"
+            :max="65535"
+            :disabled="rcIsLinked"
+            v-model:value="setting.registry_cache.port"
+            style="width: 160px"
+          />
+        </n-form-item>
+        <n-form-item :label="t('registry_cache.rewrite_mode')" path="registry_cache.rewrite_mode">
+          <n-radio-group v-model:value="setting.registry_cache.rewrite_mode">
+            <n-radio value="off">{{ t('registry_cache.rewrite_off') }}</n-radio>
+            <n-radio value="per-host">{{ t('registry_cache.rewrite_per_host') }}</n-radio>
+            <n-radio value="always">{{ t('registry_cache.rewrite_always') }}</n-radio>
+          </n-radio-group>
+        </n-form-item>
+        <n-form-item
+          :label="t('registry_cache.preserve_digests')"
+          path="registry_cache.preserve_digests"
+          label-align="right"
+        >
+          <n-switch v-model:value="setting.registry_cache.preserve_digests" />
+        </n-form-item>
+        <div class="hint">{{ t('registry_cache.preserve_digests_hint') }}</div>
+
+        <n-form-item :label="t('registry_cache.username')" path="registry_cache.username" label-align="right">
+          <n-input
+            :placeholder="t('registry_cache.username_placeholder')"
+            :disabled="rcIsLinked"
+            v-model:value="setting.registry_cache.username"
+          />
+        </n-form-item>
+        <n-form-item :label="t('fields.password')" path="registry_cache.password" label-align="right">
+          <n-input
+            type="password"
+            show-password-on="click"
+            :placeholder="t('registry_cache.password_placeholder')"
+            :disabled="rcIsLinked"
+            v-model:value="setting.registry_cache.password"
+          />
+        </n-form-item>
+
+        <n-form-item :label="t('registry_cache.ca_cert_pem')" path="registry_cache.ca_cert_pem" label-align="right">
+          <n-input
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 10 }"
+            placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+            :disabled="rcIsLinked"
+            v-model:value="setting.registry_cache.ca_cert_pem"
+          />
+        </n-form-item>
+        <div v-if="setting.registry_cache.ca_fingerprint" class="hint">
+          <strong>{{ t('registry_cache.ca_fingerprint') }}:</strong>
+          <code style="font-size: 11px; word-break: break-all">{{ setting.registry_cache.ca_fingerprint }}</code>
+        </div>
+
+        <!-- Live ping probe: POST /api/registry-cache/ping. Operator
+             can verify the mirror is reachable without leaving the
+             Settings tab. Badge updates on-demand (click) so we do
+             not hammer the mirror every page load. -->
+        <n-space
+          v-if="setting.registry_cache.enabled"
+          :size="8"
+          align="center"
+          style="margin-top: 8px; margin-bottom: 8px"
+        >
+          <n-button size="small" :loading="rcPinging" @click="pingMirror">
+            {{ t('registry_cache.ping_btn') }}
+          </n-button>
+          <n-tag
+            v-if="rcPingResult"
+            :type="rcPingResult.ok ? 'success' : 'error'"
+            size="small"
+            round
+          >
+            {{ rcPingResult.ok
+              ? t('registry_cache.ping_ok', { status: rcPingResult.status, ms: rcPingResult.latencyMs || 0 })
+              : t('registry_cache.ping_fail', { error: rcPingResult.error || String(rcPingResult.status) }) }}
+          </n-tag>
+        </n-space>
+
+        <n-form-item
+          :label="t('registry_cache.use_upstream_prefix')"
+          path="registry_cache.use_upstream_prefix"
+          label-align="right"
+        >
+          <n-switch v-model:value="setting.registry_cache.use_upstream_prefix" />
+        </n-form-item>
+        <div class="hint">{{ t('registry_cache.use_upstream_prefix_hint') }}</div>
+
+        <n-space style="margin-top: 12px">
+          <n-button
+            v-if="canEditRegistryCache"
+            type="primary"
+            @click="saveRegistryCache"
+          >{{ t('buttons.save') }}</n-button>
+          <n-button
+            v-if="canEditRegistryCache && !rcIsLinked"
+            :loading="rcGenerating"
+            @click="openGenCA"
+          >{{ t('registry_cache.gen_ca') }}</n-button>
+        </n-space>
+      </n-form>
+    </x-panel>
+
+    <!-- CA generation modal. The private key is returned ONCE by the
+         backend and never persisted; closing without downloading means
+         generating a fresh pair next time. -->
+    <n-modal
+      v-model:show="rcGenOpen"
+      preset="card"
+      :title="t('registry_cache.gen_ca_title')"
+      style="max-width: 720px"
+      :mask-closable="false"
+    >
+      <n-space vertical :size="12">
+        <n-alert type="warning" :show-icon="true">
+          {{ t('registry_cache.gen_ca_warning') }}
+        </n-alert>
+        <div>
+          <div class="sd-block-title">{{ t('registry_cache.ca_cert_pem') }}</div>
+          <n-input
+            type="textarea"
+            :value="rcGenResult?.certPEM || ''"
+            readonly
+            :autosize="{ minRows: 4, maxRows: 8 }"
+            style="font-family: monospace; font-size: 11px"
+          />
+          <n-space style="margin-top: 6px">
+            <n-button size="tiny" @click="copyText(rcGenResult?.certPEM || '')">{{ t('buttons.copy') }}</n-button>
+            <n-button size="tiny" @click="downloadText(rcGenResult?.certPEM || '', 'swirl-registry-ca.crt')">
+              {{ t('registry_cache.download_cert') }}
+            </n-button>
+          </n-space>
+        </div>
+        <div>
+          <div class="sd-block-title">{{ t('registry_cache.ca_key_pem') }}</div>
+          <n-input
+            type="textarea"
+            :value="rcGenResult?.keyPEM || ''"
+            readonly
+            :autosize="{ minRows: 4, maxRows: 8 }"
+            style="font-family: monospace; font-size: 11px"
+          />
+          <n-space style="margin-top: 6px">
+            <n-button size="tiny" @click="copyText(rcGenResult?.keyPEM || '')">{{ t('buttons.copy') }}</n-button>
+            <n-button size="tiny" @click="downloadText(rcGenResult?.keyPEM || '', 'swirl-registry-ca.key')">
+              {{ t('registry_cache.download_key') }}
+            </n-button>
+          </n-space>
+        </div>
+        <n-space justify="end" style="margin-top: 12px">
+          <n-button @click="rcGenOpen = false">{{ t('buttons.close') }}</n-button>
+          <n-button type="primary" @click="applyGeneratedCert">
+            {{ t('registry_cache.use_cert') }}
+          </n-button>
+        </n-space>
       </n-space>
     </n-modal>
 
@@ -850,9 +1090,32 @@ import selfDeployApi, {
 } from "@/api/self-deploy";
 import composeStackApi, { type ComposeStackSummary } from "@/api/compose_stack";
 import { useAutoDeployProgress } from "@/composables/useAutoDeployProgress";
+import registryCacheApi, { type GenCAResult, type PingResult } from "@/api/registry-cache";
+import registryApi from "@/api/registry";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+
+// Defaults for the Registry Cache settings subtree. Kept as a pure
+// function so we can re-apply on initial state + after every load
+// without accidentally sharing a mutable reference with the reactive
+// state.
+function rcDefaults() {
+  return {
+    enabled: false,
+    registry_id: '',
+    hostname: '',
+    port: 5000,
+    ca_cert_pem: '',
+    ca_fingerprint: '',
+    username: '',
+    password: '',
+    use_upstream_prefix: true,
+    rewrite_mode: 'per-host' as 'off' | 'per-host' | 'always',
+    preserve_digests: true,
+  }
+}
+
 const setting = ref({
   ldap: {
     security: 0,
@@ -896,7 +1159,12 @@ const setting = ref({
     storage_mode: 'fs',
     vault_prefix: 'backups',
   },
-} as Setting);
+  registry_cache: rcDefaults(),
+// The literal above is a partial defaults template — fields get
+// hydrated from the backend in fetchData(). The cast is kept
+// intentional-partial (via unknown) so TS does not block on missing
+// nested fields that already live on Setting's required subtrees.
+} as unknown as Setting);
 const panel = ref('')
 
 // --- Federation peers management (target-side: Swirl in swarm mode
@@ -908,6 +1176,98 @@ import federationApi from '@/api/federation'
 import type { FederationPeer, FederationPeerResult } from '@/api/federation'
 
 const canAdminFederation = computed(() => store.getters.allow('federation.admin'))
+const canViewRegistryCache = computed(() => store.getters.allow('registry_cache.view'))
+const canEditRegistryCache = computed(() => store.getters.allow('registry_cache.edit'))
+
+// Gen-CA modal state. The private key comes back from the backend once
+// and is never persisted by Swirl — the operator downloads it to sign
+// the mirror's server cert offline. Only the public cert ends up in
+// Setting.registry_cache.ca_cert_pem.
+const rcGenOpen = ref(false)
+const rcGenerating = ref(false)
+const rcGenResult = ref<GenCAResult | null>(null)
+
+const rcPinging = ref(false)
+const rcPingResult = ref<PingResult | null>(null)
+
+// Registry catalog options bound to the "Link to Registry" selector.
+// Populated at mount from /api/registry/search. When the operator
+// selects one, its id is stored in setting.registry_cache.registry_id
+// and the overlay on Save pulls hostname/port/credentials/CA from
+// the Registry entity.
+const registryOptions = ref<{ label: string; value: string }[]>([])
+const rcIsLinked = computed(() => !!setting.value.registry_cache?.registry_id)
+
+async function loadRegistryOptions() {
+  try {
+    const r = await registryApi.search()
+    registryOptions.value = (r.data || []).map(reg => ({
+      label: `${reg.name} (${reg.url})`,
+      value: reg.id,
+    }))
+  } catch { /* silent — the dropdown just stays empty */ }
+}
+
+async function pingMirror() {
+  rcPinging.value = true
+  try {
+    const r = await registryCacheApi.ping()
+    rcPingResult.value = (r.data ?? null) as PingResult | null
+  } catch (e: any) {
+    rcPingResult.value = { ok: false, error: e?.response?.data?.info || e?.message || String(e) }
+  } finally {
+    rcPinging.value = false
+  }
+}
+
+
+async function openGenCA() {
+  rcGenerating.value = true
+  try {
+    const r = await registryCacheApi.genCA(setting.value.registry_cache?.hostname || '')
+    rcGenResult.value = r.data ?? null
+    rcGenOpen.value = true
+  } catch (e: any) {
+    window.message.error(e?.response?.data?.info || e?.message || String(e))
+  } finally {
+    rcGenerating.value = false
+  }
+}
+
+async function saveRegistryCache() {
+  await save('registry_cache', setting.value.registry_cache)
+}
+
+function applyGeneratedCert() {
+  if (rcGenResult.value?.certPEM) {
+    setting.value.registry_cache.ca_cert_pem = rcGenResult.value.certPEM
+  }
+  rcGenOpen.value = false
+  window.message.info(t('registry_cache.cert_applied'))
+}
+
+function copyText(s: string) {
+  if (!s) return
+  try {
+    navigator.clipboard.writeText(s)
+    window.message.success(t('texts.action_success'))
+  } catch {
+    window.message.error('copy failed')
+  }
+}
+
+function downloadText(s: string, filename: string) {
+  if (!s) return
+  const blob = new Blob([s], { type: 'application/x-pem-file' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
 const fedPeers = ref<FederationPeer[]>([])
 const fedLoading = ref(false)
 const fedCreateOpen = ref(false)
@@ -1245,6 +1605,26 @@ async function fetchData() {
   if (!setting.value.backup) {
     setting.value.backup = { storage_mode: 'fs', vault_prefix: 'backups' }
   }
+  // Merge defaults with whatever the backend returned so every field
+  // the template binds to is guaranteed defined. Object.assign here
+  // fills gaps but preserves any saved value. Assigning back as a
+  // whole object keeps Vue's reactivity tracking the proxy.
+  setting.value.registry_cache = Object.assign(
+    rcDefaults(),
+    setting.value.registry_cache || {},
+  ) as any
+  // Coerce just in case a legacy blob ships unexpected values for
+  // the enum/numeric fields.
+  const rcRm = setting.value.registry_cache.rewrite_mode
+  if (rcRm !== 'off' && rcRm !== 'per-host' && rcRm !== 'always') {
+    setting.value.registry_cache.rewrite_mode = 'per-host'
+  }
+  if (typeof setting.value.registry_cache.port !== 'number' || setting.value.registry_cache.port === 0) {
+    setting.value.registry_cache.port = 5000
+  }
+  if (typeof setting.value.registry_cache.use_upstream_prefix !== 'boolean') {
+    setting.value.registry_cache.use_upstream_prefix = true
+  }
 
   // load roles for the dropdown
   try {
@@ -1292,7 +1672,9 @@ const {
   progressError,
   progressLogTail,
   currentJobId,
+  readyStuck,
   resumeFromSession,
+  reloadNow,
 } = useAutoDeployProgress()
 
 const logTailText = computed(() => {
@@ -1423,6 +1805,7 @@ onMounted(async () => {
   await fetchData()
   await loadSelfDeploy()
   loadSourceStacks()
+  loadRegistryOptions()
   startSelfDeployPolling()
   // If we landed here mid-deploy (e.g. the browser reloaded during the
   // sidekick swap), the sessionStorage-backed flag in the store is

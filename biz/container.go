@@ -295,21 +295,54 @@ func containerLabel(id, name string) string {
 }
 
 type Container struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Image       string            `json:"image,omitempty"`
-	Command     string            `json:"command,omitempty"`
-	CreatedAt   string            `json:"createdAt"`
-	Ports       []*ContainerPort  `json:"ports,omitempty"`
-	SizeRw      int64             `json:"sizeRw"`
-	SizeRootFs  int64             `json:"sizeRootFs"`
-	Labels      data.Options      `json:"labels"`
-	State       string            `json:"state"`
-	Status      string            `json:"status"`
-	NetworkMode string            `json:"networkMode"`
-	Mounts      []*ContainerMount `json:"mounts"`
-	PID         int               `json:"pid,omitempty"`
-	StartedAt   string            `json:"startedAt,omitempty"`
+	ID          string              `json:"id"`
+	Name        string              `json:"name"`
+	Image       string              `json:"image,omitempty"`
+	Command     string              `json:"command,omitempty"`
+	CreatedAt   string              `json:"createdAt"`
+	Ports       []*ContainerPort    `json:"ports,omitempty"`
+	SizeRw      int64               `json:"sizeRw"`
+	SizeRootFs  int64               `json:"sizeRootFs"`
+	Labels      data.Options        `json:"labels"`
+	State       string              `json:"state"`
+	Status      string              `json:"status"`
+	NetworkMode string              `json:"networkMode"`
+	Mounts      []*ContainerMount   `json:"mounts"`
+	PID         int                 `json:"pid,omitempty"`
+	StartedAt   string              `json:"startedAt,omitempty"`
+	// Resources reflects the effective runtime limits/reservations the
+	// Docker daemon enforces on this container. Populated for the
+	// detail view only (Summary doesn't carry it). Nil when the
+	// container has no explicit limits configured.
+	Resources   *ContainerResources `json:"resources,omitempty"`
+}
+
+// ContainerResources surfaces the subset of container.HostConfig.Resources
+// that operators care about when inspecting a container. Humanised
+// strings are produced alongside the raw byte/nano values so the UI can
+// show "2.0 CPU" / "2 GiB" without re-parsing Go numeric types.
+type ContainerResources struct {
+	// CPUs is the effective limit in CPU units (e.g. 2.0 = two full
+	// cores). Derived from HostConfig.NanoCPUs (nano / 1e9). Zero
+	// means "no limit".
+	CPUs       float64 `json:"cpus,omitempty"`
+	// CPUShares is the relative weight under contention (default 1024
+	// = "one CPU share"). Populated from HostConfig.CPUShares — the
+	// standalone engine sets this to approximate `deploy.resources.
+	// reservations.cpus` since Docker run has no hard CPU-floor knob.
+	CPUShares  int64  `json:"cpuShares,omitempty"`
+	// Memory (bytes). Zero means "no limit".
+	Memory     int64  `json:"memory,omitempty"`
+	// MemoryReservation is Docker's soft memory limit (bytes). Under
+	// contention the kernel tries to keep the working set near this
+	// number but does not OOM-kill on breach.
+	MemoryReservation int64 `json:"memoryReservation,omitempty"`
+	// MemorySwap (bytes). -1 = swap unlimited, 0 = inherit memory
+	// limit, >0 = explicit cap. Surface raw so the UI can render
+	// "unlimited" / "disabled" as appropriate.
+	MemorySwap int64 `json:"memorySwap,omitempty"`
+	// PidsLimit (0 = unlimited).
+	PidsLimit int64 `json:"pidsLimit,omitempty"`
 }
 
 type ContainerPort struct {
@@ -437,6 +470,30 @@ func newContainerDetail(c *container.InspectResponse) *Container {
 	}
 	for _, m := range c.Mounts {
 		ctr.Mounts = append(ctr.Mounts, newContainerMount(m))
+	}
+	if c.HostConfig != nil {
+		r := c.HostConfig.Resources
+		if r.NanoCPUs != 0 || r.CPUShares != 0 || r.Memory != 0 ||
+			r.MemoryReservation != 0 || r.MemorySwap != 0 ||
+			(r.PidsLimit != nil && *r.PidsLimit != 0) {
+			out := &ContainerResources{
+				CPUShares:         r.CPUShares,
+				Memory:            r.Memory,
+				MemoryReservation: r.MemoryReservation,
+				MemorySwap:        r.MemorySwap,
+			}
+			if r.NanoCPUs != 0 {
+				// Human-friendly: two decimals is enough for
+				// the values a compose wizard emits (0.5, 1.0,
+				// 2.0, …) and preserves enough precision for
+				// edge cases like 1.25.
+				out.CPUs = float64(r.NanoCPUs) / 1e9
+			}
+			if r.PidsLimit != nil {
+				out.PidsLimit = *r.PidsLimit
+			}
+			ctr.Resources = out
+		}
 	}
 	return ctr
 }

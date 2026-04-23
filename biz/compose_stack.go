@@ -154,11 +154,14 @@ type composeStackBiz struct {
 	eb  EventBiz
 	di  dao.Interface
 	sec ComposeStackSecretBiz
+	rb  RegistryBiz
 }
 
-// NewComposeStack is registered in biz.init.
-func NewComposeStack(d *docker.Docker, hb HostBiz, eb EventBiz, di dao.Interface, sec ComposeStackSecretBiz) ComposeStackBiz {
-	return &composeStackBiz{d: d, hb: hb, eb: eb, di: di, sec: sec}
+// NewComposeStack is registered in biz.init. `rb` is used by the Registry
+// Cache image mirror (pull upstream → tag → push cache) when the cache
+// feature is enabled on the target stack.
+func NewComposeStack(d *docker.Docker, hb HostBiz, eb EventBiz, di dao.Interface, sec ComposeStackSecretBiz, rb RegistryBiz) ComposeStackBiz {
+	return &composeStackBiz{d: d, hb: hb, eb: eb, di: di, sec: sec, rb: rb}
 }
 
 func (b *composeStackBiz) Search(ctx context.Context, args *dao.ComposeStackSearchArgs) ([]*ComposeStackSummary, int, error) {
@@ -421,10 +424,38 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 		return id, fmt.Errorf("%s", errMsg)
 	}
 
-	// 5. Fire the actual deploy on a detached context. The goroutine
+	// 5. Registry Cache active mirror. Two-step flow:
+	//     (a) RewriteImages computes the rewritten refs (original
+	//         → mirror-host/<prefix>/<path>:<tag>) for every
+	//         service whose image matches the cache scope rules.
+	//         The persisted stack.Content stays untouched — rewrite
+	//         is transport-layer, not an authoring concern.
+	//     (b) mirrorActionsToCache actively pulls each upstream
+	//         image, retags it with the cache ref, and pushes it
+	//         to the mirror so the bytes are available before
+	//         the engine issues its own pull. Hard-fail on error
+	//         (D3a): a cache out of sync is worse than a clear
+	//         "cannot mirror foo/bar:tag: ..." at deploy time.
+	stackContent := stack.Content
+	if hostExtract, rcErr := b.hb.GetAddonConfigExtract(ctx, stack.HostID); rcErr == nil {
+		liveSettingsMu.RLock()
+		ls := liveSettings
+		liveSettingsMu.RUnlock()
+		rcIn := BuildRewriteInput(stack, hostExtract, ls)
+		if rewritten, actions, rwErr := RewriteImages(stackContent, rcIn); rwErr == nil {
+			stackContent = rewritten
+			if _, mErr := mirrorActionsToCache(ctx, cli, b.rb, actions, pullImages); mErr != nil {
+				errMsg := fmt.Sprintf("registry cache mirror: %v", mErr)
+				_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
+				_ = b.di.ComposeStackUpdateError(ctx, id, errMsg)
+				return id, fmt.Errorf("%s", errMsg)
+			}
+		}
+	}
+
+	// 6. Fire the actual deploy on a detached context. The goroutine
 	//    closes over local values only; no shared mutable state.
 	stackName := stack.Name
-	stackContent := stack.Content
 	envFile := stack.EnvFile
 	hostID := stack.HostID
 	go b.runDeploy(cli, id, hostID, stackName, stackContent, envFile, pullImages, hook, user)

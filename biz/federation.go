@@ -308,9 +308,18 @@ func (b *federationBiz) Capabilities(ctx context.Context) *Capabilities {
 		APIVersion: federationAPIVersion,
 		Mode:       mode,
 		Version:    app.Version,
-		Features:   []string{"proxy-v1"},
-		Nodes:      1,
-		PeerName:   peerName,
+		// Feature flags the portal probes after the handshake. Add new
+		// tags as endpoints land; consumers feature-detect by string
+		// match and degrade gracefully when a tag is missing.
+		Features: []string{
+			"proxy-v1",
+			// registry-cache-v1: this peer accepts
+			// POST /api/federation/registry-cache/receive and applies
+			// the payload to its Setting.registry_cache.
+			"registry-cache-v1",
+		},
+		Nodes:    1,
+		PeerName: peerName,
 	}
 }
 

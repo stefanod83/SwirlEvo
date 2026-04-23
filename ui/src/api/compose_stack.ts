@@ -12,6 +12,9 @@ export interface ComposeStack {
     // lastWarnings carries non-fatal observations from the most recent
     // deploy (e.g. compose fields silently ignored in standalone mode).
     lastWarnings?: string[];
+    // disableRegistryCache opts this stack OUT of deploy-time image
+    // rewriting when the global Registry Cache mirror is enabled.
+    disableRegistryCache?: boolean;
     containers?: number;
     running?: number;
     services?: number;
@@ -143,20 +146,11 @@ export interface HostAddons {
 // state", so the backend leaves those services untouched.
 export interface TraefikServiceCfg {
     enabled: boolean;
-    router?: string;
-    ruleType?: 'Host' | 'PathPrefix' | 'Host+PathPrefix' | '';
-    domain?: string;
-    path?: string;
-    entrypoint?: string;
-    port?: number;
-    tls?: boolean;
-    certResolver?: string;
-    middlewares?: string[];
-    // extraLabels is the passthrough set for every traefik.* label the
-    // wizard doesn't model natively (extra routers, tls.options,
-    // middlewares with provider qualifiers, plugins, ...). Populated by
-    // the backend reverse parser and re-emitted verbatim on save.
-    extraLabels?: Record<string, string>;
+    // labels is the full traefik.* label set for the service. The
+    // backend owns the whole namespace: on save it purges every
+    // existing traefik.* label from the service and rewrites them
+    // from this map (plus traefik.enable=true when `enabled` is on).
+    labels?: Record<string, string>;
 }
 
 export interface ResourcesServiceCfg {
@@ -254,6 +248,56 @@ export class ComposeStackApi {
     parseAddons(content: string) {
         return ajax.post<AddonsConfig>('/compose-stack/parse-addons', { content })
     }
+
+    registryCachePreview(payload: {
+        hostId: string
+        content: string
+        disableRegistryCache: boolean
+    }) {
+        return ajax.post<RegistryCachePreviewResponse>('/compose-stack/registry-cache-preview', payload)
+    }
+
+    registryCacheWarm(payload: {
+        hostId: string
+        content: string
+        disableRegistryCache: boolean
+    }) {
+        return ajax.post<RegistryCacheWarmResponse>('/compose-stack/registry-cache-warm', payload)
+    }
+}
+
+export interface RegistryCacheWarmResultItem {
+    ref: string
+    ok: boolean
+    error?: string
+    latencyMs?: number
+}
+
+export interface RegistryCacheWarmResponse {
+    results: RegistryCacheWarmResultItem[]
+}
+
+export interface RegistryCacheRewriteAction {
+    service: string
+    original: string
+    rewritten?: string
+    upstream?: string
+    prefix?: string
+    // Populated when the service was evaluated but NOT rewritten:
+    // "no-match" (upstream not mapped), "digest-preserved" (image
+    // referenced by @sha256 with PreserveDigests=true),
+    // "invalid-ref" (could not parse reference).
+    reason?: string
+}
+
+export interface RegistryCachePreviewResponse {
+    mirrorEnabled: boolean
+    // True when the current configuration (global mode + per-host
+    // opt-in + per-stack opt-out) will result in no rewriting at all.
+    // Distinct from "no images matched" which shows up as actions
+    // with reason="no-match".
+    effectivelyDisabled: boolean
+    actions: RegistryCacheRewriteAction[]
 }
 
 export default new ComposeStackApi

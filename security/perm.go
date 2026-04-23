@@ -48,6 +48,11 @@ var Resources = map[string]uint64{
 	// cluster-wide access, so keep it separate from the bulk `setting`
 	// permission.
 	"federation": 1 << 22,
+	// registry_cache: pull-through mirror configuration + per-host
+	// bootstrap. Separate from `setting` so ops admins can manage the
+	// mirror / upstream mappings without also gaining access to LDAP,
+	// Keycloak, Vault settings.
+	"registry_cache": 1 << 23,
 }
 
 // Actions holds all actions requiring authorization. Up to 24 actions are supported.
@@ -102,8 +107,9 @@ var Perms = map[string][]string{
 	// vault.admin guards Vault connection settings + test endpoint.
 	"vault":        {"admin"},
 	"vault_secret": {"view", "edit", "delete", "cleanup"},
-	"self_deploy":  {"view", "edit", "execute"},
-	"federation":   {"admin"},
+	"self_deploy":   {"view", "edit", "execute"},
+	"federation":    {"admin"},
+	"registry_cache": {"view", "edit"},
 }
 
 type Authorizer struct {

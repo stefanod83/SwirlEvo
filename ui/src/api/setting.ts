@@ -14,6 +14,29 @@ export interface Setting {
     deploy: DeployOptions;
     vault: VaultSetting;
     backup: BackupStorageSetting;
+    registry_cache: RegistryCacheSetting;
+}
+
+export interface RegistryCacheSetting {
+    enabled: boolean;
+    // When set, Hostname/Port/Username/Password/CA* are AUTHORITATIVELY
+    // read from the referenced Registry at every Save; the inline
+    // values below are overwritten by the backend overlay. Empty =
+    // inline mode (legacy).
+    registry_id?: string;
+    hostname: string;
+    port: number;
+    ca_cert_pem: string;
+    ca_fingerprint: string;
+    username: string;
+    password: string;
+    // When true (default) the deploy-time rewriter lays images at
+    // `<mirror>/<registry-domain>/<repo>:<tag>` (multi-upstream
+    // Harbor/Nexus layout). When false it strips the domain:
+    // `<mirror>/<repo>:<tag>` (single-upstream mirror convention).
+    use_upstream_prefix: boolean;
+    rewrite_mode: 'off' | 'per-host' | 'always';
+    preserve_digests: boolean;
 }
 
 export interface BackupStorageSetting {

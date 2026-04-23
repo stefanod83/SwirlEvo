@@ -129,6 +129,48 @@ type Setting struct {
 		AutoRollback  bool   `json:"autoRollback"`
 		DeployTimeout int    `json:"deployTimeout"` // seconds
 	} `json:"self_deploy"`
+	// RegistryCache describes an operator-deployed pull-through registry
+	// (registry:2, Harbor, Nexus, …) that Swirl uses as the only egress
+	// point for container images. Swirl does NOT manage the mirror's
+	// lifecycle — it stores connection parameters, distributes the CA
+	// to hosts via copy-paste bootstrap, and rewrites compose image:
+	// references at deploy time.
+	//
+	// CACertPEM + Password are masked on Find/Load through secretFieldsByID
+	// in biz/setting.go. CAFingerprint is derived server-side at Save from
+	// CACertPEM and is safe to echo back.
+	RegistryCache struct {
+		Enabled           bool   `json:"enabled"`
+		// RegistryID (optional) links this cache config to an entry in
+		// the Registry catalog. When set, Hostname/Port/Username/
+		// Password/CACertPEM/CAFingerprint are AUTHORITATIVELY sourced
+		// from the referenced Registry at every Save — any inline
+		// value the UI submits for those fields is ignored and
+		// overwritten with the Registry's current values. Register
+		// edits fire a refresh hook that re-overlays these fields so
+		// downstream consumers (rewriter, ping, sync, bootstrap)
+		// always see a consistent snapshot.
+		RegistryID        string `json:"registry_id,omitempty"`
+		Hostname          string `json:"hostname"`          // e.g. "mirror.lan" — what clients use to reach the mirror
+		Port              int    `json:"port"`              // default 5000
+		CACertPEM         string `json:"ca_cert_pem"`       // distributed to hosts via bootstrap script
+		CAFingerprint     string `json:"ca_fingerprint"`    // derived (sha256 of cert DER), not secret
+		Username          string `json:"username"`          // optional — used in daemon.json registry auth
+		Password          string `json:"password"`          // masked on GET
+		// UseUpstreamPrefix controls the rewritten image path layout:
+		//   true  (default) → <mirror>/<registry-domain>/<repo>:<tag>
+		//                     e.g. docker.io/library/nginx → mirror/docker.io/library/nginx
+		//                     Matches the multi-upstream Harbor/Nexus
+		//                     project convention where each upstream
+		//                     sits under its own path prefix.
+		//   false →            <mirror>/<repo>:<tag>  (domain stripped)
+		//                     Fits single-upstream mirrors that proxy
+		//                     exactly one registry (typically Docker
+		//                     Hub) and receive refs without a prefix.
+		UseUpstreamPrefix bool   `json:"use_upstream_prefix"`
+		RewriteMode       string `json:"rewrite_mode"`      // "per-host" (default) | "always" | "off"
+		PreserveDigests   bool   `json:"preserve_digests"`  // default true — image@sha256:... refs pass through unrewritten
+	} `json:"registry_cache"`
 }
 
 // IsStandalone returns true when Swirl is running in standalone mode.

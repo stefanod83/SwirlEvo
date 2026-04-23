@@ -14,7 +14,47 @@ import (
 // persisted. A TraefikExtract may be nil if the operator hasn't uploaded a
 // config file yet — the discovery flow falls back to docker-inspect only.
 type AddonConfigExtract struct {
-	Traefik *TraefikExtract `json:"traefik,omitempty"`
+	Traefik       *TraefikExtract       `json:"traefik,omitempty"`
+	RegistryCache *RegistryCacheExtract `json:"registryCache,omitempty"`
+}
+
+// RegistryCacheExtract is the per-host opt-in state for the pull-through
+// registry mirror configured in Setting.RegistryCache. Only the toggle +
+// insecure-mode flag + the "applied" attestation are persisted — the
+// generated daemon.json snippet and bootstrap script are recomputed on
+// every read so operators always see the current mirror config / CA.
+type RegistryCacheExtract struct {
+	// Enabled gates compose image rewriting for this host (RewriteMode
+	// = "per-host" in Setting.RegistryCache only rewrites when Enabled
+	// is true). Flipping it also enables the addon panel's "Mark as
+	// applied" and related UX.
+	Enabled bool `json:"enabled"`
+	// InsecureMode switches the generated daemon.json snippet from the
+	// cert-distribution path (/etc/docker/certs.d/<host>:<port>/ca.crt)
+	// to `insecure-registries` listing. Narrower blast radius by
+	// default — operators opt in explicitly when they do not want to
+	// distribute the CA.
+	InsecureMode bool `json:"insecureMode"`
+	// AppliedAt / AppliedBy record the operator attestation that the
+	// generated snippet has been applied on the target daemon. Manual
+	// flag — Swirl never writes daemon.json itself.
+	AppliedAt time.Time `json:"appliedAt,omitempty"`
+	AppliedBy string    `json:"appliedBy,omitempty"`
+	// AppliedFingerprint is a copy of Setting.RegistryCache.CAFingerprint
+	// at the moment the operator clicked "Mark as applied". Used in
+	// Phase 5 to flag hosts whose daemon trust is stale after a CA
+	// rotation.
+	AppliedFingerprint string `json:"appliedFingerprint,omitempty"`
+	// LastSyncAt / LastSyncBy record the federation-delegation push
+	// (Phase 4) for swarm_via_swirl hosts: the portal cannot rewrite
+	// daemon.json on the peer's nodes directly, so it mirrors the
+	// global Setting.RegistryCache to the peer's own Settings via
+	// /api/federation/registry-cache/receive. These fields are only
+	// populated for swarm_via_swirl hosts; standalone hosts use
+	// AppliedAt instead.
+	LastSyncAt          time.Time `json:"lastSyncAt,omitempty"`
+	LastSyncBy          string    `json:"lastSyncBy,omitempty"`
+	LastSyncFingerprint string    `json:"lastSyncFingerprint,omitempty"`
 }
 
 // TraefikExtract carries the host-level Traefik configuration the operator
@@ -48,6 +88,12 @@ type TraefikExtract struct {
 	DefaultDomain       string `json:"defaultDomain,omitempty"`
 	DefaultEntrypoint   string `json:"defaultEntrypoint,omitempty"`
 	DefaultCertResolver string `json:"defaultCertResolver,omitempty"`
+	// DefaultMiddleware is prepended to any router middleware chain the
+	// wizard builds for a service on this host (e.g. an auth middleware
+	// that every exposed app must go through). Free-form text so
+	// operators can stack multiple `@provider` qualified names joined
+	// by commas.
+	DefaultMiddleware string `json:"defaultMiddleware,omitempty"`
 
 	// Overrides — free-form key/value pairs the operator can set when
 	// a field of interest isn't captured by the structured fields above.
@@ -96,6 +142,22 @@ func (b *hostBiz) UpdateAddonConfigExtract(ctx context.Context, hostID string, e
 	// changed — editing just StackID or Defaults must not rewrite the
 	// "last upload" provenance.
 	current := decodeAddonConfigExtract(host.AddonConfigExtract)
+	if extract != nil && extract.RegistryCache != nil {
+		rc := *extract.RegistryCache
+		// Stamp AppliedAt / AppliedBy when the caller explicitly
+		// flips the "Mark as applied" button (it sends a zero-value
+		// AppliedAt so we know to set it here rather than echoing an
+		// old one). Enabled-only edits preserve the previous
+		// attestation.
+		if rc.AppliedAt.IsZero() && current.RegistryCache != nil {
+			rc.AppliedAt = current.RegistryCache.AppliedAt
+			rc.AppliedBy = current.RegistryCache.AppliedBy
+			rc.AppliedFingerprint = current.RegistryCache.AppliedFingerprint
+		} else if !rc.AppliedAt.IsZero() && user != nil && rc.AppliedBy == "" {
+			rc.AppliedBy = user.Name()
+		}
+		current.RegistryCache = &rc
+	}
 	if extract != nil && extract.Traefik != nil {
 		t := *extract.Traefik
 		t.EntryPoints = dedup(t.EntryPoints)
@@ -164,6 +226,8 @@ func (b *hostBiz) ClearAddonConfigExtract(ctx context.Context, hostID, addon str
 	switch addon {
 	case "traefik":
 		current.Traefik = nil
+	case "registryCache":
+		current.RegistryCache = nil
 	}
 	buf, err := json.Marshal(current)
 	if err != nil {

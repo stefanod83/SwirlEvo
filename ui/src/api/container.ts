@@ -33,6 +33,30 @@ export interface Container {
         name: string;
         value: string;
     }[];
+    // Resources reflects the runtime limits/reservations configured on
+    // the container via HostConfig.Resources. Populated only on the
+    // detail view (summary doesn't carry it). Undefined when the
+    // container has no explicit limits.
+    resources?: ContainerResources;
+}
+
+export interface ContainerResources {
+    // CPUs limit expressed in full CPU units (1.0 = one core). Derived
+    // from HostConfig.NanoCPUs / 1e9.
+    cpus?: number;
+    // CPUShares is the relative CPU weight under contention (default
+    // 1024 = "one full CPU share"). Populated when the standalone
+    // engine approximates deploy.resources.reservations.cpus — no hard
+    // CPU floor exists in docker-run.
+    cpuShares?: number;
+    // Memory limit in bytes (0 = no limit).
+    memory?: number;
+    // Soft memory limit (--memory-reservation) in bytes.
+    memoryReservation?: number;
+    // Swap limit (-1 = unlimited, 0 = inherit Memory, >0 = explicit).
+    memorySwap?: number;
+    // PIDs limit (0 = unlimited).
+    pidsLimit?: number;
 }
 
 export interface SearchArgs {

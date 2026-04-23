@@ -3,9 +3,22 @@
     title="Traefik"
     :subtitle="t('host_addon_traefik.subtitle')"
     divider="bottom"
+    :collapsed="effectiveCollapsed"
   >
     <template #action>
       <n-space :size="12" align="center">
+        <!-- Collapse toggle — only rendered when the parent controls
+             the panel state (opt-in via the `collapsed` prop). Keeps
+             the component backward-compatible with callers that embed
+             it as a single always-expanded addon. -->
+        <n-button
+          v-if="isControlled"
+          secondary
+          strong
+          size="small"
+          style="min-width: 75px"
+          @click="() => emit('toggle')"
+        >{{ effectiveCollapsed ? t('buttons.expand') : t('buttons.collapse') }}</n-button>
         <!-- Master enable switch: when off the stack-editor Traefik tab
              disappears for every stack on this host. Config below stays
              persisted so flipping back on restores the previous state. -->
@@ -19,6 +32,7 @@
           :disabled="!local.enabled"
           :show-file-list="false"
           accept=".yml,.yaml"
+          multiple
           :custom-request="handleUpload"
         >
           <n-button size="small" secondary :disabled="!local.enabled">
@@ -28,6 +42,17 @@
             {{ t('host_addon_traefik.upload_btn') }}
           </n-button>
         </n-upload>
+        <n-popconfirm
+          :show-icon="false"
+          @positive-click="resetAll"
+        >
+          <template #trigger>
+            <n-button size="small" quaternary type="warning">
+              {{ t('host_addon_traefik.reset_btn') }}
+            </n-button>
+          </template>
+          {{ t('host_addon_traefik.reset_confirm') }}
+        </n-popconfirm>
         <n-popconfirm
           v-if="hasExtract"
           :show-icon="false"
@@ -43,98 +68,152 @@
       </n-space>
     </template>
 
-    <!-- Disabled state hint: configuration form is still rendered (so
-         operators can prepare it) but a banner flags that the stack
-         editor tab is currently hidden. -->
-    <n-alert v-if="!local.enabled" type="info" :show-icon="true" style="margin-bottom: 12px">
-      {{ t('host_addon_traefik.disabled_hint') }}
-    </n-alert>
+    <n-space vertical :size="16">
 
-    <n-alert v-if="discovery" type="success" :show-icon="true" style="margin-bottom: 12px">
-      <div style="font-size: 12px">
-        <strong>{{ t('host_addon_traefik.detected') }}:</strong>
-        {{ discovery.containerName || '—' }}
-        <span v-if="discovery.image"> · {{ discovery.image }}</span>
-        <span v-if="discovery.version"> · {{ discovery.version }}</span>
-      </div>
-    </n-alert>
+      <!-- (a) Detection / Metadata ================================== -->
+      <section
+        v-if="!local.enabled || discovery || uploadMeta"
+        class="addon-section addon-section--meta"
+      >
+        <n-alert
+          v-if="!local.enabled"
+          type="info"
+          :show-icon="true"
+          class="addon-alert"
+        >
+          {{ t('host_addon_traefik.disabled_hint') }}
+        </n-alert>
 
-    <n-alert v-if="uploadMeta" type="info" :show-icon="false" style="margin-bottom: 12px; padding: 6px 10px">
-      <span style="font-size: 12px">📄 {{ uploadMeta }}</span>
-    </n-alert>
+        <n-alert
+          v-if="discovery"
+          type="success"
+          :show-icon="true"
+          class="addon-alert"
+        >
+          <template #icon>
+            <n-icon><cube-outline-icon /></n-icon>
+          </template>
+          <div class="addon-detection">
+            <strong>{{ t('host_addon_traefik.detected') }}:</strong>
+            <span class="addon-detection__name">{{ discovery.containerName || '—' }}</span>
+            <span v-if="discovery.image" class="addon-detection__meta">· {{ discovery.image }}</span>
+            <span v-if="discovery.version" class="addon-detection__meta">· {{ discovery.version }}</span>
+            <span v-if="uploadMeta" class="addon-detection__upload">· {{ uploadMeta }}</span>
+          </div>
+        </n-alert>
 
-    <n-form label-placement="top" :show-feedback="false">
-      <!-- Stack / container pointer ------------------------------------ -->
-      <n-grid cols="2" x-gap="16" y-gap="12">
-        <n-form-item-gi :label="t('host_addon_traefik.ref_stack')">
-          <n-select
-            v-model:value="local.stackId"
-            :options="stackOptions"
-            :placeholder="t('host_addon_traefik.ref_stack_placeholder')"
-            filterable
-            clearable
-          />
-        </n-form-item-gi>
-        <n-form-item-gi :label="t('host_addon_traefik.container_name')">
-          <n-input
-            v-model:value="local.containerName"
-            :placeholder="t('host_addon_traefik.container_name_placeholder')"
-          />
-        </n-form-item-gi>
-      </n-grid>
+        <n-alert
+          v-else-if="uploadMeta"
+          type="info"
+          :show-icon="true"
+          class="addon-alert"
+        >
+          <template #icon>
+            <n-icon><document-icon /></n-icon>
+          </template>
+          <span class="addon-upload-meta">{{ uploadMeta }}</span>
+        </n-alert>
+      </section>
 
-      <!-- Defaults ----------------------------------------------------- -->
-      <n-grid cols="3" x-gap="16" y-gap="12">
-        <n-form-item-gi :label="t('host_addon_traefik.default_domain')">
-          <n-input
-            v-model:value="local.defaultDomain"
-            placeholder="apps.example.com"
-          />
-        </n-form-item-gi>
-        <n-form-item-gi :label="t('host_addon_traefik.default_entrypoint')">
-          <n-select
-            v-model:value="local.defaultEntrypoint"
-            :options="entrypointOptions"
-            filterable
-            tag
-            clearable
-            :placeholder="t('host_addon_traefik.default_entrypoint_placeholder')"
-          />
-        </n-form-item-gi>
-        <n-form-item-gi :label="t('host_addon_traefik.default_certresolver')">
-          <n-select
-            v-model:value="local.defaultCertResolver"
-            :options="certResolverOptions"
-            filterable
-            tag
-            clearable
-            :placeholder="t('host_addon_traefik.default_certresolver_placeholder')"
-          />
-        </n-form-item-gi>
-      </n-grid>
+      <n-form label-placement="top" :show-feedback="false">
 
-      <!-- Extracted lists: read-only display, but editable via tag input
-           so the operator can prune / add manually. --------------------- -->
-      <n-grid cols="2" x-gap="16" y-gap="12">
-        <n-form-item-gi :label="t('host_addon_traefik.entrypoints')">
-          <n-dynamic-tags v-model:value="entryPointsList" />
-        </n-form-item-gi>
-        <n-form-item-gi :label="t('host_addon_traefik.certresolvers')">
-          <n-dynamic-tags v-model:value="certResolversList" />
-        </n-form-item-gi>
-        <n-form-item-gi :label="t('host_addon_traefik.middlewares')">
-          <n-dynamic-tags v-model:value="middlewaresList" />
-        </n-form-item-gi>
-        <n-form-item-gi :label="t('host_addon_traefik.networks')">
-          <n-dynamic-tags v-model:value="networksList" />
-        </n-form-item-gi>
-      </n-grid>
+        <!-- (b) Pointer ============================================ -->
+        <section class="addon-section">
+          <h4 class="addon-section-title">{{ t('host_addon_traefik.section_pointer') || t('host_addon_traefik.ref_stack') }}</h4>
+          <n-grid cols="2" x-gap="16" y-gap="12">
+            <n-form-item-gi :label="t('host_addon_traefik.ref_stack')">
+              <n-select
+                v-model:value="local.stackId"
+                :options="stackOptions"
+                :placeholder="t('host_addon_traefik.ref_stack_placeholder')"
+                filterable
+                clearable
+              />
+            </n-form-item-gi>
+            <n-form-item-gi :label="t('host_addon_traefik.container_name')">
+              <n-input
+                v-model:value="local.containerName"
+                :placeholder="t('host_addon_traefik.container_name_placeholder')"
+              />
+            </n-form-item-gi>
+          </n-grid>
+        </section>
 
-      <!-- Overrides — free-form key/value pairs for anything not captured
-           by the structured fields above. ------------------------------- -->
-      <n-form-item :label="t('host_addon_traefik.overrides')">
-        <div style="width: 100%">
-          <n-table size="small" :bordered="true" :single-line="false">
+        <n-divider class="addon-divider" />
+
+        <!--
+          (c) Defaults ===========================================
+          Stacked vertically (not a responsive grid) so every field
+          is always visible regardless of container width. Previous
+          2-col grid hid the fourth item on narrow containers via
+          naive-ui's responsive="self" collapse behavior.
+        -->
+        <section class="addon-section">
+          <h4 class="addon-section-title">{{ t('host_addon_traefik.section_defaults') || t('host_addon_traefik.default_domain') }}</h4>
+          <n-form-item :label="t('host_addon_traefik.default_domain')">
+            <n-input
+              v-model:value="local.defaultDomain"
+              placeholder="apps.example.com"
+            />
+          </n-form-item>
+          <n-form-item :label="t('host_addon_traefik.default_entrypoint')">
+            <n-select
+              v-model:value="local.defaultEntrypoint"
+              :options="entrypointOptions"
+              filterable
+              tag
+              clearable
+              :placeholder="t('host_addon_traefik.default_entrypoint_placeholder')"
+            />
+          </n-form-item>
+          <n-form-item :label="t('host_addon_traefik.default_certresolver')">
+            <n-select
+              v-model:value="local.defaultCertResolver"
+              :options="certResolverOptions"
+              filterable
+              tag
+              clearable
+              :placeholder="t('host_addon_traefik.default_certresolver_placeholder')"
+            />
+          </n-form-item>
+          <n-form-item :label="t('host_addon_traefik.default_middleware')">
+            <n-input
+              v-model:value="local.defaultMiddleware"
+              :placeholder="t('host_addon_traefik.default_middleware_placeholder')"
+            />
+          </n-form-item>
+        </section>
+
+        <n-divider class="addon-divider" />
+
+        <!-- (d) Inventory ========================================== -->
+        <section class="addon-section">
+          <h4 class="addon-section-title">{{ t('host_addon_traefik.section_inventory') || t('host_addon_traefik.entrypoints') }}</h4>
+          <n-grid cols="2" x-gap="16" y-gap="12">
+            <n-form-item-gi :label="t('host_addon_traefik.entrypoints')">
+              <n-dynamic-tags v-model:value="entryPointsList" />
+            </n-form-item-gi>
+            <n-form-item-gi :label="t('host_addon_traefik.certresolvers')">
+              <n-dynamic-tags v-model:value="certResolversList" />
+            </n-form-item-gi>
+            <n-form-item-gi :label="t('host_addon_traefik.middlewares')">
+              <n-dynamic-tags v-model:value="middlewaresList" />
+            </n-form-item-gi>
+            <n-form-item-gi :label="t('host_addon_traefik.networks')">
+              <n-dynamic-tags v-model:value="networksList" />
+            </n-form-item-gi>
+          </n-grid>
+        </section>
+
+        <n-divider class="addon-divider" />
+
+        <!-- (e) Custom overrides =================================== -->
+        <section class="addon-section">
+          <div class="addon-section-header">
+            <h4 class="addon-section-title">{{ t('host_addon_traefik.overrides') }}</h4>
+            <span class="addon-section-hint muted">{{ t('host_addon_traefik.overrides_desc') }}</span>
+          </div>
+          <n-table size="small" :bordered="true" :single-line="false" class="addon-overrides-table">
             <thead>
               <tr>
                 <th style="width: 40%">{{ t('fields.key') }}</th>
@@ -153,44 +232,51 @@
                 </td>
               </tr>
               <tr v-if="!overridesRows.length">
-                <td colspan="3" style="text-align: center; padding: 8px;" class="muted">
+                <td colspan="3" class="addon-overrides-empty muted">
                   {{ t('host_addon_traefik.overrides_empty') }}
                 </td>
               </tr>
             </tbody>
           </n-table>
-          <n-button size="small" quaternary @click="addOverride" style="margin-top: 8px">
-            <template #icon>
-              <n-icon><add-icon /></n-icon>
-            </template>
-            {{ t('host_addon_traefik.add_override') }}
-          </n-button>
-        </div>
-      </n-form-item>
+          <div class="addon-overrides-footer">
+            <n-button size="small" quaternary @click="addOverride">
+              <template #icon>
+                <n-icon><add-icon /></n-icon>
+              </template>
+              {{ t('host_addon_traefik.add_override') }}
+            </n-button>
+          </div>
+        </section>
 
-      <n-space>
-        <n-button type="primary" :loading="saving" @click="save">
-          <template #icon>
-            <n-icon><save-icon /></n-icon>
-          </template>
-          {{ t('buttons.save') }}
-        </n-button>
-      </n-space>
-    </n-form>
+        <n-divider class="addon-divider" />
+
+        <!-- Save bar ============================================== -->
+        <n-space justify="end" class="addon-actions">
+          <n-button type="primary" :loading="saving" @click="save">
+            <template #icon>
+              <n-icon><save-icon /></n-icon>
+            </template>
+            {{ t('buttons.save') }}
+          </n-button>
+        </n-space>
+      </n-form>
+    </n-space>
   </x-panel>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
-  NSpace, NButton, NIcon, NAlert, NForm, NFormItem, NFormItemGi, NGrid, NInput,
-  NSelect, NSwitch, NDynamicTags, NTable, NUpload, NPopconfirm,
+  NSpace, NButton, NIcon, NAlert, NForm, NFormItemGi, NGrid, NInput,
+  NSelect, NSwitch, NDynamicTags, NTable, NUpload, NPopconfirm, NDivider,
   useMessage,
 } from 'naive-ui'
 import {
   CloudUploadOutline as CloudUploadIcon,
   AddOutline as AddIcon,
   SaveOutline as SaveIcon,
+  CubeOutline as CubeOutlineIcon,
+  DocumentOutline as DocumentIcon,
 } from '@vicons/ionicons5'
 import yaml from 'js-yaml'
 import { useI18n } from 'vue-i18n'
@@ -202,9 +288,24 @@ import {
 import composeStackApi from '@/api/compose_stack'
 import type { TraefikAddon, DiscoveryValue } from '@/api/compose_stack'
 
-const props = defineProps<{ hostId: string }>()
+const props = defineProps<{
+  hostId: string
+  // When set, the parent controls the expanded/collapsed state of the
+  // inner panel (Settings-style). Leaving it undefined keeps the
+  // legacy behavior: panel is always expanded and no toggle button
+  // appears in the action slot.
+  collapsed?: boolean
+}>()
+const emit = defineEmits<{
+  (e: 'toggle'): void
+}>()
 const { t } = useI18n()
 const message = useMessage()
+
+// Controlled = parent passes `collapsed` (true OR false). Uncontrolled
+// = prop is undefined → always expanded, no toggle button.
+const isControlled = computed(() => props.collapsed !== undefined)
+const effectiveCollapsed = computed(() => isControlled.value ? !!props.collapsed : false)
 
 const saving = ref(false)
 const discovery = ref<TraefikAddon | null>(null)
@@ -212,7 +313,7 @@ const local = reactive<TraefikExtract>({
   enabled: false,
   entryPoints: [], certResolvers: [], middlewares: [], networks: [],
   stackId: '', containerName: '',
-  defaultDomain: '', defaultEntrypoint: '', defaultCertResolver: '',
+  defaultDomain: '', defaultEntrypoint: '', defaultCertResolver: '', defaultMiddleware: '',
   overrides: {},
 })
 // Non-reactive wrappers for n-dynamic-tags (binds to arrays).
@@ -243,15 +344,25 @@ async function load() {
     discovery.value = (discoveryRes.value.data as any)?.traefik || null
   }
   if (stacksRes.status === 'fulfilled') {
-    // compose-stack/search returns both managed (persisted, have id) and
-    // external (CLI-discovered, id=="") stacks. Only managed ones can be
-    // referenced here — external stacks have no stable identifier to
-    // persist on Host.AddonConfigExtract. Filter + sort alphabetically.
+    // compose-stack/search returns both managed (persisted, with id) and
+    // unmanaged (CLI-discovered, id==""). Operators often run Traefik
+    // outside Swirl's management (e.g. via docker compose CLI); they
+    // still want to point the reference to it. For unmanaged we use the
+    // project name as the identifier, with an "unmanaged" tag in the
+    // label so users know what they're selecting.
     const items = ((stacksRes.value.data as any)?.items || []) as { id: string; name: string; managed?: boolean }[]
-    stackOptions.value = items
+    const managed = items
       .filter((s) => !!s.id && s.managed !== false)
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((s) => ({ label: s.name, value: s.id }))
+    const unmanaged = items
+      .filter((s) => !s.id || s.managed === false)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((s) => ({
+        label: `${s.name} · ${t('host_addon_traefik.ref_unmanaged')}`,
+        value: `external:${s.name}`,
+      }))
+    stackOptions.value = [...managed, ...unmanaged]
   }
 }
 
@@ -266,6 +377,7 @@ function applyLocal(t: TraefikExtract) {
   local.defaultDomain = t.defaultDomain || ''
   local.defaultEntrypoint = t.defaultEntrypoint || ''
   local.defaultCertResolver = t.defaultCertResolver || ''
+  local.defaultMiddleware = t.defaultMiddleware || ''
   local.overrides = { ...(t.overrides || {}) }
   local.sourceFile = t.sourceFile
   local.uploadedAt = t.uploadedAt
@@ -376,6 +488,16 @@ function parseTraefikFile(text: string) {
   return { entryPoints, certResolvers, middlewares, networks }
 }
 
+// resetAll wipes every form field in-memory (keeping `enabled` so the
+// operator can preview the blank state without flipping the master
+// toggle) — the next Save persists the blank payload. Differs from
+// clearExtract in that it doesn't issue a server-side delete, so the
+// operator can back out by refreshing before saving.
+function resetAll() {
+  applyLocal({ enabled: local.enabled })
+  message.info(t('host_addon_traefik.reset_done'))
+}
+
 async function clearExtract() {
   try {
     await clearAddonExtract(props.hostId, 'traefik')
@@ -406,6 +528,7 @@ async function save() {
       defaultDomain: local.defaultDomain || '',
       defaultEntrypoint: local.defaultEntrypoint || '',
       defaultCertResolver: local.defaultCertResolver || '',
+      defaultMiddleware: local.defaultMiddleware || '',
       overrides,
       sourceFile: local.sourceFile || '',
     }
@@ -425,4 +548,86 @@ onMounted(() => { if (props.hostId) load() })
 
 <style scoped>
 .muted { color: var(--n-text-color-3, #999); }
+
+.addon-section {
+  display: block;
+}
+
+.addon-section--meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.addon-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 10px 0;
+  color: var(--n-text-color-2, #555);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.addon-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.addon-section-header .addon-section-title {
+  margin-bottom: 0;
+}
+
+.addon-section-hint {
+  font-size: 12px;
+}
+
+.addon-alert {
+  font-size: 12px;
+}
+
+.addon-detection {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.addon-detection__name {
+  font-weight: 500;
+}
+
+.addon-detection__meta,
+.addon-detection__upload {
+  color: var(--n-text-color-3, #999);
+}
+
+.addon-upload-meta {
+  font-size: 12px;
+}
+
+.addon-divider {
+  margin: 18px 0 !important;
+}
+
+.addon-overrides-table {
+  margin-bottom: 8px;
+}
+
+.addon-overrides-empty {
+  text-align: center;
+  padding: 8px;
+}
+
+.addon-overrides-footer {
+  margin-top: 8px;
+}
+
+.addon-actions {
+  padding-top: 4px;
+}
 </style>
