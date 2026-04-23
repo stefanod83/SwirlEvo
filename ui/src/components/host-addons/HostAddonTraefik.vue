@@ -119,7 +119,7 @@
 
         <!-- (b) Pointer ============================================ -->
         <section class="addon-section">
-          <h4 class="addon-section-title">{{ t('host_addon_traefik.section_pointer') || t('host_addon_traefik.ref_stack') }}</h4>
+          <h4 class="addon-section-title">{{ t('host_addon_generic.pointer') }}</h4>
           <n-grid cols="2" x-gap="16" y-gap="12">
             <n-form-item-gi :label="t('host_addon_traefik.ref_stack')">
               <n-select
@@ -142,53 +142,82 @@
         <n-divider class="addon-divider" />
 
         <!--
-          (c) Defaults ===========================================
-          Stacked vertically (not a responsive grid) so every field
-          is always visible regardless of container width. Previous
-          2-col grid hid the fourth item on narrow containers via
-          naive-ui's responsive="self" collapse behavior.
+          (c) Defaults ============================================
+          Uses n-grid with cols=1 so every <n-form-item-gi> renders
+          its label consistently with the other sections. A plain
+          <n-form-item> outside a grid was dropping the label in
+          some naive-ui releases; the -gi variant inside a grid is
+          the canonical pattern here.
+        -->
+        <!--
+          (c) Defaults ============================================
+          Plain <label> + widget pairs in a CSS grid. Dropped the
+          n-form / n-form-item dependency here — it was silently
+          hiding labels when the field was a plain n-form-item
+          outside a grid. Labels are now explicit HTML so there is
+          nothing to go wrong theme-side.
+
+          Default middleware is a multi-select with tag support:
+          picks from the Traefik inventory (docker + host-extract
+          lists) OR accepts custom entries typed by the operator.
+          Value is serialised as a comma-separated string in
+          local.defaultMiddleware so the backend keeps the existing
+          shape (it's a single `traefik.http.routers.<r>.middlewares`
+          label at save time).
         -->
         <section class="addon-section">
-          <h4 class="addon-section-title">{{ t('host_addon_traefik.section_defaults') || t('host_addon_traefik.default_domain') }}</h4>
-          <n-form-item :label="t('host_addon_traefik.default_domain')">
-            <n-input
-              v-model:value="local.defaultDomain"
-              placeholder="apps.example.com"
-            />
-          </n-form-item>
-          <n-form-item :label="t('host_addon_traefik.default_entrypoint')">
-            <n-select
-              v-model:value="local.defaultEntrypoint"
-              :options="entrypointOptions"
-              filterable
-              tag
-              clearable
-              :placeholder="t('host_addon_traefik.default_entrypoint_placeholder')"
-            />
-          </n-form-item>
-          <n-form-item :label="t('host_addon_traefik.default_certresolver')">
-            <n-select
-              v-model:value="local.defaultCertResolver"
-              :options="certResolverOptions"
-              filterable
-              tag
-              clearable
-              :placeholder="t('host_addon_traefik.default_certresolver_placeholder')"
-            />
-          </n-form-item>
-          <n-form-item :label="t('host_addon_traefik.default_middleware')">
-            <n-input
-              v-model:value="local.defaultMiddleware"
-              :placeholder="t('host_addon_traefik.default_middleware_placeholder')"
-            />
-          </n-form-item>
+          <h4 class="addon-section-title">{{ t('host_addon_generic.defaults') }}</h4>
+          <div class="defaults-grid">
+            <div class="field">
+              <label class="field-label">{{ t('host_addon_traefik.default_domain') }}</label>
+              <n-input
+                v-model:value="local.defaultDomain"
+                placeholder="apps.example.com"
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">{{ t('host_addon_traefik.default_entrypoint') }}</label>
+              <n-select
+                v-model:value="local.defaultEntrypoint"
+                :options="entrypointOptions"
+                filterable
+                tag
+                clearable
+                :placeholder="t('host_addon_traefik.default_entrypoint_placeholder')"
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">{{ t('host_addon_traefik.default_certresolver') }}</label>
+              <n-select
+                v-model:value="local.defaultCertResolver"
+                :options="certResolverOptions"
+                filterable
+                tag
+                clearable
+                :placeholder="t('host_addon_traefik.default_certresolver_placeholder')"
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">{{ t('host_addon_traefik.default_middleware') }}</label>
+              <n-select
+                :value="splitCsv(local.defaultMiddleware)"
+                :options="middlewareOptions"
+                multiple
+                filterable
+                tag
+                clearable
+                :placeholder="t('host_addon_traefik.default_middleware_placeholder')"
+                @update:value="(v: string[]) => (local.defaultMiddleware = joinCsv(v))"
+              />
+            </div>
+          </div>
         </section>
 
         <n-divider class="addon-divider" />
 
         <!-- (d) Inventory ========================================== -->
         <section class="addon-section">
-          <h4 class="addon-section-title">{{ t('host_addon_traefik.section_inventory') || t('host_addon_traefik.entrypoints') }}</h4>
+          <h4 class="addon-section-title">{{ t('host_addon_generic.inventory') }}</h4>
           <n-grid cols="2" x-gap="16" y-gap="12">
             <n-form-item-gi :label="t('host_addon_traefik.entrypoints')">
               <n-dynamic-tags v-model:value="entryPointsList" />
@@ -414,6 +443,26 @@ const entrypointOptions = computed(() => discoveryOpts(
 const certResolverOptions = computed(() => discoveryOpts(
   discovery.value?.certResolvers, certResolversList.value,
 ))
+// Middleware options: same "docker · <name>" / "<name>" badging as the
+// stack-editor Traefik tab. Operator can tag a custom middleware
+// (provider-qualified too, e.g. auth@file) that isn't in the
+// discovery/inventory lists — the tag prop on n-select accepts it.
+const middlewareOptions = computed(() => discoveryOpts(
+  discovery.value?.middlewares, middlewaresList.value,
+))
+
+// splitCsv / joinCsv bridge between the comma-separated string stored
+// in local.defaultMiddleware (backend contract — it becomes the value
+// of `traefik.http.routers.<r>.middlewares` on save) and the array
+// model n-select multiple expects.
+function splitCsv(v: string | undefined): string[] {
+  if (!v) return []
+  return v.split(',').map((s) => s.trim()).filter(Boolean)
+}
+function joinCsv(arr: unknown): string {
+  if (!Array.isArray(arr)) return ''
+  return (arr as string[]).filter(Boolean).join(',')
+}
 
 function discoveryOpts(det: DiscoveryValue[] | undefined, list: string[]): { label: string; value: string }[] {
   const out: { label: string; value: string }[] = []
@@ -629,5 +678,25 @@ onMounted(() => { if (props.hostId) load() })
 
 .addon-actions {
   padding-top: 4px;
+}
+
+/* Defaults section — 2-column grid on wide screens, 1-column on
+   narrow. Plain <label> renders above each widget for maximum
+   predictability (no n-form-item label placement surprises). */
+.defaults-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  column-gap: 16px;
+  row-gap: 12px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.field-label {
+  font-size: 13px;
+  color: var(--n-text-color-2, #555);
 }
 </style>

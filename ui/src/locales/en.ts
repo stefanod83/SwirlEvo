@@ -954,6 +954,7 @@ export default {
     "host_addon_generic": {
         "pointer": "Reference",
         "defaults": "Defaults",
+        "inventory": "Inventory",
         "defaults_desc": "Pre-fill values the stack-editor tab seeds new rows with on first enable (e.g. default schedule, session duration, scope).",
         "empty": "No entries.",
         "add_default": "Add default",

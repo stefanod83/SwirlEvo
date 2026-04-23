@@ -954,6 +954,7 @@ export default {
     "host_addon_generic": {
         "pointer": "Riferimento",
         "defaults": "Default",
+        "inventory": "Inventario",
         "defaults_desc": "Valori che il tab dell'editor stack pre-popola nelle righe al primo abilitamento (es. schedule di default, session duration, scope).",
         "empty": "Nessuna voce.",
         "add_default": "Aggiungi default",

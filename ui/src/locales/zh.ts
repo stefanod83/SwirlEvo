@@ -948,6 +948,7 @@ export default {
     "host_addon_generic": {
         "pointer": "引用",
         "defaults": "默认值",
+        "inventory": "清单",
         "defaults_desc": "首次启用时，栈编辑器标签页会使用这些默认值预填新行（例如默认计划、会话时长、scope）。",
         "empty": "无条目。",
         "add_default": "添加默认值",
