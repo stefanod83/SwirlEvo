@@ -775,6 +775,15 @@
           class="sd-log"
           style="max-height: 260px; overflow: auto; font-size: 12px; margin: 0"
         >{{ progressLogTail.join('\n') }}</pre>
+        <!-- Manual "Reload now" escape hatch shown when the new primary
+             is up (phase=success) but the SPA bundle still isn't being
+             served within the grace window. Operator decides whether
+             to reload on a possibly-half-ready server. -->
+        <n-space v-if="readyStuck" justify="end">
+          <n-button type="primary" size="small" @click="reloadNow">
+            {{ t('self_deploy.progress.reload_now') }}
+          </n-button>
+        </n-space>
       </n-space>
     </n-modal>
 
@@ -1663,7 +1672,9 @@ const {
   progressError,
   progressLogTail,
   currentJobId,
+  readyStuck,
   resumeFromSession,
+  reloadNow,
 } = useAutoDeployProgress()
 
 const logTailText = computed(() => {

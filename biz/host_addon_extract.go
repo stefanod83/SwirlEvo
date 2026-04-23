@@ -88,6 +88,12 @@ type TraefikExtract struct {
 	DefaultDomain       string `json:"defaultDomain,omitempty"`
 	DefaultEntrypoint   string `json:"defaultEntrypoint,omitempty"`
 	DefaultCertResolver string `json:"defaultCertResolver,omitempty"`
+	// DefaultMiddleware is prepended to any router middleware chain the
+	// wizard builds for a service on this host (e.g. an auth middleware
+	// that every exposed app must go through). Free-form text so
+	// operators can stack multiple `@provider` qualified names joined
+	// by commas.
+	DefaultMiddleware string `json:"defaultMiddleware,omitempty"`
 
 	// Overrides — free-form key/value pairs the operator can set when
 	// a field of interest isn't captured by the structured fields above.

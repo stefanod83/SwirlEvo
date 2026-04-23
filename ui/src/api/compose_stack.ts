@@ -146,20 +146,11 @@ export interface HostAddons {
 // state", so the backend leaves those services untouched.
 export interface TraefikServiceCfg {
     enabled: boolean;
-    router?: string;
-    ruleType?: 'Host' | 'PathPrefix' | 'Host+PathPrefix' | '';
-    domain?: string;
-    path?: string;
-    entrypoint?: string;
-    port?: number;
-    tls?: boolean;
-    certResolver?: string;
-    middlewares?: string[];
-    // extraLabels is the passthrough set for every traefik.* label the
-    // wizard doesn't model natively (extra routers, tls.options,
-    // middlewares with provider qualifiers, plugins, ...). Populated by
-    // the backend reverse parser and re-emitted verbatim on save.
-    extraLabels?: Record<string, string>;
+    // labels is the full traefik.* label set for the service. The
+    // backend owns the whole namespace: on save it purges every
+    // existing traefik.* label from the service and rewrites them
+    // from this map (plus traefik.enable=true when `enabled` is on).
+    labels?: Record<string, string>;
 }
 
 export interface ResourcesServiceCfg {

@@ -137,7 +137,19 @@ func (b *addonDiscoveryBiz) Discover(ctx context.Context, hostID string) (*HostA
 		img := normalizeImage(c.Image)
 		if out.Traefik == nil && isTraefikImage(img) {
 			if detail, _, iErr := cli.ContainerInspectWithRaw(ctx, c.ID, false); iErr == nil {
-				out.Traefik = parseTraefikAddon(detail.Config.Image, detail.Name, detail.Config.Cmd, detail.Args, detail.Config.Env)
+				// The container name: prefer inspect.Name (canonical,
+				// starts with "/"), fall back to the list summary's
+				// Names slice, last-resort to the short container ID
+				// so the UI never shows a bare "—" when a Traefik-ish
+				// container is actually running.
+				name := detail.Name
+				if name == "" && len(c.Names) > 0 {
+					name = c.Names[0]
+				}
+				if name == "" {
+					name = c.ID[:12]
+				}
+				out.Traefik = parseTraefikAddon(detail.Config.Image, name, detail.Config.Cmd, detail.Args, detail.Config.Env)
 			}
 		}
 	}

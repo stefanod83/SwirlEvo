@@ -421,20 +421,61 @@ func (e *StandaloneEngine) waitForDependency(ctx context.Context, project string
 // collectIgnoredFieldWarnings scans the parsed compose config for fields
 // the standalone engine is known to drop and emits one warning per
 // service. Pure function, no Docker calls — safe to unit test.
+//
+// `deploy.resources.*` is NOT flagged: the standalone engine now maps
+// those onto container.HostConfig.Resources (see createAndStart) so
+// they're honoured end-to-end. Only the genuinely swarm-only
+// sub-blocks (mode/replicas/update_config/placement/etc.) emit a
+// warning, and the message lists which sub-fields so the operator
+// knows what was actually ignored instead of a generic "deploy
+// block ignored".
 func collectIgnoredFieldWarnings(cfg *composetypes.Config) []string {
 	if cfg == nil {
 		return nil
 	}
 	var warnings []string
 	for _, svc := range cfg.Services {
-		// `deploy:` — Swarm-only scheduling/replication block. The
-		// compose spec explicitly says it's ignored by non-Swarm
-		// engines; we echo that to the operator.
-		if !isZeroDeployConfig(svc.Deploy) {
-			warnings = append(warnings, fmt.Sprintf("service %s: deploy: block ignored in standalone mode", svc.Name))
+		if ignored := ignoredDeploySubfields(svc.Deploy); len(ignored) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"service %s: deploy.%s ignored in standalone mode",
+				svc.Name, strings.Join(ignored, " / deploy."),
+			))
 		}
 	}
 	return warnings
+}
+
+// ignoredDeploySubfields returns the ordered list of deploy.* fields
+// that are SET on the service but NOT honoured by the standalone
+// engine. An empty slice means every populated deploy.* field has a
+// standalone equivalent (in practice: only `resources`).
+func ignoredDeploySubfields(d composetypes.DeployConfig) []string {
+	var out []string
+	if d.Mode != "" {
+		out = append(out, "mode")
+	}
+	if d.Replicas != nil {
+		out = append(out, "replicas")
+	}
+	if len(d.Labels) > 0 {
+		out = append(out, "labels")
+	}
+	if d.UpdateConfig != nil {
+		out = append(out, "update_config")
+	}
+	if d.RollbackConfig != nil {
+		out = append(out, "rollback_config")
+	}
+	if d.RestartPolicy != nil {
+		out = append(out, "restart_policy")
+	}
+	if !isZeroPlacement(d.Placement) {
+		out = append(out, "placement")
+	}
+	if d.EndpointMode != "" {
+		out = append(out, "endpoint_mode")
+	}
+	return out
 }
 
 // isZeroDeployConfig reports whether the compose-level DeployConfig is

@@ -42,30 +42,42 @@
                daemon enforces on this container. Populated only when
                the compose stack or docker-run sets
                HostConfig.Resources; absent for unlimited containers.
-               Byte values are humanised via formatBytes. -->
+               Byte values are humanised via formatBytes.
+               Using naive-ui n-descriptions directly (instead of
+               XDescription) because long labels like "Memory
+               reservation" wrap mid-word inside the custom grid
+               layout — n-descriptions gives us a proper bordered
+               key/value table that scales to narrow screens. -->
           <x-panel :title="t('container.resources_title')" v-if="model.resources">
-            <x-description label-placement="left" label-align="right">
-              <x-description-item v-if="model.resources.cpus" :label="t('container.cpu_limit')">
+            <n-descriptions
+              :column="2"
+              size="small"
+              label-placement="left"
+              bordered
+            >
+              <n-descriptions-item v-if="model.resources.cpus" :label="t('container.cpu_limit')">
                 {{ model.resources.cpus }} CPU
-              </x-description-item>
-              <x-description-item v-if="model.resources.cpuShares" :label="t('container.cpu_shares')">
-                {{ model.resources.cpuShares }}
-                <span style="margin-left: 6px; font-size: 12px; opacity: 0.7">{{ t('container.cpu_shares_hint') }}</span>
-              </x-description-item>
-              <x-description-item v-if="model.resources.memory" :label="t('container.memory_limit')">
+              </n-descriptions-item>
+              <n-descriptions-item v-if="model.resources.cpuShares" :label="t('container.cpu_shares')">
+                <n-space :size="6" align="center" :wrap="false" style="flex-wrap: wrap">
+                  <code>{{ model.resources.cpuShares }}</code>
+                  <span style="font-size: 12px; opacity: 0.7">{{ t('container.cpu_shares_hint') }}</span>
+                </n-space>
+              </n-descriptions-item>
+              <n-descriptions-item v-if="model.resources.memory" :label="t('container.memory_limit')">
                 {{ formatBytes(model.resources.memory) }}
-              </x-description-item>
-              <x-description-item v-if="model.resources.memoryReservation" :label="t('container.memory_reservation')">
+              </n-descriptions-item>
+              <n-descriptions-item v-if="model.resources.memoryReservation" :label="t('container.memory_reservation')">
                 {{ formatBytes(model.resources.memoryReservation) }}
-              </x-description-item>
-              <x-description-item v-if="model.resources.memorySwap" :label="t('container.memory_swap')">
+              </n-descriptions-item>
+              <n-descriptions-item v-if="model.resources.memorySwap" :label="t('container.memory_swap')">
                 <span v-if="model.resources.memorySwap === -1">{{ t('container.swap_unlimited') }}</span>
                 <span v-else>{{ formatBytes(model.resources.memorySwap) }}</span>
-              </x-description-item>
-              <x-description-item v-if="model.resources.pidsLimit" :label="t('container.pids_limit')">
+              </n-descriptions-item>
+              <n-descriptions-item v-if="model.resources.pidsLimit" :label="t('container.pids_limit')">
                 {{ model.resources.pidsLimit }}
-              </x-description-item>
-            </x-description>
+              </n-descriptions-item>
+            </n-descriptions>
           </x-panel>
           <x-panel :title="t('fields.labels')" v-if="model.labels && model.labels.length">
             <n-table size="small" :bordered="true" :single-line="false">
@@ -116,6 +128,8 @@ import {
   NTabs,
   NTabPane,
   NAlert,
+  NDescriptions,
+  NDescriptionsItem,
 } from "naive-ui";
 import { ArrowBackCircleOutline as BackIcon, RefreshOutline } from "@vicons/ionicons5";
 import { useStore } from "vuex";

@@ -74,6 +74,7 @@ export interface TraefikExtract {
   defaultDomain?: string
   defaultEntrypoint?: string
   defaultCertResolver?: string
+  defaultMiddleware?: string
   overrides?: Record<string, string>
   sourceFile?: string
   uploadedAt?: string
