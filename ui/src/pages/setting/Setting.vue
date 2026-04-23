@@ -806,7 +806,16 @@
       <n-alert type="info" style="margin: 4px 0 12px 0">
         {{ t('registry_cache.tip') }}
       </n-alert>
+      <!-- Render guard: the reactive state defines registry_cache in
+           the initial ref + fetchData hydrates it with defensive
+           defaults, so this branch should never show. It exists as a
+           last-resort diagnostic if a future refactor accidentally
+           breaks the reactive chain. -->
+      <n-alert v-if="!setting.registry_cache" type="error" style="margin-bottom: 12px">
+        Internal error: registry_cache state is missing. Check the browser console.
+      </n-alert>
       <n-form
+        v-if="setting.registry_cache"
         :model="setting"
         ref="formRegistryCache"
         label-placement="left"
@@ -876,7 +885,7 @@
 
         <n-form-item :label="t('registry_cache.upstreams')" label-align="right" :show-feedback="false">
           <n-dynamic-input
-            v-model:value="setting.registry_cache.upstreams"
+            v-model:value="rcUpstreamPairs"
             :on-create="() => ({ upstream: '', prefix: '' })"
             #="{ value }"
           >
@@ -898,7 +907,7 @@
           <n-button
             v-if="canEditRegistryCache"
             type="primary"
-            @click="() => save('registry_cache', setting.registry_cache)"
+            @click="saveRegistryCache"
           >{{ t('buttons.save') }}</n-button>
           <n-button
             v-if="canEditRegistryCache"
@@ -1131,6 +1140,14 @@ const rcGenOpen = ref(false)
 const rcGenerating = ref(false)
 const rcGenResult = ref<GenCAResult | null>(null)
 
+// Upstream mappings bound to n-dynamic-input via a separate top-level
+// ref. Mirrors the Keycloak groupRolePairs pattern — avoids the
+// reactivity edge cases that n-dynamic-input hits when v-model:value
+// targets a nested path inside a ref-wrapped object.
+// Hydrated from setting.registry_cache.upstreams in fetchData; copied
+// back to it in the registry_cache save handler.
+const rcUpstreamPairs = ref<{ upstream: string; prefix: string }[]>([])
+
 async function openGenCA() {
   rcGenerating.value = true
   try {
@@ -1142,6 +1159,17 @@ async function openGenCA() {
   } finally {
     rcGenerating.value = false
   }
+}
+
+async function saveRegistryCache() {
+  // Sync the separate n-dynamic-input ref back into the nested
+  // setting.registry_cache.upstreams just before sending to the
+  // backend. Filter out empty rows so the backend never sees empty
+  // upstream/prefix pairs.
+  setting.value.registry_cache.upstreams = rcUpstreamPairs.value
+    .map(p => ({ upstream: (p.upstream || '').trim(), prefix: (p.prefix || '').trim() }))
+    .filter(p => p.upstream && p.prefix)
+  await save('registry_cache', setting.value.registry_cache)
 }
 
 function applyGeneratedCert() {
@@ -1532,6 +1560,11 @@ async function fetchData() {
   if (typeof setting.value.registry_cache.port !== 'number' || setting.value.registry_cache.port === 0) {
     setting.value.registry_cache.port = 5000
   }
+  // Mirror upstreams into the dedicated ref consumed by n-dynamic-input.
+  rcUpstreamPairs.value = (setting.value.registry_cache.upstreams || []).map(p => ({
+    upstream: p.upstream || '',
+    prefix: p.prefix || '',
+  }))
 
   // load roles for the dropdown
   try {

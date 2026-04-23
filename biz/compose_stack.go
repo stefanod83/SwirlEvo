@@ -421,10 +421,28 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 		return id, fmt.Errorf("%s", errMsg)
 	}
 
-	// 5. Fire the actual deploy on a detached context. The goroutine
+	// 5. Registry Cache rewrite (Phase 3). Runs on the authored YAML,
+	//    produces the EFFECTIVE content that the engine actually
+	//    deploys. The persisted stack.Content stays untouched — the
+	//    rewriter is a transport-layer concern, not an authoring one.
+	//    Scope resolution (per-stack opt-out, per-host opt-in, global
+	//    mode) lives in RewriteImages itself; here we just gather
+	//    inputs. Errors in the rewriter fall back to the original
+	//    content so a malformed YAML is still reported by the engine.
+	stackContent := stack.Content
+	if hostExtract, rcErr := b.hb.GetAddonConfigExtract(ctx, stack.HostID); rcErr == nil {
+		liveSettingsMu.RLock()
+		ls := liveSettings
+		liveSettingsMu.RUnlock()
+		rcIn := BuildRewriteInput(stack, hostExtract, ls)
+		if rewritten, _, rwErr := RewriteImages(stackContent, rcIn); rwErr == nil {
+			stackContent = rewritten
+		}
+	}
+
+	// 6. Fire the actual deploy on a detached context. The goroutine
 	//    closes over local values only; no shared mutable state.
 	stackName := stack.Name
-	stackContent := stack.Content
 	envFile := stack.EnvFile
 	hostID := stack.HostID
 	go b.runDeploy(cli, id, hostID, stackName, stackContent, envFile, pullImages, hook, user)

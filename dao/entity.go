@@ -352,6 +352,12 @@ type ComposeStack struct {
 	// because they only make sense in Swarm mode). Cleared on a clean
 	// deploy, overwritten on every redeploy. Never surfaces as an error.
 	LastWarnings []string `json:"lastWarnings,omitempty" bson:"last_warnings,omitempty"`
+	// DisableRegistryCache opts this stack OUT of deploy-time image
+	// rewriting when the global Registry Cache mirror is enabled. Set
+	// for stacks that must talk directly to an upstream (e.g. the
+	// registry:2 cache itself, CI runners). Default false = follow the
+	// global RewriteMode policy.
+	DisableRegistryCache bool `json:"disableRegistryCache,omitempty" bson:"disable_registry_cache,omitempty"`
 	CreatedAt    Time     `json:"createdAt" bson:"created_at"`
 	UpdatedAt    Time     `json:"updatedAt" bson:"updated_at"`
 	CreatedBy    Operator `json:"createdBy" bson:"created_by"`

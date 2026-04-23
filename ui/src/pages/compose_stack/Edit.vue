@@ -115,6 +115,20 @@
             v-model="resourcesCfgModel"
           />
         </n-tab-pane>
+
+        <!-- Registry Cache preview: always visible (no host gate) so
+             operators can see what a deploy would do even before any
+             per-host bootstrap is applied. The tab itself explains
+             why no rewrite is happening when the mirror is off / the
+             host is not opted in. -->
+        <n-tab-pane name="registry_cache" :tab="t('stack_addon_registry_cache.title')">
+          <AddonTabRegistryCache
+            :host-id="model.hostId"
+            :content="model.content"
+            :disabled="!!model.disableRegistryCache"
+            @update:disabled="(v: boolean) => model.disableRegistryCache = v"
+          />
+        </n-tab-pane>
       </n-tabs>
 
       <n-space>
@@ -228,6 +242,7 @@ import XCodeMirror from "@/components/CodeMirror.vue";
 import StackVersionHistory from "@/components/stack-version/StackVersionHistory.vue";
 import AddonTabTraefik from "@/components/stack-addons/AddonTabTraefik.vue";
 import AddonTabResources from "@/components/stack-addons/AddonTabResources.vue";
+import AddonTabRegistryCache from "@/components/stack-addons/AddonTabRegistryCache.vue";
 import composeStackApi from "@/api/compose_stack";
 import type {
   ComposeStack, HostAddons, AddonsConfig,
@@ -271,6 +286,7 @@ const model = reactive({
   content: '',
   envFile: '',
   errorMessage: '',
+  disableRegistryCache: false,
 } as ComposeStack)
 
 const hosts: any = ref([])
@@ -282,7 +298,7 @@ const rules = {
 
 // activeTab drives the addon wizard tab layout. Preserved across tab switches
 // via display-directive="show" so editor state is never remounted.
-const activeTab = ref<'compose' | 'traefik' | 'sablier' | 'watchtower' | 'backup' | 'resources'>('compose')
+const activeTab = ref<'compose' | 'traefik' | 'sablier' | 'watchtower' | 'backup' | 'resources' | 'registry_cache'>('compose')
 
 // hostAddons caches the /compose-stack/host-addons response for the currently
 // selected host. Re-fetched on hostId change. Null while loading or when the

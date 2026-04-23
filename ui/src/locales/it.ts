@@ -860,6 +860,21 @@ export default {
         "swarm_only": "Solo Swarm",
         "memory_hint": "I valori di memoria devono rispettare \\d+[kKmMgG]?[bB]? (es. 256M, 2G, 512000000)."
     },
+    "stack_addon_registry_cache": {
+        "title": "Registry Cache",
+        "mirror_disabled": "Registry Cache non è configurato globalmente. Apri Impostazioni → Registry Cache per registrare il tuo mirror.",
+        "effectively_disabled": "Il mirror è configurato, ma questo stack NON verrà riscritto (modalità globale off, host senza opt-in, o opt-out di stack attivo).",
+        "disable_for_stack": "Disabilita il rewriting Registry Cache per questo stack",
+        "disable_hint": "Utile per stack che devono parlare direttamente con l'upstream (es. il registry:2 stesso, runner CI).",
+        "empty_hint": "Nessun riferimento di immagine trovato nel compose YAML.",
+        "col_service": "Servizio",
+        "col_original": "Immagine originale",
+        "col_rewritten": "Immagine riscritta",
+        "col_upstream": "Upstream → prefix",
+        "reason_no_match": "Nessun match — upstream non mappato",
+        "reason_digest_preserved": "Pin a digest — preservato",
+        "reason_invalid_ref": "Riferimento immagine non valido"
+    },
     "stack_addon_traefik": {
         "detected": "Traefik",
         "not_detected_hint": "Nessun riferimento Traefik configurato per questo host. Impostalo dalla pagina di modifica dell'host (Integrazioni addon).",

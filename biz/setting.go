@@ -66,6 +66,17 @@ func SetLiveSettings(s *misc.Setting) {
 	liveSettingsMu.Unlock()
 }
 
+// LiveSettingsSnapshot returns the live settings pointer for read-only
+// consumers outside biz (api handlers). Returns nil when no live
+// settings have been installed (tests / pre-bootstrap). Callers must
+// treat the result as read-only; mutating it bypasses the Save +
+// refreshInMemory contract.
+func LiveSettingsSnapshot() *misc.Setting {
+	liveSettingsMu.RLock()
+	defer liveSettingsMu.RUnlock()
+	return liveSettings
+}
+
 func (b *settingBiz) Find(ctx context.Context, id string) (options interface{}, err error) {
 	options, err = b.findRaw(ctx, id)
 	if err == nil && options != nil {

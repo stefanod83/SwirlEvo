@@ -860,6 +860,21 @@ export default {
         "swarm_only": "Swarm only",
         "memory_hint": "Memory values should match \\d+[kKmMgG]?[bB]? (e.g. 256M, 2G, 512000000)."
     },
+    "stack_addon_registry_cache": {
+        "title": "Registry Cache",
+        "mirror_disabled": "Registry Cache is not configured globally. Open Settings → Registry Cache to register your mirror.",
+        "effectively_disabled": "The mirror is configured, but this stack will NOT be rewritten (global mode is off, host is not opted in, or the per-stack opt-out below is set).",
+        "disable_for_stack": "Disable Registry Cache rewriting for this stack",
+        "disable_hint": "Use for stacks that must reach the authored upstream directly (e.g. the registry:2 itself, CI runners).",
+        "empty_hint": "No image references found in the compose YAML yet.",
+        "col_service": "Service",
+        "col_original": "Original image",
+        "col_rewritten": "Rewritten image",
+        "col_upstream": "Upstream → prefix",
+        "reason_no_match": "No match — upstream not mapped",
+        "reason_digest_preserved": "Digest-pinned — preserved",
+        "reason_invalid_ref": "Invalid image reference"
+    },
     "stack_addon_traefik": {
         "detected": "Traefik",
         "not_detected_hint": "No Traefik reference configured for this host. Set one in the Host edit page (Addon integrations).",

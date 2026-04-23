@@ -46,10 +46,19 @@ type ComposeStackHandler struct {
 	// load time + after a version restore so the tabs start in sync
 	// with the persisted content. POST to keep the body out of the URL.
 	ParseAddons web.HandlerFunc `path:"/parse-addons" method:"post" auth:"stack.view" desc:"reverse-parse addon wizard state from compose YAML"`
+	// RegistryCachePreview runs the deploy-time image rewriter in
+	// report-only mode. Given an authored compose YAML + target host,
+	// returns the list of RewriteAction the deployment would emit
+	// without touching any state. Used by the Stack editor to show
+	// the Registry Cache preview table. Auth: stack.view — the only
+	// information leaked is the UpstreamMappings table which is
+	// already visible on the Settings page to anyone who can reach
+	// this editor.
+	RegistryCachePreview web.HandlerFunc `path:"/registry-cache-preview" method:"post" auth:"stack.view" desc:"preview deploy-time image rewrites for a compose stack"`
 }
 
 // NewComposeStack is registered in api.init.
-func NewComposeStack(b biz.ComposeStackBiz, ad biz.AddonDiscoveryBiz) *ComposeStackHandler {
+func NewComposeStack(b biz.ComposeStackBiz, hb biz.HostBiz, ad biz.AddonDiscoveryBiz) *ComposeStackHandler {
 	return &ComposeStackHandler{
 		Search:     composeStackSearch(b),
 		Find:       composeStackFind(b),
@@ -60,13 +69,14 @@ func NewComposeStack(b biz.ComposeStackBiz, ad biz.AddonDiscoveryBiz) *ComposeSt
 		Import:     composeStackImport(b),
 		Start:      composeStackStart(b),
 		Stop:       composeStackStop(b),
-		Remove:     composeStackRemove(b),
+		Remove:         composeStackRemove(b),
 		Migrate:        composeStackMigrate(b),
 		HostAddons:     composeStackHostAddons(ad),
 		Versions:       composeStackVersions(b),
 		VersionGet:     composeStackVersionGet(b),
 		VersionRestore: composeStackVersionRestore(b),
 		ParseAddons:    composeStackParseAddons(b),
+		RegistryCachePreview: composeStackRegistryCachePreview(hb),
 	}
 }
 
@@ -335,6 +345,59 @@ func composeStackParseAddons(b biz.ComposeStackBiz) web.HandlerFunc {
 			return err
 		}
 		return success(c, cfg)
+	}
+}
+
+// composeStackRegistryCachePreview runs the deploy-time image rewriter
+// in report-only mode against an authored compose YAML + target host,
+// returning the RewriteAction list without mutating anything. The UI
+// calls this whenever the operator flips into the Registry Cache tab
+// of the Stack editor, and again after YAML edits.
+//
+// Response shape:
+//
+//	{
+//	  "mirrorEnabled": bool,
+//	  "effectivelyDisabled": bool,   // true when the global + per-host
+//	                                 // decision results in a no-op
+//	  "actions": [RewriteAction]
+//	}
+func composeStackRegistryCachePreview(hb biz.HostBiz) web.HandlerFunc {
+	type Args struct {
+		HostID               string `json:"hostId"`
+		Content              string `json:"content"`
+		DisableRegistryCache bool   `json:"disableRegistryCache"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+
+		var hostExtract *biz.AddonConfigExtract
+		if args.HostID != "" {
+			if ext, err := hb.GetAddonConfigExtract(ctx, args.HostID); err == nil {
+				hostExtract = ext
+			}
+		}
+
+		// Build a throw-away stack carrying the per-request opt-out so
+		// BuildRewriteInput resolves the same scope the Deploy path
+		// would. We do NOT round-trip through the DB here.
+		stack := &dao.ComposeStack{
+			HostID:               args.HostID,
+			DisableRegistryCache: args.DisableRegistryCache,
+		}
+		in := biz.BuildRewriteInput(stack, hostExtract, biz.LiveSettingsSnapshot())
+		_, actions, _ := biz.RewriteImages(args.Content, in)
+
+		return success(c, data.Map{
+			"mirrorEnabled":       biz.LiveRegistryCacheParams() != nil,
+			"effectivelyDisabled": !biz.WillRewrite(in),
+			"actions":             actions,
+		})
 	}
 }
 

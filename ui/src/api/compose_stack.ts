@@ -12,6 +12,9 @@ export interface ComposeStack {
     // lastWarnings carries non-fatal observations from the most recent
     // deploy (e.g. compose fields silently ignored in standalone mode).
     lastWarnings?: string[];
+    // disableRegistryCache opts this stack OUT of deploy-time image
+    // rewriting when the global Registry Cache mirror is enabled.
+    disableRegistryCache?: boolean;
     containers?: number;
     running?: number;
     services?: number;
@@ -254,6 +257,37 @@ export class ComposeStackApi {
     parseAddons(content: string) {
         return ajax.post<AddonsConfig>('/compose-stack/parse-addons', { content })
     }
+
+    registryCachePreview(payload: {
+        hostId: string
+        content: string
+        disableRegistryCache: boolean
+    }) {
+        return ajax.post<RegistryCachePreviewResponse>('/compose-stack/registry-cache-preview', payload)
+    }
+}
+
+export interface RegistryCacheRewriteAction {
+    service: string
+    original: string
+    rewritten?: string
+    upstream?: string
+    prefix?: string
+    // Populated when the service was evaluated but NOT rewritten:
+    // "no-match" (upstream not mapped), "digest-preserved" (image
+    // referenced by @sha256 with PreserveDigests=true),
+    // "invalid-ref" (could not parse reference).
+    reason?: string
+}
+
+export interface RegistryCachePreviewResponse {
+    mirrorEnabled: boolean
+    // True when the current configuration (global mode + per-host
+    // opt-in + per-stack opt-out) will result in no rewriting at all.
+    // Distinct from "no images matched" which shows up as actions
+    // with reason="no-match".
+    effectivelyDisabled: boolean
+    actions: RegistryCacheRewriteAction[]
 }
 
 export default new ComposeStackApi

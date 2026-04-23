@@ -854,6 +854,21 @@ export default {
         "swarm_only": "仅 Swarm",
         "memory_hint": "内存值需满足 \\d+[kKmMgG]?[bB]? 格式（例如 256M、2G、512000000）。"
     },
+    "stack_addon_registry_cache": {
+        "title": "Registry Cache",
+        "mirror_disabled": "Registry Cache 未在全局配置中启用。请在 设置 → Registry Cache 中注册你的镜像。",
+        "effectively_disabled": "镜像已配置，但本栈不会被重写（全局模式为关闭、主机未启用或本栈选择了退出）。",
+        "disable_for_stack": "为本栈禁用 Registry Cache 重写",
+        "disable_hint": "适用于必须直接访问上游的栈（例如 registry:2 本身、CI runner）。",
+        "empty_hint": "compose YAML 中尚未找到任何镜像引用。",
+        "col_service": "服务",
+        "col_original": "原始镜像",
+        "col_rewritten": "重写后镜像",
+        "col_upstream": "上游 → 前缀",
+        "reason_no_match": "未匹配 — 上游未映射",
+        "reason_digest_preserved": "Digest 固定 — 已保留",
+        "reason_invalid_ref": "镜像引用无效"
+    },
     "stack_addon_traefik": {
         "detected": "Traefik",
         "not_detected_hint": "此主机未配置 Traefik 引用。请在主机编辑页面（插件集成）中设置。",
