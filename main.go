@@ -48,7 +48,7 @@ func main() {
 	}
 
 	app.Name = "Swirl"
-	app.Version = "2.0.0rc1"
+	app.Version = "2.0.0rc2"
 	app.Desc = "A web management UI for Docker, focused on swarm cluster"
 	app.Action = func(ctx *app.Context) error {
 		return run.Pipeline(misc.LoadOptions, initSystem, initBackupKeyProvider, initLocalHost, startFederationRotator, scaler.Start, backup.Start, startServer)

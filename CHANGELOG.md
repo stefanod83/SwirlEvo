@@ -1,5 +1,365 @@
 # CHANGELOG
 
+## v2.0.0rc2 (2026-04) — SwirlEvo
+
+> Delta from **v2.0.0rc1**. Four big feature blocks — Stack Versioning,
+> Stack Addon wizard, Registry Cache (with federation delegation),
+> Clean-on-Stop semantics — plus a swarm of UX, error-wrapping and
+> validation fixes. No breaking changes at the DB schema level:
+> every new column/field is additive and absent entries decode fine
+> into the new struct layout.
+
+### Stack versioning + diff/restore
+
+* New entity `dao.ComposeStackVersion` (`id, stackId, revision,
+  content, envFile, reason, createdAt, createdBy`) — both BoltDB and
+  MongoDB backends. DAO interface `ComposeStackVersion{Create, List,
+  Get, Prune}`.
+* `biz/compose_stack_version.go`:
+  * `snapshotIfChanged` — called from Save **before** the mutating
+    update, records `prev` (not `next`) so the snapshot captures the
+    state the operator is about to lose. No-op on create, no-op on
+    unchanged Save (both `Content` and `EnvFile` must be identical).
+    Failures are best-effort — a snapshot loss never blocks the Save.
+  * `ListVersions` — strips `Content/EnvFile` from list responses to
+    keep the payload cheap; the diff modal fetches bodies via
+    `GetVersion`.
+  * `GetVersion` — single snapshot with body.
+  * `RestoreVersion` — writes only `Content + EnvFile` back, leaves
+    `Status / HostID / Name / deploy timestamps` untouched (a
+    restore never moves a stack). Takes a pre-restore snapshot with
+    `reason = "restore:rev<N>"` so the restore itself is reversible.
+* **Retention**: hardcoded `defaultStackVersionRetention = 20`.
+  Older revisions pruned best-effort after every snapshot.
+* **Reason taxonomy**: `save` (plain edit), `addon-inject` (wizard
+  mutation), `restore:rev<N>` (pre-restore snapshot).
+* API (`api/compose_stack.go`): `Versions` (`auth:stack.view`),
+  `VersionGet` (`auth:stack.view`), `VersionRestore`
+  (`auth:stack.edit`).
+* Frontend: `ui/src/components/stack-version/StackVersionHistory.vue`
+  — history dropdown + side-by-side CodeMirror diff modal with
+  compose/envFile switch + Restore action + copy-to-clipboard.
+* See [docs/stack-versioning.md](docs/stack-versioning.md).
+
+### Host-level addon configuration (AddonConfigExtract)
+
+* New column `Host.AddonConfigExtract` (JSON text) with sub-trees
+  `traefik`, `sablier`, `watchtower`, `backup`, `registryCache`.
+  Encoded in `biz/host_addon_extract.go`.
+* `TraefikExtract` — curated union of docker-inspect (args + env of
+  the running Traefik container) and the operator-uploaded
+  `traefik.yml` parsed server-side (**raw file never persisted**:
+  may carry ACME keys). Lists deduped. Per-entry **provenance**
+  (`docker` / `file` / `host`) surfaced in the UI.
+* `GenericAddonExtract` (Sablier / Watchtower / Backup) — smaller
+  shape: `enabled`, `stackId`, `containerName`, `defaults`,
+  `overrides`. Defaults pre-fill wizard rows; overrides are
+  free-form read-only annotations.
+* `RegistryCacheExtract` — per-host opt-in state for the pull-through
+  mirror (see below). Carries `enabled`, `insecureMode`, applied /
+  last-sync attestations + fingerprints.
+* API (`api/host.go`):
+  * `addon-extract-get` (auth `host.view`) — read.
+  * `addon-extract-save` (auth `host.edit`) — persist a sub-tree
+    (pass `null` to clear).
+  * `addon-extract-clear` (auth `host.edit`) — optionally scoped to
+    a single addon.
+* `biz/compose_stack_addons_discovery.go::AddonDiscoveryBiz.Discover(hostID)`
+  — merges docker-inspect + file extract on demand (called by the
+  stack editor to populate autocomplete lists).
+* Frontend: `ui/src/components/host-addons/HostAddonTraefik.vue`,
+  `HostAddonGeneric.vue` (Sablier / Watchtower / Backup),
+  `HostAddonRegistryCache.vue`. Wired into
+  `ui/src/pages/host/Edit.vue` as the **Addons** section.
+
+### Stack editor: addon wizard tabs
+
+* New biz surface `biz/compose_stack_addons_yaml.go`:
+  * `AddonsConfig` (top-level DTO): maps keyed by service name to
+    per-addon config structs.
+  * `TraefikServiceCfg{Enabled, Labels}`, `SablierServiceCfg`,
+    `WatchtowerServiceCfg`, `BackupServiceCfg` — same flat shape;
+    the wizard owns the namespace, not individual keys.
+  * `ResourcesServiceCfg{CPUsLimit, CPUsReservation, MemoryLimit,
+    MemoryReservation}` — scalar fields, not labels.
+  * `addonPrefixes` map: `traefik.`, `sablier.`,
+    `com.centurylinklabs.watchtower.`, `backup.`. Sablier keeps
+    only native labels under `sablier.*`; the Traefik plugin form
+    (`traefik.http.middlewares.<name>.plugin.sablier.*`) belongs to
+    the Traefik namespace on purpose — purging the middlewares
+    prefix would nuke every hand-written Traefik middleware.
+  * `injectAddonLabels(content, cfg, mode)` — for every service
+    listed in `cfg.<Addon>`: purge owned-prefix labels from **both**
+    `services.<svc>.labels` (standalone) and
+    `services.<svc>.deploy.labels` (swarm) — cross-location purge
+    prevents orphans when a stack migrates modes — then write the
+    new label set into the *mode-correct* target. Services not
+    listed in `cfg.<Addon>` are untouched.
+  * `extractAddonConfig(content)` — reverse parser. No marker
+    comment: any label with a recognised prefix is wizard-manageable.
+    Matches the save-time semantics.
+  * `applyResources` (+ `applyDeployResources`) — mode-aware scalar
+    mutation: standalone → `cpus` / `mem_limit` / `cpus_reservation` /
+    `mem_reservation`; swarm →
+    `deploy.resources.{limits,reservations}.{cpus,memory}`.
+  * `detectActiveAddons(*ComposeStack) []string` — ordered tags
+    (`traefik`, `sablier`, `watchtower`, `backup`, `resources`, and
+    `registry-cache` when the marker comment is present and the
+    stack is not opted out). Populates
+    `ComposeStackSummary.ActiveAddons` for the list chips.
+* `composeStackBiz.SaveWithAddons` — new path that runs
+  `snapshotIfChanged` (reason `addon-inject`) → `injectAddonLabels`
+  → persist → event.
+* API additions (`api/compose_stack.go`):
+  * `ParseAddons` (`path:/parse-addons`, `auth:stack.view`) —
+    reverse-parse YAML → `AddonsConfig` for editor bootstrap.
+  * `HostAddons` (`path:/host-addons`, `auth:stack.view`) — merged
+    discovery for the selected host.
+* Frontend:
+  * New tabs (gated by host extract):
+    `ui/src/components/stack-addons/AddonTabTraefik.vue`,
+    `AddonTabSablier.vue`, `AddonTabWatchtower.vue`,
+    `AddonTabBackup.vue`, `AddonTabResources.vue`,
+    `AddonTabRegistryCache.vue`.
+  * Shared components: `StructuredLabelsEditor.vue` (section · name
+    · key · value rows with schema autocomplete), `LabelPreview.vue`
+    (final emitted label map).
+  * Schema builder `ui/src/utils/stack-addon-schemas.ts` —
+    per-addon rows (Traefik: `routers`/`services`/`middlewares`/`tls`;
+    others: provider-specific preset rows).
+  * Stack list chip rendering (`ActiveAddons` field).
+* Entity: `ComposeStack.LastWarnings []string` — non-fatal
+  deploy observations (e.g. Swarm-only fields ignored by the
+  standalone engine). Shown as amber banner on Overview. Cleared
+  on next clean Deploy.
+* See [docs/stack-addons.md](docs/stack-addons.md).
+
+### Compose stack Stop = `docker compose down` (no `-v`)
+
+* `composeStackBiz.Stop` rewritten to call
+  `engine.Remove(..., removeVolumes=false, cleanupHook)` instead of
+  the previous per-container `docker stop`. Containers are **removed**;
+  named volumes **preserved**. The stack record stays `inactive`; the
+  next `Deploy` (or `Start`, which internally redeploys when no
+  containers remain) recreates from the same YAML.
+* Start path: when no containers remain post-Stop, `Start` routes
+  through Deploy so authored changes (network, labels, image updates)
+  take effect on restart instead of resurrecting stale containers.
+* Events: `stack.stop` on Stop (unchanged). `Start` may emit
+  `stack.deploy` when the redeploy branch fires.
+* README's "Compose lifecycle" section clarified.
+
+### Registry Cache (pull-through mirror)
+
+Fully new feature spanning Settings, per-host bootstrap, deploy-time
+image rewriting, federation delegation and operational QoL. See
+[docs/registry-cache.md](docs/registry-cache.md) for the architecture
+overview.
+
+* **Setting.RegistryCache** (`misc/option.go`) — 12 fields:
+  `enabled`, `registry_id` (optional link to a Registry catalog
+  entry), `hostname`, `port` (default 5000), `ca_cert_pem` (masked
+  on GET), `ca_fingerprint` (derived SHA-256 of the cert DER),
+  `username`, `password` (masked on GET), `use_upstream_prefix`
+  (default true), `rewrite_mode` (`off` / `per-host` / `always`;
+  default `per-host`), `preserve_digests` (default true).
+  `ca_cert_pem` and `password` added to `secretFieldsByID` so they
+  round-trip masked through the generic Setting API.
+* **Registry link overlay** — `overlayRegistryCacheFromRegistry`:
+  when `registry_id` is set, `hostname` / `port` (parsed from
+  `Registry.URL`), `username`, `password`, `ca_cert_pem`,
+  `ca_fingerprint` are **authoritatively** sourced from the linked
+  Registry at every Save. Inline UI values are discarded. Missing
+  Registry → blank `registry_id` silently.
+* **Normalize + validate** (`biz/registry_cache.go`): trim strings,
+  default port 5000, default `rewrite_mode=per-host`, default
+  `use_upstream_prefix=true`, compute `ca_fingerprint` from the
+  PEM. Reject enabled saves with empty hostname, invalid port, or
+  unknown `rewrite_mode`.
+* **Self-signed CA generation** —
+  `biz.GenerateCAPair(commonName)`: ECDSA P-256, 10-year validity,
+  `IsCA=true`, `KeyUsage=CertSign|CRLSign|DigitalSignature`.
+  `POST /api/registry-cache/gen-ca` (auth `registry_cache.edit`)
+  returns `{certPEM, keyPEM}` — the **private key is returned once**,
+  Swirl never persists it. The public cert is saved via a normal
+  Setting save.
+* **Host bootstrap**:
+  * `RegistryCacheExtract{enabled, insecureMode, appliedAt/By/
+    Fingerprint, lastSyncAt/By/Fingerprint}` on
+    `Host.AddonConfigExtract.registryCache`.
+  * `BuildDaemonSnippet(params, insecure)` — fragment of
+    `/etc/docker/daemon.json` with `registry-mirrors` (TLS path)
+    or `registry-mirrors + insecure-registries` (insecure path).
+  * `BuildBootstrapScript(params, insecure)` — `bash` script that
+    `jq`-merges the snippet into the existing `daemon.json`,
+    installs the CA at `/etc/docker/certs.d/<host>:<port>/ca.crt`
+    (TLS mode), reloads `dockerd` (systemd reload → restart →
+    SIGHUP fallback). Idempotent; backs up to
+    `daemon.json.bak.<ts>` before writing.
+  * API `api/host.go`:
+    * `registry-cache-get` (auth `registry_cache.view`) — returns
+      the extract + freshly-computed snippet + script.
+    * `registry-cache-save` (auth `registry_cache.edit`) — persist
+      the per-host opt-in state.
+  * Swirl **never writes `daemon.json` itself** — operator runs the
+    generated script, then clicks "Mark as applied" to stamp
+    `AppliedAt/By/Fingerprint`.
+  * Frontend: `HostAddonRegistryCache.vue`.
+  * i18n keys `host_addon_registry_cache.*` (en/it/zh).
+* **Deploy-time image rewriting** (`biz/compose_stack_registry_rewrite.go`):
+  * Scope resolution (precedence, top to bottom):
+    1. `stack.DisableRegistryCache` → skip.
+    2. `setting.RegistryCache.Enabled=false` → skip.
+    3. `setting.RegistryCache.Hostname=""` → skip.
+    4. `rewrite_mode`: `off` → skip; `per-host` → rewrite iff host's
+       `RegistryCacheExtract.Enabled=true`; `always` → rewrite
+       unconditionally.
+    5. `preserve_digests=true` and ref contains `@sha256:` → pass
+       through (reason `digest-preserved`).
+    6. Unparseable refs → pass through (reason `invalid-ref`).
+    7. Refs whose domain already equals mirror host:port → pass
+       through (reason `already-mirror`). Prevents double-nesting.
+  * Rewrite layout, by `use_upstream_prefix`:
+    * `true` → `<mirror>/<upstream-domain>/<path>:<tag>` (Harbor/Nexus
+      multi-upstream).
+    * `false` → `<mirror>/<path>:<tag>` (single-upstream).
+  * **Audit marker** — a head comment
+    `# swirl-managed-registry-cache: original=<ref>` is attached
+    above every rewritten scalar. Powers `detectActiveAddons`'s
+    `registry-cache` chip and future reverse parsers.
+  * **Persisted YAML is never mutated** — the rewriter hands the
+    deploy engine a fresh byte-slice per deploy.
+  * `ComposeStack.DisableRegistryCache bool` (new entity field) —
+    per-stack opt-out, overrides every other scope decision.
+  * API:
+    * `/api/compose-stack/registry-cache-preview` (auth
+      `stack.view`) — dry-run, returns `{mirrorEnabled, wouldRewrite,
+      actions[]}` for the editor's Registry Cache tab decision
+      table.
+    * `/api/compose-stack/registry-cache-warm` (auth `stack.deploy`)
+      — pre-pulls every rewritten ref through the local Swirl
+      daemon so the mirror is warm before the target host pulls.
+* **Federation delegation** (`biz/registry_cache_federation.go`):
+  * Context — the standalone portal has no Docker socket on Swarm
+    peer nodes. For the mirror to propagate across a federated
+    cluster, the portal pushes its Settings blob to the peer Swirl.
+  * `SyncRegistryCacheToPeer(host)` — portal-side:
+    refuses non-`swarm_via_swirl` hosts, refuses hosts without
+    `SwirlURL`/`SwirlToken`, refuses if local
+    `Setting.RegistryCache.Enabled=false`. Payload carries
+    `ca_cert_pem` + every non-secret field. **Password is NEVER
+    included**.
+  * `ApplyReceivedRegistryCache(sb, payload, user)` — peer-side:
+    drops `password` defensively before handing off to
+    `SettingBiz.Save` so a misbehaving portal cannot wipe the
+    peer's credential.
+  * Host attestations: `LastSyncAt`, `LastSyncBy`,
+    `LastSyncFingerprint` populated on every successful sync (only
+    on `swarm_via_swirl` hosts — standalone hosts use `AppliedAt`
+    instead).
+  * API (`api/federation.go`):
+    * `/api/federation/peers/registry-cache/sync` (portal, auth
+      `registry_cache.edit`).
+    * `/api/federation/registry-cache/receive` (peer, auth `?` —
+      federation bearer token only, no session).
+* **Ping + warm + dashboard card** (Phase 5):
+  * `biz.PingRegistryCache(ctx)` — `GET /v2/` through a TLS
+    transport that trusts the operator-uploaded CA. Accepts **HTTP
+    200** (anon OK) and **HTTP 401** (auth required) as healthy —
+    both prove DNS + TLS + routing are fine. Other statuses =
+    degraded.
+  * API `/api/registry-cache/ping` (auth `registry_cache.view`).
+  * Dashboard (`ui/src/pages/Home.vue`): compact card with mirror
+    URL, ping status, #hosts where Enabled, #hosts with stale
+    fingerprint.
+* **CA rotation** — regenerate the CA from the Settings tab at any
+  time. The UI flags hosts whose `AppliedFingerprint` /
+  `LastSyncFingerprint` diverges from the current
+  `Setting.RegistryCache.CAFingerprint` so operators know where to
+  re-apply the bootstrap / trigger a federation sync.
+* **Stack editor Registry Cache tab**
+  (`AddonTabRegistryCache.vue`): `DisableRegistryCache` checkbox
+  (persistency), Preview action, Warm action, read-only warning
+  when the feature is not globally enabled.
+* **Active-addon chip** `registry-cache` added to
+  `detectActiveAddons` — present when `!DisableRegistryCache`
+  and the YAML carries the `swirl-managed-registry-cache:` marker.
+* **Permission** `registry_cache.{view, edit}` (bit `1<<23`) —
+  `security/perm.go` + mirror in `ui/src/utils/perm.ts` + localised
+  resource label `objects.registry_cache` (en/it/zh).
+* **Entity field**: `ComposeStack.DisableRegistryCache bool` —
+  additive, defaults to false on rows written before rc2.
+
+### Error-code wrapping (hosts / containers / networks / volumes / images)
+
+* Hosts, Container, Network, Volume, Image biz operations now map
+  infrastructure errors (Docker daemon exceptions, DAO failures)
+  onto typed error codes that the API layer renders as structured
+  responses — frontend surfaces specific messages instead of a
+  generic 500.
+
+### Unified form-validation pass
+
+* Cross-cutting refactor: every form in the UI now uses the shared
+  validation plumbing. Per-field rules centralised, consistent
+  error placement under inputs, submit-time dispatch instead of
+  ad-hoc per-page logic.
+
+### Stack editor redesign + Host editor redesign + Traefik tab redesign
+
+* Stack editor: `n-tabs` layout hosting Compose, Secrets (standalone
+  only), Traefik, Sablier, Watchtower, Backup, Resources, Registry
+  Cache. Tabs gated on the host's `AddonConfigExtract.<addon>.enabled`.
+* Host editor: Addons section with per-addon toggles, file upload
+  (Traefik), discovery summary. Reads/writes through the
+  `addon-extract-*` endpoints.
+* Traefik tab: structured rows (section · name · key · value) with
+  schema-driven autocomplete, raw passthrough block for provider-
+  qualified or multi-router entries, Label Preview.
+
+### Self-deploy UX: "ready when healthy"
+
+* Frontend self-deploy progress gate tightened: the modal waits for
+  **three consecutive `200` responses** on `/api/system/ready` before
+  cache-busting and redirecting. Prevents a premature reload on a
+  container that just started returning 200 on `/ready` while its
+  internal warmup was still flapping.
+
+### Bug fixes
+
+* **Container Resources view** — fixed a layout regression in the
+  container detail's Resources tab after the Docker SDK v28
+  struct-reshuffle.
+* **Deploy warning banner** — non-fatal deploy warnings (`LastWarnings`)
+  were masking the error banner when both were present; the two
+  banners now coexist.
+* **Auto-deploy** — race fix on the self-deploy progress polling:
+  a late `/status` response from the dying old Swirl would overwrite
+  the "success" state the modal received from the new Swirl. Sticky
+  success state added.
+* **Standalone map resources** — `applyResources` mis-mapped
+  `memoryReservation` when the Resources scalar tree was absent on
+  the source YAML; now creates the mapping nodes on demand.
+* **Standalone verify-failed-deploy** — post-deploy verification
+  no longer flags a deploy as failed when `depends_on` conditions
+  resolved inside the wait window but the top-level "all ready"
+  check ran too early.
+* **External YAML refresh** — imported-but-not-yet-redeployed stacks
+  now refresh their reconstructed YAML when the underlying
+  containers change (previously kept a stale snapshot).
+* **YAML whitespace** — stack editor preserves trailing newlines on
+  Save (fixes an off-by-one that occasionally dropped the last byte
+  of the file).
+
+### i18n
+
+* `objects.registry_cache` role label — en/it/zh.
+* `stack_addon_*` / `host_addon_*` / `host_addon_registry_cache.*`
+  keys — en/it/zh.
+* Various missing keys added across en/it/zh as features landed.
+
+---
+
 ## v2.0.0rc1 (2025) — SwirlEvo
 
 First release of the SwirlEvo fork (continues [cuigh/swirl](https://github.com/cuigh/swirl)).

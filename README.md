@@ -24,6 +24,9 @@ Repository: <https://github.com/stefanod83/SwirlEvo>
 * **HashiCorp Vault integration**: `SWIRL_BACKUP_KEY` fallback via Vault, `VaultSecret` reference catalog with version-badge and **write-values-from-UI** (CRUD), per-stack secret bindings on standalone compose stacks (modes: `tmpfs` / `volume` / `init` / `env`), drift check. See [docs/vault.md](docs/vault.md).
 * **Internal backup**: AES-256-GCM at-rest encryption, **storage toggle (local filesystem or Vault KVv2)**, daily/weekly/monthly schedules with retention, raw + portable export, component-selective restore, and **key recovery** for archives encrypted under a previous `SWIRL_BACKUP_KEY`. See [docs/backup.md](docs/backup.md).
 * **Registry management**: configured remote registries with browse + tag-list via Docker Registry v2 API (self-signed TLS opt-in), plus local image **tag + push** to a selected registry from the image list.
+* **Registry Cache** (pull-through mirror): Swirl drives all image pulls through an operator-deployed `registry:2` / Harbor / Nexus. Self-signed CA generation + bootstrap script for each host, **deploy-time image rewriting** with dry-run preview, pre-pull warm-up, per-host opt-in, per-stack opt-out, **federation delegation to Swarm peers** (password never crosses the trust boundary), CA rotation with stale-fingerprint detection, dashboard card + `/ping` health check. See [docs/registry-cache.md](docs/registry-cache.md).
+* **Stack Addon wizard**: structured editor tabs in the stack editor for **Traefik**, **Sablier**, **Watchtower**, **Backup** (label-namespace owned by the wizard), **Resources** (mode-aware scalar fields — `cpus` / `mem_limit` in standalone, `deploy.resources.*` in swarm) and **Registry Cache** (opt-out + preview + warm). Host-level discovery via docker-inspect + uploaded `traefik.yml`. Reverse parser reconstructs wizard state from persisted labels. Active-addon chips on the stack list. See [docs/stack-addons.md](docs/stack-addons.md).
+* **Stack versioning**: every Save snapshots the PRE-change `content` + `envFile` to `ComposeStackVersion` (retention 20 per stack). History dropdown with reason classification (`save` / `addon-inject` / `restore:rev<N>`); side-by-side diff modal; one-click restore (restore is itself reversible — a pre-restore snapshot is always taken). See [docs/stack-versioning.md](docs/stack-versioning.md).
 * **Settings secret masking**: Vault token, AppRole secret_id, and Keycloak client_secret are never round-tripped in cleartext through the UI — the backend sanitizes on GET and preserves on Save unless a new value is typed.
 * **User types**: Internal / LDAP / Keycloak, all editable from the user form with type-aware password handling.
 * **Keycloak OIDC login**: OpenID Connect flow with auto-create, group→role mapping (by name, portable across backup/restore), import from OpenID Configuration URL, diagnostic test, slash-tolerant group matching.
@@ -235,6 +238,8 @@ Bitmask encoding (`security/perm.go`). Not all combinations make sense in both m
 | `backup` | view / edit / delete / restore / download / recover | ✅ | ✅ |
 | `vault` | admin | ✅ | ✅ |
 | `vault_secret` | view / edit / delete / cleanup | ✅ | ❌ |
+| `registry_cache` | view / edit | ✅ | ✅ |
+| `federation` | admin | ✅ | ✅ |
 
 ---
 
@@ -445,6 +450,10 @@ Containers are labelled with the standard `com.docker.compose.project=<stack-nam
 
 Deploy lifecycle: **Save** (persist only) / **Deploy** (persist + apply) / **Start** / **Stop** / **Remove** (optionally including volumes).
 
+**Stop semantics (`docker compose down` without `-v`)** — `Stop` **removes every container of the project** but preserves named volumes. The stack record stays `inactive`; the next `Deploy` (or `Start`, which internally redeploys when no containers remain) recreates containers from the same YAML with the same data. This keeps the running state in sync with authored changes (network, labels, image updates) instead of leaving stale containers on the next Start.
+
+**Last-deploy warnings** — `ComposeStack.LastWarnings []string` captures non-fatal observations from the most recent deploy (e.g. Swarm-only fields ignored in standalone, deprecated syntax, compose fields not honoured by the target engine). Surface as an amber banner on the Overview tab. Cleared on the next clean Deploy; overwritten on every redeploy.
+
 ## Image management
 
 - **Delete** (red): normal `docker rmi`; fails if the image is referenced by a container or has multiple tags.
@@ -533,26 +542,28 @@ docker compose -f docker-compose.standalone-bolt.yml up -d
 - [docs/backup.md](docs/backup.md) — Backup subsystem: storage layout, AES-256-GCM at-rest format, scheduling and retention, restore flow, raw vs portable download, **key recovery** (`backup.recover` permission) for archives encrypted under a previous master key.
 - [docs/self-deploy.md](docs/self-deploy.md) — Self-deploy feature: sidekick lifecycle, stale-lock recovery, preflight validations, progress modal, security considerations.
 - [docs/federation.md](docs/federation.md) — Multi-cluster portal via Swirl federation: deploy Swirl in a swarm cluster as target, mint federation tokens, register the cluster on a standalone portal, the reverse-proxy flow, and the security model.
+- [docs/registry-cache.md](docs/registry-cache.md) — Pull-through Registry Cache: global setting, optional link to the Registry catalog, self-signed CA generation + per-host bootstrap script, deploy-time image rewriting (+ preview / warm), federation delegation to Swarm peers (password does not cross the trust boundary), CA rotation.
+- [docs/stack-addons.md](docs/stack-addons.md) — Stack editor wizard tabs (Traefik, Sablier, Watchtower, Backup, Resources, Registry Cache, Secrets): label-namespace ownership model, cross-location purge (standalone ↔ swarm), host-level `AddonConfigExtract`, reverse parser, active-addon chips.
+- [docs/stack-versioning.md](docs/stack-versioning.md) — Compose stack history: PRE-save snapshots, reason taxonomy (`save` / `addon-inject` / `restore:rev<N>`), retention 20, diff modal, restore (itself reversible).
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────┐
-│  Vue 3 + Naive-UI + TypeScript              │  ui/
-│  Mode-aware menu + router guard             │
-└────────────────────┬────────────────────────┘
-                     │ REST /api/*
-┌────────────────────▼────────────────────────┐
-│  API Handlers (api/*.go)                    │  struct-tag routing, swarmOnly wrapper
-├─────────────────────────────────────────────┤
-│  Business Logic (biz/*.go)                  │  DI via auxo container
-├─────────────────────────────────────────────┤
-│  Docker SDK Wrapper (docker/*.go)           │  d.agent(node) for per-host ops
-│  Compose engine (docker/compose/)           │  Swarm stacks + standalone stacks
-│  Host manager (docker/host.go)              │  per-host client cache
-├─────────────────────────────────────────────┤
-│  DAO Layer (dao/)                           │  MongoDB or BoltDB (BSON both)
-└─────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    UI[Vue 3 + Naive-UI + TypeScript — mode-aware menu + router guard]
+    API[API Handlers api/*.go — struct-tag routing, swarmOnly wrapper]
+    Biz[Business Logic biz/*.go — DI via auxo container]
+    Docker[Docker SDK wrapper docker/*.go — d.agent node for per-host ops]
+    Compose[Compose engine docker/compose/ — Swarm + standalone stacks]
+    Hosts[Host manager docker/host.go — per-host client cache]
+    DAO[DAO layer dao/ — MongoDB or BoltDB, BSON on both]
+
+    UI -- REST /api/* --> API
+    API --> Biz
+    Biz --> Docker
+    Biz --> Compose
+    Biz --> Hosts
+    Biz --> DAO
 ```
 
 ## License

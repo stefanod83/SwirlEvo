@@ -104,7 +104,7 @@ services:
       - swirlevo-net
 
   swirl:
-    image: registry.devarch.local:443/devarch-it/swirlevo:v2.0.0rc1
+    image: registry.devarch.local:443/devarch-it/swirlevo:v2.0.0rc2
     restart: unless-stopped
     environment:
       - MODE=standalone

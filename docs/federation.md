@@ -197,6 +197,35 @@ is ready in the DAO + the security filter.)
 
 ---
 
+## Registry Cache delegation
+
+A standalone portal federated to a `swarm_via_swirl` cluster cannot
+reach the cluster nodes' Docker daemons directly. To propagate the
+Registry Cache mirror configuration (see
+[docs/registry-cache.md](registry-cache.md)), the portal mirrors
+its `Setting.RegistryCache` to the peer Swirl via:
+
+```
+POST /api/federation/peers/registry-cache/sync    (portal, auth registry_cache.edit)
+   ↓
+POST https://<peer>/api/federation/registry-cache/receive   (peer, bearer-only)
+```
+
+The payload carries `ca_cert_pem` + every non-secret field;
+**`password` is never included**. The peer-side handler also
+`delete(payload, "password")` defensively so a misbehaving portal
+cannot wipe the peer's credential. On success the portal stamps
+`Host.AddonConfigExtract.registryCache.{LastSyncAt, LastSyncBy,
+LastSyncFingerprint}` so the UI can flag stale-fingerprint hosts
+after a CA rotation on the portal side.
+
+The distribution of the CA to the peer's *cluster nodes* (the
+bootstrap script in `/etc/docker/certs.d/`) remains an operator
+task on the peer side — federation sync ends at the peer Swirl's
+Settings.
+
+---
+
 ## Limitations (v1)
 
 - **Stack.HostID not persisted yet**: multi-cluster Swarm stack
