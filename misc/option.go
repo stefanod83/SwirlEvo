@@ -129,6 +129,37 @@ type Setting struct {
 		AutoRollback  bool   `json:"autoRollback"`
 		DeployTimeout int    `json:"deployTimeout"` // seconds
 	} `json:"self_deploy"`
+	// RegistryCache describes an operator-deployed pull-through registry
+	// (registry:2, Harbor, Nexus, …) that Swirl uses as the only egress
+	// point for container images. Swirl does NOT manage the mirror's
+	// lifecycle — it stores connection parameters, distributes the CA
+	// to hosts via copy-paste bootstrap, and rewrites compose image:
+	// references at deploy time.
+	//
+	// CACertPEM + Password are masked on Find/Load through secretFieldsByID
+	// in biz/setting.go. CAFingerprint is derived server-side at Save from
+	// CACertPEM and is safe to echo back.
+	RegistryCache struct {
+		Enabled         bool              `json:"enabled"`
+		Hostname        string            `json:"hostname"`          // e.g. "mirror.lan" — what clients use to reach the mirror
+		Port            int               `json:"port"`              // default 5000
+		CACertPEM       string            `json:"ca_cert_pem"`       // masked on GET; distributed to hosts via bootstrap script
+		CAFingerprint   string            `json:"ca_fingerprint"`    // derived (sha256 of cert DER), not secret
+		Username        string            `json:"username"`          // optional — used in daemon.json registry auth
+		Password        string            `json:"password"`          // masked on GET
+		Upstreams       []UpstreamMapping `json:"upstreams"`         // each entry: docker.io → dockerhub, gcr.io → gcr, ...
+		RewriteMode     string            `json:"rewrite_mode"`      // "per-host" (default) | "always" | "off"
+		PreserveDigests bool               `json:"preserve_digests"` // default true — image@sha256:... refs pass through unrewritten
+	} `json:"registry_cache"`
+}
+
+// UpstreamMapping binds an upstream Docker registry domain (as it appears
+// in image refs) to a URL-path prefix under the Swirl-configured mirror.
+// Multiple mappings are expected when the operator runs one registry:2
+// instance per upstream (Docker Hub + gcr + quay + ghcr + private).
+type UpstreamMapping struct {
+	Upstream string `json:"upstream"` // "docker.io", "gcr.io", "quay.io", "ghcr.io", ...
+	Prefix   string `json:"prefix"`   // "dockerhub", "gcr", "quay", "ghcr", ...
 }
 
 // IsStandalone returns true when Swirl is running in standalone mode.

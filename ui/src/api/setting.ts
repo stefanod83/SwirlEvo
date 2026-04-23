@@ -14,6 +14,25 @@ export interface Setting {
     deploy: DeployOptions;
     vault: VaultSetting;
     backup: BackupStorageSetting;
+    registry_cache: RegistryCacheSetting;
+}
+
+export interface UpstreamMapping {
+    upstream: string;
+    prefix: string;
+}
+
+export interface RegistryCacheSetting {
+    enabled: boolean;
+    hostname: string;
+    port: number;
+    ca_cert_pem: string;
+    ca_fingerprint: string;
+    username: string;
+    password: string;
+    upstreams: UpstreamMapping[];
+    rewrite_mode: 'off' | 'per-host' | 'always';
+    preserve_digests: boolean;
 }
 
 export interface BackupStorageSetting {

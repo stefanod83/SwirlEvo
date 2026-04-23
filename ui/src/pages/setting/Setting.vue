@@ -778,6 +778,188 @@
       </n-space>
     </n-modal>
 
+    <!-- Registry Cache: global configuration of the operator-deployed
+         pull-through mirror. Swirl stores connection info + upstream
+         prefix mapping here, distributes the CA via bootstrap script
+         (Phase 2), and rewrites compose image: references at deploy
+         time (Phase 3). -->
+    <x-panel
+      v-if="canViewRegistryCache"
+      :title="t('registry_cache.title')"
+      :subtitle="t('registry_cache.subtitle')"
+      divider="bottom"
+      :collapsed="panel !== 'registry_cache'"
+    >
+      <template #action>
+        <n-button
+          secondary
+          strong
+          class="toggle"
+          size="small"
+          @click="togglePanel('registry_cache')"
+        >{{ panel === 'registry_cache' ? t('buttons.collapse') : t('buttons.expand') }}</n-button>
+      </template>
+      <n-alert type="info" style="margin: 4px 0 12px 0">
+        {{ t('registry_cache.tip') }}
+      </n-alert>
+      <n-form
+        :model="setting"
+        ref="formRegistryCache"
+        label-placement="left"
+        style="padding: 4px 0 0 12px"
+        label-width="auto"
+      >
+        <n-form-item :label="t('fields.enabled')" path="registry_cache.enabled" label-align="right">
+          <n-switch v-model:value="setting.registry_cache.enabled" />
+        </n-form-item>
+        <n-form-item :label="t('registry_cache.hostname')" path="registry_cache.hostname" label-align="right">
+          <n-input
+            :placeholder="t('registry_cache.hostname_placeholder')"
+            v-model:value="setting.registry_cache.hostname"
+          />
+        </n-form-item>
+        <n-form-item :label="t('registry_cache.port')" path="registry_cache.port" label-align="right">
+          <n-input-number
+            :min="1"
+            :max="65535"
+            v-model:value="setting.registry_cache.port"
+            style="width: 160px"
+          />
+        </n-form-item>
+        <n-form-item :label="t('registry_cache.rewrite_mode')" path="registry_cache.rewrite_mode">
+          <n-radio-group v-model:value="setting.registry_cache.rewrite_mode">
+            <n-radio value="off">{{ t('registry_cache.rewrite_off') }}</n-radio>
+            <n-radio value="per-host">{{ t('registry_cache.rewrite_per_host') }}</n-radio>
+            <n-radio value="always">{{ t('registry_cache.rewrite_always') }}</n-radio>
+          </n-radio-group>
+        </n-form-item>
+        <n-form-item
+          :label="t('registry_cache.preserve_digests')"
+          path="registry_cache.preserve_digests"
+          label-align="right"
+        >
+          <n-switch v-model:value="setting.registry_cache.preserve_digests" />
+        </n-form-item>
+        <div class="hint">{{ t('registry_cache.preserve_digests_hint') }}</div>
+
+        <n-form-item :label="t('registry_cache.username')" path="registry_cache.username" label-align="right">
+          <n-input
+            :placeholder="t('registry_cache.username_placeholder')"
+            v-model:value="setting.registry_cache.username"
+          />
+        </n-form-item>
+        <n-form-item :label="t('fields.password')" path="registry_cache.password" label-align="right">
+          <n-input
+            type="password"
+            show-password-on="click"
+            :placeholder="t('registry_cache.password_placeholder')"
+            v-model:value="setting.registry_cache.password"
+          />
+        </n-form-item>
+
+        <n-form-item :label="t('registry_cache.ca_cert_pem')" path="registry_cache.ca_cert_pem" label-align="right">
+          <n-input
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 10 }"
+            placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+            v-model:value="setting.registry_cache.ca_cert_pem"
+          />
+        </n-form-item>
+        <div v-if="setting.registry_cache.ca_fingerprint" class="hint">
+          <strong>{{ t('registry_cache.ca_fingerprint') }}:</strong>
+          <code style="font-size: 11px; word-break: break-all">{{ setting.registry_cache.ca_fingerprint }}</code>
+        </div>
+
+        <n-form-item :label="t('registry_cache.upstreams')" label-align="right" :show-feedback="false">
+          <n-dynamic-input
+            v-model:value="setting.registry_cache.upstreams"
+            :on-create="() => ({ upstream: '', prefix: '' })"
+            #="{ value }"
+          >
+            <n-input
+              :placeholder="t('registry_cache.upstream_placeholder')"
+              v-model:value="value.upstream"
+              style="flex: 1"
+            />
+            <n-input
+              :placeholder="t('registry_cache.prefix_placeholder')"
+              v-model:value="value.prefix"
+              style="flex: 1; margin-left: 8px"
+            />
+          </n-dynamic-input>
+        </n-form-item>
+        <div class="hint">{{ t('registry_cache.upstreams_hint') }}</div>
+
+        <n-space style="margin-top: 12px">
+          <n-button
+            v-if="canEditRegistryCache"
+            type="primary"
+            @click="() => save('registry_cache', setting.registry_cache)"
+          >{{ t('buttons.save') }}</n-button>
+          <n-button
+            v-if="canEditRegistryCache"
+            :loading="rcGenerating"
+            @click="openGenCA"
+          >{{ t('registry_cache.gen_ca') }}</n-button>
+        </n-space>
+      </n-form>
+    </x-panel>
+
+    <!-- CA generation modal. The private key is returned ONCE by the
+         backend and never persisted; closing without downloading means
+         generating a fresh pair next time. -->
+    <n-modal
+      v-model:show="rcGenOpen"
+      preset="card"
+      :title="t('registry_cache.gen_ca_title')"
+      style="max-width: 720px"
+      :mask-closable="false"
+    >
+      <n-space vertical :size="12">
+        <n-alert type="warning" :show-icon="true">
+          {{ t('registry_cache.gen_ca_warning') }}
+        </n-alert>
+        <div>
+          <div class="sd-block-title">{{ t('registry_cache.ca_cert_pem') }}</div>
+          <n-input
+            type="textarea"
+            :value="rcGenResult?.certPEM || ''"
+            readonly
+            :autosize="{ minRows: 4, maxRows: 8 }"
+            style="font-family: monospace; font-size: 11px"
+          />
+          <n-space style="margin-top: 6px">
+            <n-button size="tiny" @click="copyText(rcGenResult?.certPEM || '')">{{ t('buttons.copy') }}</n-button>
+            <n-button size="tiny" @click="downloadText(rcGenResult?.certPEM || '', 'swirl-registry-ca.crt')">
+              {{ t('registry_cache.download_cert') }}
+            </n-button>
+          </n-space>
+        </div>
+        <div>
+          <div class="sd-block-title">{{ t('registry_cache.ca_key_pem') }}</div>
+          <n-input
+            type="textarea"
+            :value="rcGenResult?.keyPEM || ''"
+            readonly
+            :autosize="{ minRows: 4, maxRows: 8 }"
+            style="font-family: monospace; font-size: 11px"
+          />
+          <n-space style="margin-top: 6px">
+            <n-button size="tiny" @click="copyText(rcGenResult?.keyPEM || '')">{{ t('buttons.copy') }}</n-button>
+            <n-button size="tiny" @click="downloadText(rcGenResult?.keyPEM || '', 'swirl-registry-ca.key')">
+              {{ t('registry_cache.download_key') }}
+            </n-button>
+          </n-space>
+        </div>
+        <n-space justify="end" style="margin-top: 12px">
+          <n-button @click="rcGenOpen = false">{{ t('buttons.close') }}</n-button>
+          <n-button type="primary" @click="applyGeneratedCert">
+            {{ t('registry_cache.use_cert') }}
+          </n-button>
+        </n-space>
+      </n-space>
+    </n-modal>
+
     <x-panel
       :title="t('fields.monitor')"
       :subtitle="t('tips.monitor')"
@@ -850,6 +1032,7 @@ import selfDeployApi, {
 } from "@/api/self-deploy";
 import composeStackApi, { type ComposeStackSummary } from "@/api/compose_stack";
 import { useAutoDeployProgress } from "@/composables/useAutoDeployProgress";
+import registryCacheApi, { type GenCAResult } from "@/api/registry-cache";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -896,7 +1079,23 @@ const setting = ref({
     storage_mode: 'fs',
     vault_prefix: 'backups',
   },
-} as Setting);
+  registry_cache: {
+    enabled: false,
+    hostname: '',
+    port: 5000,
+    ca_cert_pem: '',
+    ca_fingerprint: '',
+    username: '',
+    password: '',
+    upstreams: [],
+    rewrite_mode: 'per-host',
+    preserve_digests: true,
+  },
+// The literal above is a partial defaults template — fields get
+// hydrated from the backend in fetchData(). The cast is kept
+// intentional-partial (via unknown) so TS does not block on missing
+// nested fields that already live on Setting's required subtrees.
+} as unknown as Setting);
 const panel = ref('')
 
 // --- Federation peers management (target-side: Swirl in swarm mode
@@ -908,6 +1107,60 @@ import federationApi from '@/api/federation'
 import type { FederationPeer, FederationPeerResult } from '@/api/federation'
 
 const canAdminFederation = computed(() => store.getters.allow('federation.admin'))
+const canViewRegistryCache = computed(() => store.getters.allow('registry_cache.view'))
+const canEditRegistryCache = computed(() => store.getters.allow('registry_cache.edit'))
+
+// Gen-CA modal state. The private key comes back from the backend once
+// and is never persisted by Swirl — the operator downloads it to sign
+// the mirror's server cert offline. Only the public cert ends up in
+// Setting.registry_cache.ca_cert_pem.
+const rcGenOpen = ref(false)
+const rcGenerating = ref(false)
+const rcGenResult = ref<GenCAResult | null>(null)
+
+async function openGenCA() {
+  rcGenerating.value = true
+  try {
+    const r = await registryCacheApi.genCA(setting.value.registry_cache?.hostname || '')
+    rcGenResult.value = r.data ?? null
+    rcGenOpen.value = true
+  } catch (e: any) {
+    window.message.error(e?.response?.data?.info || e?.message || String(e))
+  } finally {
+    rcGenerating.value = false
+  }
+}
+
+function applyGeneratedCert() {
+  if (rcGenResult.value?.certPEM) {
+    setting.value.registry_cache.ca_cert_pem = rcGenResult.value.certPEM
+  }
+  rcGenOpen.value = false
+  window.message.info(t('registry_cache.cert_applied'))
+}
+
+function copyText(s: string) {
+  if (!s) return
+  try {
+    navigator.clipboard.writeText(s)
+    window.message.success(t('texts.action_success'))
+  } catch {
+    window.message.error('copy failed')
+  }
+}
+
+function downloadText(s: string, filename: string) {
+  if (!s) return
+  const blob = new Blob([s], { type: 'application/x-pem-file' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
 const fedPeers = ref<FederationPeer[]>([])
 const fedLoading = ref(false)
 const fedCreateOpen = ref(false)
@@ -1244,6 +1497,30 @@ async function fetchData() {
   }
   if (!setting.value.backup) {
     setting.value.backup = { storage_mode: 'fs', vault_prefix: 'backups' }
+  }
+  if (!setting.value.registry_cache) {
+    setting.value.registry_cache = {
+      enabled: false,
+      hostname: '',
+      port: 5000,
+      ca_cert_pem: '',
+      ca_fingerprint: '',
+      username: '',
+      password: '',
+      upstreams: [],
+      rewrite_mode: 'per-host',
+      preserve_digests: true,
+    }
+  } else {
+    // Existing records may lack newer fields (upstreams, rewrite_mode,
+    // preserve_digests) when Swirl is upgraded with an already-populated
+    // registry_cache blob. Hydrate defaults defensively so the form
+    // controls never bind to undefined and the dynamic-input renders.
+    const rc = setting.value.registry_cache
+    if (!Array.isArray(rc.upstreams)) rc.upstreams = []
+    if (!rc.rewrite_mode) rc.rewrite_mode = 'per-host'
+    if (typeof rc.preserve_digests !== 'boolean') rc.preserve_digests = true
+    if (typeof rc.port !== 'number' || rc.port === 0) rc.port = 5000
   }
 
   // load roles for the dropdown

@@ -151,6 +151,15 @@ func (b *settingBiz) Save(ctx context.Context, id string, options interface{}, u
 		options = preserveSecretsFromExisting(id, options, existing)
 	}
 
+	// Per-id normalization (e.g. derived fields like the registry_cache
+	// CA fingerprint) and validation (e.g. uniqueness of upstream
+	// prefixes). Validation errors bubble up to the API handler, which
+	// wraps them with 422 in the settingSave path.
+	options = normalizeSettingOptions(id, options)
+	if err = validateSettingOptions(id, options); err != nil {
+		return
+	}
+
 	setting := &dao.Setting{
 		ID:        id,
 		UpdatedAt: time.Now(),
@@ -230,9 +239,13 @@ func (b *settingBiz) unmarshal(s string) (v interface{}, err error) {
 
 // secretFieldsByID lists the JSON-tag field names that must be masked in
 // each settings group. Match the `json:` tags in misc/option.go.
+//
+// CA PEM certs are intentionally NOT masked (see vault.ca_cert precedent)
+// — they are public material and operators need to inspect + edit them.
 var secretFieldsByID = map[string][]string{
-	"vault":    {"token", "secret_id"},
-	"keycloak": {"client_secret"},
+	"vault":          {"token", "secret_id"},
+	"keycloak":       {"client_secret"},
+	"registry_cache": {"password"},
 }
 
 // sanitizeForResponse replaces non-empty sensitive fields with the
@@ -257,6 +270,29 @@ func sanitizeForResponse(id string, v interface{}) interface{} {
 		}
 	}
 	return clone
+}
+
+// normalizeSettingOptions applies per-id transformations that are safe
+// to run unconditionally (e.g. compute derived fields, clamp ranges,
+// trim whitespace). Called from Save after preserveSecretsFromExisting.
+// Returns the (possibly modified) value — never nil, never error.
+func normalizeSettingOptions(id string, v interface{}) interface{} {
+	switch id {
+	case "registry_cache":
+		return normalizeRegistryCache(v)
+	}
+	return v
+}
+
+// validateSettingOptions runs per-id validation and returns a user-visible
+// error when the payload is rejected. Called from Save after
+// normalizeSettingOptions. A nil return means the payload is acceptable.
+func validateSettingOptions(id string, v interface{}) error {
+	switch id {
+	case "registry_cache":
+		return validateRegistryCache(v)
+	}
+	return nil
 }
 
 // preserveSecretsFromExisting substitutes mask placeholders and empty
