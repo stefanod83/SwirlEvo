@@ -732,7 +732,16 @@ export default {
         "storage_vault_hint": "Gli archivi vengono scritti sotto <kv_mount>/data/<kv_prefix><vault_prefix>/<id>. Il token Vault usato da Swirl deve avere capabilities create/update/read/delete su quei path. KVv2 ha un limite default di 1 MiB per entry — aumentalo in Vault se i backup diventano grandi."
     },
     "container": {
-        "all_states": "Tutti gli stati"
+        "all_states": "Tutti gli stati",
+        "resources_title": "Risorse",
+        "cpu_limit": "Limite CPU",
+        "cpu_shares": "CPU shares",
+        "cpu_shares_hint": "Peso relativo sotto contesa (default 1024 = una CPU). Approssimazione standalone di deploy.resources.reservations.cpus.",
+        "memory_limit": "Limite memoria",
+        "memory_reservation": "Reservation memoria",
+        "memory_swap": "Swap",
+        "swap_unlimited": "Illimitato",
+        "pids_limit": "Limite PID"
     },
     "image": {
         "tag_action": "Aggiungi tag",
@@ -832,6 +841,7 @@ export default {
         "target_path_required": "Il target path è obbligatorio e deve essere assoluto (iniziare con '/').",
         "env_name_required": "Il nome della variabile d'ambiente è obbligatorio.",
         "deploy_error_title": "L'ultimo deploy è fallito",
+        "deploy_started": "Deploy avviato — stato aggiornato nella vista dettaglio stack",
         "wizard_title": "Aggiungi binding dei secret",
         "select_secret": "Seleziona un Vault secret",
         "pick_fields_hint": "Seleziona i field che vuoi iniettare nei container dello stack.",
@@ -850,8 +860,8 @@ export default {
     },
     "stack_addon_resources": {
         "title": "Risorse",
-        "mode_swarm": "Modalità Swarm: i limiti vanno in deploy.resources.limits e le reservation in deploy.resources.reservations.",
-        "mode_standalone": "Modalità Standalone: i limiti vanno al livello del servizio (cpus / mem_limit / mem_reservation). Le reservation sono solo Swarm.",
+        "mode_swarm": "Limits e reservation vanno sotto deploy.resources.{limits,reservations} — authoritative in modalità swarm.",
+        "mode_standalone": "Limits e reservation vanno sotto deploy.resources.{limits,reservations}. L'engine standalone li mappa su --memory / --cpus / --memory-reservation; la reservation CPU è approssimata con CPUShares (peso relativo, non un floor hard).",
         "no_services": "Nessun servizio trovato nel compose YAML.",
         "cpus_limit": "Limite CPU",
         "cpus_reservation": "Reservation CPU",

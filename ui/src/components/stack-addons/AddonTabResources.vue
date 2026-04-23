@@ -45,8 +45,7 @@
             <n-input
               size="small"
               :value="row(svc).cpusReservation || ''"
-              :disabled="mode !== 'swarm'"
-              :placeholder="mode === 'swarm' ? cpuPlaceholder : t('stack_addon_resources.swarm_only')"
+              :placeholder="cpuPlaceholder"
               @update:value="set(svc, { cpusReservation: $event })"
             />
           </td>

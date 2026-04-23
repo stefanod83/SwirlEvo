@@ -491,9 +491,20 @@ async function deployStack() {
   if (!await validate()) return
   submitting.value = true
   try {
-    await composeStackApi.deploy(model, pullImages.value, addonsPayload())
-    message.success(t('buttons.deploy'))
-    router.push({ name: 'std_stack_list' })
+    const r = await composeStackApi.deploy(model, pullImages.value, addonsPayload())
+    // Deploy is async: the API returns 202 the moment the goroutine
+    // is fired — the actual outcome (image pulled, container reached
+    // Running, healthcheck passed) is not yet decided. Route the
+    // operator to the View page where the status poll surfaces the
+    // real result (active / error + errorMessage + warnings) instead
+    // of showing a premature green "success" toast.
+    message.info(t('stack_secret.deploy_started') || 'Deploy started')
+    const stackId = (r.data as any)?.id || model.id
+    if (stackId) {
+      router.push({ name: 'std_stack_detail', params: { id: stackId } })
+    } else {
+      router.push({ name: 'std_stack_list' })
+    }
   } catch (e: any) {
     const info = e?.response?.data?.info || e?.message || String(e)
     message.error(info)

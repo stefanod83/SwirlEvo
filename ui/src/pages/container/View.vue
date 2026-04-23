@@ -38,6 +38,35 @@
             <x-description-item :label="t('fields.created_at')">{{ model.createdAt }}</x-description-item>
             <x-description-item :label="t('fields.started_at')">{{ model.startedAt }}</x-description-item>
           </x-description>
+          <!-- Resources: runtime limits/reservations the Docker
+               daemon enforces on this container. Populated only when
+               the compose stack or docker-run sets
+               HostConfig.Resources; absent for unlimited containers.
+               Byte values are humanised via formatBytes. -->
+          <x-panel :title="t('container.resources_title')" v-if="model.resources">
+            <x-description label-placement="left" label-align="right">
+              <x-description-item v-if="model.resources.cpus" :label="t('container.cpu_limit')">
+                {{ model.resources.cpus }} CPU
+              </x-description-item>
+              <x-description-item v-if="model.resources.cpuShares" :label="t('container.cpu_shares')">
+                {{ model.resources.cpuShares }}
+                <span style="margin-left: 6px; font-size: 12px; opacity: 0.7">{{ t('container.cpu_shares_hint') }}</span>
+              </x-description-item>
+              <x-description-item v-if="model.resources.memory" :label="t('container.memory_limit')">
+                {{ formatBytes(model.resources.memory) }}
+              </x-description-item>
+              <x-description-item v-if="model.resources.memoryReservation" :label="t('container.memory_reservation')">
+                {{ formatBytes(model.resources.memoryReservation) }}
+              </x-description-item>
+              <x-description-item v-if="model.resources.memorySwap" :label="t('container.memory_swap')">
+                <span v-if="model.resources.memorySwap === -1">{{ t('container.swap_unlimited') }}</span>
+                <span v-else>{{ formatBytes(model.resources.memorySwap) }}</span>
+              </x-description-item>
+              <x-description-item v-if="model.resources.pidsLimit" :label="t('container.pids_limit')">
+                {{ model.resources.pidsLimit }}
+              </x-description-item>
+            </x-description>
+          </x-panel>
           <x-panel :title="t('fields.labels')" v-if="model.labels && model.labels.length">
             <n-table size="small" :bordered="true" :single-line="false">
               <thead>
@@ -123,6 +152,25 @@ function stateTagType(state: string): 'success' | 'warning' | 'error' {
     default:
       return 'error'
   }
+}
+
+// formatBytes humanises a raw byte count into the unit the operator
+// originally typed in the compose wizard. Docker exposes Memory as
+// int64 bytes, so the caller never sees "256M" back — we reconstruct
+// a readable representation that matches what `docker stats` shows.
+function formatBytes(n: number): string {
+  if (!n || n <= 0) return '—'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  // Whole numbers render without decimals (2 GiB), fractional values
+  // show two digits (1.50 GiB).
+  const s = v === Math.floor(v) ? String(v) : v.toFixed(2)
+  return `${s} ${units[i]}`
 }
 
 async function fetchData() {

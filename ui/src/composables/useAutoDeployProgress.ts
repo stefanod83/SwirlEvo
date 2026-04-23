@@ -47,12 +47,24 @@ export function useAutoDeployProgress() {
     let progressTimeoutTimer: number | null = null
 
     // sawInProgress flips true the first time the status poll observes
-    // an in-flight phase. Until that happens we must IGNORE any 200
-    // from /api/system/ready — the old primary is still answering, and
-    // closing the modal now would reload the page in the middle of
-    // the container swap ("Bad Gateway" from the reverse proxy).
-    const IN_PROGRESS_PHASES = new Set([
-        'pending', 'stopping', 'pulling', 'starting', 'health_check', 'recovery',
+    // a phase where the OLD primary is guaranteed down. Until then, any
+    // 200 from /api/system/ready is coming from the old primary (still
+    // serving during `pending` / `stopping`) and MUST be ignored —
+    // otherwise the UI redirects mid-stop and the reverse proxy throws
+    // Bad Gateway for the operator.
+    //
+    // Phases `pending` and `stopping` are DELIBERATELY excluded:
+    //   - pending  = sidekick just launched, has not touched anything
+    //   - stopping = docker stop is in flight (30s graceful window);
+    //                the old process can still answer /ready until it
+    //                actually exits.
+    // First safe signal is `pulling` — set by the sidekick AFTER
+    // stopPrimary + renamePrimary have both returned successfully.
+    // `success` is included so fast deploys that skip through the
+    // intermediate phases between two /status polls still arm the
+    // fast-path correctly.
+    const POST_STOP_PHASES = new Set([
+        'pulling', 'starting', 'health_check', 'recovery', 'success',
     ])
     const TERMINAL_FAIL_PHASES = new Set(['failed', 'rolled_back'])
     let sawInProgress = false
@@ -251,12 +263,12 @@ export function useAutoDeployProgress() {
                 if (!data) return
                 if (typeof data.phase === 'string' && data.phase) {
                     progressPhase.value = data.phase
-                    // Flip the sawInProgress flag so a later 200 from
-                    // /api/system/mode (or a `success` phase read
-                    // from this poll) is treated as the true "deploy
-                    // completed" signal — not a spurious hit on the
-                    // old primary before the sidekick stopped it.
-                    if (IN_PROGRESS_PHASES.has(data.phase)) {
+                    // Flip sawInProgress only once the OLD primary is
+                    // guaranteed down (see POST_STOP_PHASES). Before
+                    // this point, /ready 200s come from the old
+                    // primary still serving and MUST be ignored so we
+                    // do not redirect mid-swap.
+                    if (POST_STOP_PHASES.has(data.phase)) {
                         sawInProgress = true
                     }
                     if (data.phase === 'success' && sawInProgress) {
@@ -280,12 +292,17 @@ export function useAutoDeployProgress() {
                         }
                         return
                     }
-                    if (TERMINAL_FAIL_PHASES.has(data.phase) && sawInProgress) {
+                    if (TERMINAL_FAIL_PHASES.has(data.phase)) {
                         // Terminal failure — stop polling but keep
                         // the modal open with the error/logs visible
                         // so the operator can read them. The store
                         // flag is cleared so the router guard releases
                         // and the user can navigate away manually.
+                        // NOT gated on sawInProgress: a deploy that
+                        // fails during `stopping` (or fails before
+                        // reaching any POST_STOP_PHASE) would
+                        // otherwise leave the modal stuck without
+                        // surfacing the error.
                         stopProgressPolling()
                         stopStatusPolling()
                         stopElapsedTicker()

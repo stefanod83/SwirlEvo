@@ -219,7 +219,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from "vue";
+import { computed, h, onMounted, onUnmounted, ref } from "vue";
 import {
   NSpace, NButton, NIcon, NDescriptions, NDescriptionsItem, NAlert, NTabs, NTabPane,
   NTag, NTable, NCheckbox, NModal, NSelect, NFormItem, NTooltip, useMessage,
@@ -456,7 +456,39 @@ async function fetchData() {
   }
 }
 
-onMounted(fetchData)
+// Deploying-state polling: biz.Deploy fires a goroutine and returns 202
+// immediately, so the stack record flips to status="deploying" but the
+// errorMessage / lastWarnings / container list only settle a few seconds
+// later. Without polling, the operator would see stale "deploying" +
+// empty alerts forever unless they click Refresh. Poll every 2 s while
+// the status is in-flight, stop as soon as it reaches a terminal state.
+const TERMINAL_STATUSES = new Set(['active', 'error', 'partial', 'inactive'])
+let pollTimer: number | null = null
+function startDeployPolling() {
+  stopDeployPolling()
+  const tick = async () => {
+    await fetchData()
+    const s = detail.value?.status
+    if (s && TERMINAL_STATUSES.has(s)) {
+      stopDeployPolling()
+    }
+  }
+  pollTimer = window.setInterval(tick, 2000)
+}
+function stopDeployPolling() {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+onMounted(async () => {
+  await fetchData()
+  if (detail.value?.status === 'deploying') {
+    startDeployPolling()
+  }
+})
+onUnmounted(stopDeployPolling)
 </script>
 
 <style scoped>

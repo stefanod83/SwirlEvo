@@ -706,12 +706,25 @@ func parseTraefikRule(rule string) (kind, domain, path string) {
 
 // ---------- resources (non-label path) ----------
 
-// applyResources mutates services.<svc>.deploy.resources (swarm) or
-// services.<svc>.{cpus,mem_limit,mem_reservation} (standalone) for every
-// service listed in cfg. Empty strings in the cfg delete the corresponding
-// field — a service listed in cfg.Resources owns its resource fields for
-// the duration of the save.
+// applyResources writes the wizard-captured resource fields under
+// `services.<svc>.deploy.resources.{limits,reservations}` for every
+// service listed in cfg. The layout is identical in both standalone
+// and swarm mode — the parser (types.ForbiddenProperties) refuses
+// the legacy top-level `mem_limit` / `cpus` / `cpu_shares` fields, so
+// using `deploy.resources.*` is the only path that round-trips cleanly
+// through Parse + Deploy.
+//
+// The standalone engine now maps these fields onto
+// container.HostConfig.Resources (see createAndStart) so the wizard
+// picks up runtime enforcement regardless of mode. `mode` is kept in
+// the signature for forward-compatibility in case swarm-only fields
+// (e.g. generic resources) get added later.
+//
+// Empty strings in the cfg delete the corresponding field — a service
+// listed in cfg.Resources owns its resource fields for the duration
+// of the save.
 func applyResources(services *yaml.Node, cfg map[string]ResourcesServiceCfg, mode string) {
+	_ = mode // reserved for future swarm-only extensions
 	if services == nil || services.Kind != yaml.MappingNode {
 		return
 	}
@@ -720,15 +733,22 @@ func applyResources(services *yaml.Node, cfg map[string]ResourcesServiceCfg, mod
 		if svcNode == nil || svcNode.Kind != yaml.MappingNode {
 			continue
 		}
-		if mode == "swarm" {
-			applySwarmResources(svcNode, r)
-		} else {
-			applyStandaloneResources(svcNode, r)
-		}
+		// Always purge the forbidden legacy top-level fields —
+		// legacy stacks written before the wizard unification may
+		// still carry them, and leaving them alone would trip the
+		// parser on the next deploy.
+		removeMappingChild(svcNode, "cpus")
+		removeMappingChild(svcNode, "mem_limit")
+		removeMappingChild(svcNode, "mem_reservation")
+		removeMappingChild(svcNode, "cpu_shares")
+		removeMappingChild(svcNode, "cpu_quota")
+		removeMappingChild(svcNode, "cpuset")
+		removeMappingChild(svcNode, "memswap_limit")
+		applyDeployResources(svcNode, r)
 	}
 }
 
-func applySwarmResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
+func applyDeployResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
 	if r.CPUsLimit == "" && r.MemoryLimit == "" && r.CPUsReservation == "" && r.MemoryReservation == "" {
 		// All-empty: purge the whole resources block so the wizard
 		// tab can clear a service back to "no limit".
@@ -758,12 +778,6 @@ func applySwarmResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
 	}
 }
 
-func applyStandaloneResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
-	setOrRemoveScalar(svcNode, "cpus", r.CPUsLimit)
-	setOrRemoveScalar(svcNode, "mem_limit", r.MemoryLimit)
-	setOrRemoveScalar(svcNode, "mem_reservation", r.MemoryReservation)
-}
-
 // setOrRemoveScalar writes `value` at `key` under `parent`, or removes the
 // key entirely when value is empty. No marker tracking: the wizard owns
 // the namespace once it's in the form.
@@ -788,12 +802,19 @@ func setOrRemoveScalar(parent *yaml.Node, key, value string) {
 	parent.Content = append(parent.Content, k, v)
 }
 
-// resourcesCfgFromService reads resource fields (swarm + standalone paths)
-// into a ResourcesServiceCfg. No marker filtering: every resource field is
-// surfaced to the tab so the operator sees the actual state.
+// resourcesCfgFromService reads resource fields from
+// `services.<svc>.deploy.resources.*` into a ResourcesServiceCfg.
+// Legacy top-level fields (`cpus`, `mem_limit`, `mem_reservation`) are
+// read ONLY as fallback — the parser refuses to load them at deploy
+// time, but a legacy authored YAML may still carry them; surface them
+// to the wizard so the operator sees + migrates the state rather than
+// silently losing values. `deploy.resources.*` takes precedence when
+// both paths are present.
 func resourcesCfgFromService(svcNode *yaml.Node) (ResourcesServiceCfg, bool) {
 	out := ResourcesServiceCfg{}
 	seen := false
+	// Legacy fallback first — overridden below by deploy.resources.*
+	// if also present.
 	if v := scalarValue(svcNode, "cpus"); v != "" {
 		out.CPUsLimit = v
 		seen = true

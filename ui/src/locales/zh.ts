@@ -726,7 +726,16 @@ export default {
         "storage_vault_hint": "归档将写入 <kv_mount>/data/<kv_prefix><vault_prefix>/<id>。Swirl 使用的 Vault token 必须对这些路径具有 create/update/read/delete 权限。KVv2 默认每条目 1 MiB 限制 — 如备份较大请在 Vault 中调高该限制。"
     },
     "container": {
-        "all_states": "所有状态"
+        "all_states": "所有状态",
+        "resources_title": "资源",
+        "cpu_limit": "CPU 上限",
+        "cpu_shares": "CPU shares",
+        "cpu_shares_hint": "争用时的相对权重（默认 1024 = 一颗 CPU）。Standalone 中对 deploy.resources.reservations.cpus 的近似。",
+        "memory_limit": "内存上限",
+        "memory_reservation": "内存预留",
+        "memory_swap": "交换",
+        "swap_unlimited": "无限",
+        "pids_limit": "PID 上限"
     },
     "image": {
         "tag_action": "添加 tag",
@@ -826,6 +835,7 @@ export default {
         "target_path_required": "目标路径不能为空，且必须为绝对路径（以 '/' 开头）。",
         "env_name_required": "环境变量名不能为空。",
         "deploy_error_title": "上次部署失败",
+        "deploy_started": "部署已启动 — 请在栈详情页查看进度",
         "wizard_title": "添加密钥绑定",
         "select_secret": "选择一个 Vault 密钥",
         "pick_fields_hint": "选择要注入到 Stack 容器中的字段。",
@@ -844,8 +854,8 @@ export default {
     },
     "stack_addon_resources": {
         "title": "资源限制",
-        "mode_swarm": "Swarm 模式：限制写入 deploy.resources.limits，预留写入 deploy.resources.reservations。",
-        "mode_standalone": "Standalone 模式：限制写在服务级别（cpus / mem_limit / mem_reservation）。预留字段仅 Swarm 支持。",
+        "mode_swarm": "限制与预留都写入 deploy.resources.{limits,reservations} — Swarm 模式下权威。",
+        "mode_standalone": "限制与预留都写入 deploy.resources.{limits,reservations}。Standalone 引擎将其映射为 --memory / --cpus / --memory-reservation；CPU 预留用 CPUShares 近似（相对权重，不是硬下限）。",
         "no_services": "当前 compose YAML 中没有服务。",
         "cpus_limit": "CPU 上限",
         "cpus_reservation": "CPU 预留",
