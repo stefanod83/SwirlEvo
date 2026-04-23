@@ -16,12 +16,13 @@ func (d *Dao) ComposeStackCreate(ctx context.Context, stack *dao.ComposeStack) e
 func (d *Dao) ComposeStackUpdate(ctx context.Context, stack *dao.ComposeStack) error {
 	update := bson.M{
 		"$set": bson.M{
-			"name":       stack.Name,
-			"host_id":    stack.HostID,
-			"content":    stack.Content,
-			"env_file":   stack.EnvFile,
-			"updated_at": stack.UpdatedAt,
-			"updated_by": stack.UpdatedBy,
+			"name":                   stack.Name,
+			"host_id":                stack.HostID,
+			"content":                stack.Content,
+			"env_file":               stack.EnvFile,
+			"disable_registry_cache": stack.DisableRegistryCache,
+			"updated_at":             stack.UpdatedAt,
+			"updated_by":             stack.UpdatedBy,
 		},
 	}
 	if stack.Status != "" {

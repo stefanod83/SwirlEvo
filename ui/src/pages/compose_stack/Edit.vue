@@ -13,18 +13,30 @@
   </x-page-header>
   <n-space class="page-body" vertical :size="16">
     <n-form :model="model" ref="form" :rules="rules" label-placement="top">
-      <n-grid cols="2" x-gap="16">
+      <!--
+        Edit mode: the stack is immutable in Host + Name, so we skip the
+        form (every field would be `disabled`) and promote Name to a
+        prominent header. The host is shown inline as a small badge so
+        operators keep situational awareness without the UI clutter.
+      -->
+      <div v-if="isEdit" class="stack-header">
+        <div class="stack-title">{{ model.name || '—' }}</div>
+        <div class="stack-meta">
+          <span class="muted">{{ t('objects.host') }}:</span>
+          <code>{{ currentHostLabel }}</code>
+        </div>
+      </div>
+      <n-grid v-else cols="2" x-gap="16">
         <n-form-item-gi :label="t('objects.host')" path="hostId">
           <n-select
             filterable
             :options="hosts"
             v-model:value="model.hostId"
-            :disabled="isEdit"
             :placeholder="t('objects.host')"
           />
         </n-form-item-gi>
         <n-form-item-gi :label="t('fields.name')" path="name">
-          <n-input v-model:value="model.name" :disabled="isEdit" :placeholder="t('fields.name')" />
+          <n-input v-model:value="model.name" :placeholder="t('fields.name')" />
         </n-form-item-gi>
       </n-grid>
 
@@ -67,7 +79,7 @@
         Addon wizard tab layout. `display-directive="show"` keeps every pane
         mounted so field state persists across tab switches.
       -->
-      <n-tabs v-model:value="activeTab" type="line" size="large" display-directive="show">
+      <n-tabs v-model:value="activeTab" type="line" size="large" display-directive="show" class="stack-addon-tabs">
         <n-tab-pane name="compose" :tab="'YAML'">
           <n-form-item :label="t('fields.content')" path="content" :show-label="false">
             <x-code-mirror
@@ -113,6 +125,20 @@
             :services="serviceNames"
             :mode="hostMode"
             v-model="resourcesCfgModel"
+          />
+        </n-tab-pane>
+
+        <!-- Registry Cache preview: always visible (no host gate) so
+             operators can see what a deploy would do even before any
+             per-host bootstrap is applied. The tab itself explains
+             why no rewrite is happening when the mirror is off / the
+             host is not opted in. -->
+        <n-tab-pane name="registry_cache" :tab="t('stack_addon_registry_cache.title')">
+          <AddonTabRegistryCache
+            :host-id="model.hostId"
+            :content="model.content"
+            :disabled="!!model.disableRegistryCache"
+            @update:disabled="(v: boolean) => model.disableRegistryCache = v"
           />
         </n-tab-pane>
       </n-tabs>
@@ -205,6 +231,13 @@
         <div v-if="currentJobId" class="muted" style="font-size: 12px">
           {{ t('self_deploy.status.job_id') }}: <code>{{ currentJobId }}</code>
         </div>
+        <!-- Manual escape hatch when auto-redirect gates B+C don't go
+             green together within the grace window after phase=success. -->
+        <n-space v-if="readyStuck" justify="end">
+          <n-button type="primary" size="small" @click="reloadNow">
+            {{ t('self_deploy.progress.reload_now') }}
+          </n-button>
+        </n-space>
       </n-space>
     </n-modal>
   </n-space>
@@ -228,6 +261,7 @@ import XCodeMirror from "@/components/CodeMirror.vue";
 import StackVersionHistory from "@/components/stack-version/StackVersionHistory.vue";
 import AddonTabTraefik from "@/components/stack-addons/AddonTabTraefik.vue";
 import AddonTabResources from "@/components/stack-addons/AddonTabResources.vue";
+import AddonTabRegistryCache from "@/components/stack-addons/AddonTabRegistryCache.vue";
 import composeStackApi from "@/api/compose_stack";
 import type {
   ComposeStack, HostAddons, AddonsConfig,
@@ -271,9 +305,18 @@ const model = reactive({
   content: '',
   envFile: '',
   errorMessage: '',
+  disableRegistryCache: false,
 } as ComposeStack)
 
 const hosts: any = ref([])
+
+// currentHostLabel resolves model.hostId → the human-readable host name
+// from the loaded hosts list. Renders in the edit-mode header badge so
+// operators know which daemon the stack is attached to.
+const currentHostLabel = computed(() => {
+  const h = (hosts.value as any[])?.find((x: any) => x.value === model.hostId)
+  return h?.label || model.hostId || '—'
+})
 const rules = {
   hostId: requiredRule(),
   name: requiredRule(),
@@ -282,7 +325,7 @@ const rules = {
 
 // activeTab drives the addon wizard tab layout. Preserved across tab switches
 // via display-directive="show" so editor state is never remounted.
-const activeTab = ref<'compose' | 'traefik' | 'sablier' | 'watchtower' | 'backup' | 'resources'>('compose')
+const activeTab = ref<'compose' | 'traefik' | 'sablier' | 'watchtower' | 'backup' | 'resources' | 'registry_cache'>('compose')
 
 // hostAddons caches the /compose-stack/host-addons response for the currently
 // selected host. Re-fetched on hostId change. Null while loading or when the
@@ -475,9 +518,20 @@ async function deployStack() {
   if (!await validate()) return
   submitting.value = true
   try {
-    await composeStackApi.deploy(model, pullImages.value, addonsPayload())
-    message.success(t('buttons.deploy'))
-    router.push({ name: 'std_stack_list' })
+    const r = await composeStackApi.deploy(model, pullImages.value, addonsPayload())
+    // Deploy is async: the API returns 202 the moment the goroutine
+    // is fired — the actual outcome (image pulled, container reached
+    // Running, healthcheck passed) is not yet decided. Route the
+    // operator to the View page where the status poll surfaces the
+    // real result (active / error + errorMessage + warnings) instead
+    // of showing a premature green "success" toast.
+    message.info(t('stack_secret.deploy_started') || 'Deploy started')
+    const stackId = (r.data as any)?.id || model.id
+    if (stackId) {
+      router.push({ name: 'std_stack_detail', params: { id: stackId } })
+    } else {
+      router.push({ name: 'std_stack_list' })
+    }
   } catch (e: any) {
     const info = e?.response?.data?.info || e?.message || String(e)
     message.error(info)
@@ -519,7 +573,9 @@ const {
   progressElapsed,
   progressTimedOut,
   currentJobId,
+  readyStuck,
   openProgressFromDeployResult,
+  reloadNow,
 } = useAutoDeployProgress()
 
 async function loadSelfDeployConfig() {
@@ -632,5 +688,41 @@ onMounted(async () => {
 .ads-iframe-fallback a {
   color: #4b91ff;
   word-break: break-all;
+}
+
+/* Edit-mode header: the stack name becomes the visual anchor, with a
+   subdued host badge inline. Keeps identity front-and-centre now that
+   host + name are no longer editable form fields. */
+.stack-header {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.18));
+}
+.stack-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.stack-meta {
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.stack-meta code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: rgba(128, 128, 128, 0.12);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+/* Bump the first tab off the left edge — naive-ui tabs sit flush by
+   default which makes them read like they start at x=0. Small breath. */
+.stack-addon-tabs :deep(.n-tabs-tab-wrapper):first-child,
+.stack-addon-tabs :deep(.n-tabs-nav-scroll-content) {
+  padding-left: 12px;
 }
 </style>

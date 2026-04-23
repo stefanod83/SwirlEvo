@@ -93,6 +93,27 @@ func (d *Docker) ImageTag(ctx context.Context, node, source, target string) erro
 	return c.ImageTag(ctx, source, target)
 }
 
+// ImagePull downloads an image reference from its origin registry. Symmetric
+// to ImagePush: `authBase64` carries the encoded `registry.AuthConfig`, or
+// "" for anonymous pulls. The progress stream is drained to completion so
+// layer-pull errors surface via the final NDJSON frame.
+//
+// Timeout-sensitive: multi-GB images can take minutes. Callers must pass
+// a generous context deadline.
+func (d *Docker) ImagePull(ctx context.Context, node, ref, authBase64 string) error {
+	c, err := d.agent(node)
+	if err != nil {
+		return err
+	}
+	rc, err := c.ImagePull(ctx, ref, image.PullOptions{RegistryAuth: authBase64})
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	_, err = io.Copy(io.Discard, rc)
+	return err
+}
+
 // ImagePush pushes an image reference to its remote registry. `authBase64`
 // is the base64-URL-encoded JSON `registry.AuthConfig` supplied by the
 // caller (typically via `dao.Registry.GetEncodedAuth()`). The returned

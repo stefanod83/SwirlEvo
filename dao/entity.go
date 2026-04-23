@@ -110,6 +110,17 @@ type Registry struct {
 	// against a self-signed registry the host's daemon must still have
 	// the registry in `insecure-registries`.
 	SkipTLSVerify bool     `json:"skipTlsVerify,omitempty" bson:"skip_tls_verify,omitempty"`
+	// CACertPEM (optional) is the PEM-encoded CA certificate that signs
+	// the registry's server cert. Used by the Registry Cache feature
+	// when this Registry is linked as the pull-through mirror: the CA
+	// is distributed to managed hosts via bootstrap script so docker
+	// daemons trust the registry without tripping the system store.
+	// Never masked on transport — a CA is public material.
+	CACertPEM     string   `json:"caCertPem,omitempty" bson:"ca_cert_pem,omitempty"`
+	// CAFingerprint is the hex-upper SHA-256 of the CA cert DER (same
+	// format as `openssl x509 -fingerprint -sha256`). Derived by the
+	// biz layer on Save from CACertPEM; surfaced read-only to the UI.
+	CAFingerprint string   `json:"caFingerprint,omitempty" bson:"ca_fingerprint,omitempty"`
 	CreatedAt     Time     `json:"createdAt" bson:"created_at"`
 	UpdatedAt     Time     `json:"updatedAt" bson:"updated_at"`
 	CreatedBy     Operator `json:"createdBy" bson:"created_by"`
@@ -352,6 +363,12 @@ type ComposeStack struct {
 	// because they only make sense in Swarm mode). Cleared on a clean
 	// deploy, overwritten on every redeploy. Never surfaces as an error.
 	LastWarnings []string `json:"lastWarnings,omitempty" bson:"last_warnings,omitempty"`
+	// DisableRegistryCache opts this stack OUT of deploy-time image
+	// rewriting when the global Registry Cache mirror is enabled. Set
+	// for stacks that must talk directly to an upstream (e.g. the
+	// registry:2 cache itself, CI runners). Default false = follow the
+	// global RewriteMode policy.
+	DisableRegistryCache bool `json:"disableRegistryCache,omitempty" bson:"disable_registry_cache,omitempty"`
 	CreatedAt    Time     `json:"createdAt" bson:"created_at"`
 	UpdatedAt    Time     `json:"updatedAt" bson:"updated_at"`
 	CreatedBy    Operator `json:"createdBy" bson:"created_by"`

@@ -6,6 +6,7 @@ require (
 	github.com/boltdb/bolt v1.3.1
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/cuigh/auxo v0.0.0-20211213084008-60eb7f7752a7
+	github.com/distribution/reference v0.6.0
 	github.com/docker/docker v28.0.0+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
@@ -29,7 +30,6 @@ require (
 	github.com/Microsoft/go-winio v0.4.14 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
-	github.com/distribution/reference v0.6.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect

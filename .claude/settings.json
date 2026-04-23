@@ -5,7 +5,11 @@
       "Bash(command -v go)",
       "Bash(grep)",
       "Bash(docker)",
-      "Bash(git -C /mnt/c/GitRepos/swirl show)"
+      "Bash(git -C /mnt/c/GitRepos/swirl show)",
+      "Bash(rm -rf /opt/DockerData/swirl/ui/dist)",
+      "Bash(rsync -av --delete --exclude='ui/node_modules' --exclude='ui/dist' --exclude='.git' --exclude='.planning' --exclude='.gocache' --exclude='.claude' /mnt/c/GitRepos/swirl/ /opt/DockerData/swirl/)",
+      "Bash(rsync -a /mnt/c/GitRepos/swirl/ui/node_modules/ /opt/DockerData/swirl/ui/node_modules/)",
+      "Bash(rsync -a /opt/DockerData/swirl/ui/dist/ /mnt/c/GitRepos/swirl/ui/dist/)"
     ]
   }
 }

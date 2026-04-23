@@ -11,6 +11,13 @@ export interface Registry {
     // self-signed certs. Docker daemon push still relies on
     // `insecure-registries` in daemon.json.
     skipTlsVerify?: boolean;
+    // Optional CA PEM cert that signs the registry's server cert.
+    // Distributed to Swirl-managed hosts via bootstrap script when
+    // this Registry is linked as the Registry Cache source.
+    caCertPem?: string;
+    // Derived (sha256 of cert DER) by the backend on save. Read-only
+    // display value.
+    caFingerprint?: string;
     createdAt: number;
     updatedAt: number;
     createdBy: {

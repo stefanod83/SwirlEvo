@@ -3,7 +3,6 @@ package biz
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -29,48 +28,42 @@ type AddonsConfig struct {
 	Resources  map[string]ResourcesServiceCfg  `json:"resources,omitempty"`
 }
 
+// TraefikServiceCfg is a flat label map for a compose service. The UI
+// composes labels from a structured "section · name · key · value" form
+// and ships the result back as a {key: value} map. The backend does NOT
+// model routers / middlewares / services — it just owns the traefik.*
+// namespace on wizard-touched services: purge, then rewrite with
+// cfg.Labels (plus `traefik.enable` when cfg.Enabled).
 type TraefikServiceCfg struct {
-	Enabled      bool     `json:"enabled"`
-	Router       string   `json:"router"`
-	RuleType     string   `json:"ruleType"` // "Host" | "PathPrefix" | "Host+PathPrefix"
-	Domain       string   `json:"domain"`
-	Path         string   `json:"path"`
-	Entrypoint   string   `json:"entrypoint"`
-	Port         int      `json:"port"`
-	TLS          bool     `json:"tls"`
-	CertResolver string   `json:"certResolver"`
-	Middlewares  []string `json:"middlewares,omitempty"`
-	// ExtraLabels is the passthrough for every Traefik-prefixed label the
-	// wizard doesn't model natively — e.g. extra routers for the same
-	// service, tls.options, provider-qualified middlewares (`@file`,
-	// `@kubernetes`), service-level loadBalancer tweaks, plugins, etc.
-	// The reverse parser fills this with anything NOT mapped into the
-	// structured fields above; the builder re-emits the map verbatim on
-	// save, alongside the structured labels. This lets operators use the
-	// wizard for common cases without losing hand-written advanced
-	// configuration.
-	ExtraLabels map[string]string `json:"extraLabels,omitempty"`
+	// Enabled flips traefik.enable=true on the service. Decoupled from
+	// the label map so the UI can keep the master toggle separate from
+	// the detailed labels.
+	Enabled bool `json:"enabled"`
+	// Labels carries every traefik.* label (except traefik.enable which
+	// is derived from Enabled). The wizard tab builds these from its
+	// structured-row editor plus any raw passthrough the operator adds.
+	// Unknown / provider-qualified / multi-router entries coexist
+	// uniformly here — there's no privileged "structured" subset.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
+// Sablier / Watchtower / Backup use the same flat shape as Traefik:
+// `Enabled` drives the master switch label, `Labels` carries every
+// other addon-prefixed entry verbatim. The backend doesn't model the
+// individual keys — it owns the prefix namespace on touched services.
 type SablierServiceCfg struct {
-	Enabled         bool   `json:"enabled"`
-	Group           string `json:"group"`
-	SessionDuration string `json:"sessionDuration"`
-	Strategy        string `json:"strategy"`
-	DisplayName     string `json:"displayName"`
-	Theme           string `json:"theme"`
+	Enabled bool              `json:"enabled"`
+	Labels  map[string]string `json:"labels,omitempty"`
 }
 
 type WatchtowerServiceCfg struct {
-	Enabled     bool `json:"enabled"`
-	MonitorOnly bool `json:"monitorOnly"`
+	Enabled bool              `json:"enabled"`
+	Labels  map[string]string `json:"labels,omitempty"`
 }
 
 type BackupServiceCfg struct {
-	Enabled  bool              `json:"enabled"`
-	Schedule string            `json:"schedule,omitempty"`
-	Plugin   string            `json:"plugin,omitempty"`
-	Extra    map[string]string `json:"extra,omitempty"`
+	Enabled bool              `json:"enabled"`
+	Labels  map[string]string `json:"labels,omitempty"`
 }
 
 type ResourcesServiceCfg struct {
@@ -83,11 +76,17 @@ type ResourcesServiceCfg struct {
 // addonPrefixes lists the label key prefixes each addon claims. When a
 // service appears in cfg.<Addon>, every existing label with one of these
 // prefixes is stripped from the service before the new label set is
-// written. Keeping the list in one place makes the replace-all policy
-// auditable at a glance.
+// written.
+//
+// Sablier intentionally owns only `sablier.*` (native container labels
+// the Sablier daemon reads via the docker provider). The Traefik
+// plugin form (`traefik.http.middlewares.<name>.plugin.sablier.*`)
+// lives under the Traefik namespace so the Traefik tab's passthrough
+// keeps it round-tripping — purging `traefik.http.middlewares.*`
+// would nuke every hand-written Traefik middleware on the service.
 var addonPrefixes = map[string][]string{
 	"traefik":    {"traefik."},
-	"sablier":    {"sablier.", "traefik.http.middlewares."},
+	"sablier":    {"sablier."},
 	"watchtower": {"com.centurylinklabs.watchtower."},
 	"backup":     {"backup."},
 }
@@ -128,17 +127,30 @@ func injectAddonLabels(content string, cfg *AddonsConfig, mode string) (string, 
 	purgePerService := map[string][]string{}
 	labelsPerService := map[string]map[string]string{}
 
-	for svc, t := range cfg.Traefik {
-		purgePerService[svc] = append(purgePerService[svc], addonPrefixes["traefik"]...)
-		for k, v := range buildTraefikLabels(svc, t) {
-			if labelsPerService[svc] == nil {
-				labelsPerService[svc] = map[string]string{}
-			}
+	addString := func(svc string, m map[string]string) {
+		if labelsPerService[svc] == nil {
+			labelsPerService[svc] = map[string]string{}
+		}
+		for k, v := range m {
 			labelsPerService[svc][k] = v
 		}
 	}
-	// Future phases wire Sablier/Watchtower/Backup the same way — the
-	// prefix-based purge makes their addition a one-liner.
+	for svc, t := range cfg.Traefik {
+		purgePerService[svc] = append(purgePerService[svc], addonPrefixes["traefik"]...)
+		addString(svc, buildTraefikLabels(svc, t))
+	}
+	for svc, s := range cfg.Sablier {
+		purgePerService[svc] = append(purgePerService[svc], addonPrefixes["sablier"]...)
+		addString(svc, buildSablierLabels(svc, s))
+	}
+	for svc, w := range cfg.Watchtower {
+		purgePerService[svc] = append(purgePerService[svc], addonPrefixes["watchtower"]...)
+		addString(svc, buildWatchtowerLabels(svc, w))
+	}
+	for svc, b := range cfg.Backup {
+		purgePerService[svc] = append(purgePerService[svc], addonPrefixes["backup"]...)
+		addString(svc, buildBackupLabels(svc, b))
+	}
 
 	for svc, prefixes := range purgePerService {
 		svcNode := mappingFieldNode(services, svc)
@@ -177,8 +189,11 @@ func injectAddonLabels(content string, cfg *AddonsConfig, mode string) (string, 
 // entire addon namespace on a given service.
 func extractAddonConfig(content string) (*AddonsConfig, error) {
 	out := &AddonsConfig{
-		Traefik:   map[string]TraefikServiceCfg{},
-		Resources: map[string]ResourcesServiceCfg{},
+		Traefik:    map[string]TraefikServiceCfg{},
+		Sablier:    map[string]SablierServiceCfg{},
+		Watchtower: map[string]WatchtowerServiceCfg{},
+		Backup:     map[string]BackupServiceCfg{},
+		Resources:  map[string]ResourcesServiceCfg{},
 	}
 	if strings.TrimSpace(content) == "" {
 		return out, nil
@@ -207,13 +222,21 @@ func extractAddonConfig(content string) (*AddonsConfig, error) {
 		for _, target := range labelLocations(svcNode) {
 			collectLabels(target, labels)
 		}
-		cfg := traefikCfgFromLabelsFor(labels, svc)
-		// Surface the cfg when ANY traefik.* label exists on the
-		// service — the UI shows the wizard state for known keys and
-		// a passthrough box for the rest. Services with no traefik
-		// footprint stay out of the map.
-		if cfg.Enabled || len(cfg.ExtraLabels) > 0 {
-			out.Traefik[svc] = cfg
+		tcfg := traefikCfgFromLabels(labels)
+		if tcfg.Enabled || len(tcfg.Labels) > 0 {
+			out.Traefik[svc] = tcfg
+		}
+		scfg := sablierCfgFromLabels(labels)
+		if scfg.Enabled || len(scfg.Labels) > 0 {
+			out.Sablier[svc] = scfg
+		}
+		wcfg := watchtowerCfgFromLabels(labels)
+		if wcfg.Enabled || len(wcfg.Labels) > 0 {
+			out.Watchtower[svc] = wcfg
+		}
+		bcfg := backupCfgFromLabels(labels)
+		if bcfg.Enabled || len(bcfg.Labels) > 0 {
+			out.Backup[svc] = bcfg
 		}
 
 		if rc, ok := resourcesCfgFromService(svcNode); ok {
@@ -481,237 +504,191 @@ func marshalYAMLNode(root *yaml.Node) (string, error) {
 
 // ---------- Traefik-specific builder/reverse ----------
 
-// buildTraefikLabels emits the label set that makes the service routable
-// through a Traefik v3 instance. The structured wizard fields produce the
-// minimum-viable routing; ExtraLabels (passthrough) is merged on top so
-// advanced operator-authored entries round-trip verbatim.
-//
-// Return value semantics:
-//   - Wizard disabled AND no extras → nil, caller purges the namespace.
-//   - Wizard disabled BUT extras present → only the extras (preserving
-//     multi-router / tls.options / middleware@file on a service the
-//     operator doesn't want fully wizard-managed).
-//   - Wizard enabled but missing rule/port → extras only (the wizard
-//     row is incomplete, we don't emit a half-broken router).
+// buildTraefikLabels flattens the wizard cfg into the final label set.
+// The service "owns" its traefik.* namespace: wizard-disabled + no
+// labels → nil (caller purges); otherwise emits traefik.enable (when
+// Enabled) + every entry in cfg.Labels that carries a traefik. prefix.
+// Any unknown/provider-qualified/multi-router entry flows through
+// transparently because the backend doesn't model routers at all.
 func buildTraefikLabels(svc string, cfg TraefikServiceCfg) map[string]string {
-	// Start with passthrough. Structured fields below override on key
-	// collision — if the operator typed `traefik.enable` in the extras
-	// list, the wizard toggle still wins.
+	_ = svc
 	out := map[string]string{}
-	for k, v := range cfg.ExtraLabels {
+	for k, v := range cfg.Labels {
 		if strings.HasPrefix(k, "traefik.") {
 			out[k] = v
 		}
 	}
-	if !cfg.Enabled {
-		if len(out) == 0 {
-			return nil
-		}
-		return out
+	if cfg.Enabled {
+		out["traefik.enable"] = "true"
 	}
-	router := strings.TrimSpace(cfg.Router)
-	if router == "" {
-		router = svc
-	}
-	rule := buildTraefikRule(cfg)
-	if rule == "" || cfg.Port <= 0 {
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	}
-	out["traefik.enable"] = "true"
-	out[fmt.Sprintf("traefik.http.routers.%s.rule", router)] = rule
-	out[fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", router)] = fmt.Sprintf("%d", cfg.Port)
-	if cfg.Entrypoint != "" {
-		out[fmt.Sprintf("traefik.http.routers.%s.entrypoints", router)] = cfg.Entrypoint
-	}
-	if cfg.TLS {
-		out[fmt.Sprintf("traefik.http.routers.%s.tls", router)] = "true"
-		if cfg.CertResolver != "" {
-			out[fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", router)] = cfg.CertResolver
-		}
-	}
-	if len(cfg.Middlewares) > 0 {
-		out[fmt.Sprintf("traefik.http.routers.%s.middlewares", router)] = strings.Join(cfg.Middlewares, ",")
+	if !cfg.Enabled && len(out) == 0 {
+		return nil
 	}
 	return out
 }
 
-func buildTraefikRule(cfg TraefikServiceCfg) string {
-	domain := strings.TrimSpace(cfg.Domain)
-	path := strings.TrimSpace(cfg.Path)
-	switch strings.ToLower(cfg.RuleType) {
-	case "host":
-		if domain == "" {
-			return ""
-		}
-		return fmt.Sprintf("Host(`%s`)", domain)
-	case "pathprefix":
-		if path == "" {
-			return ""
-		}
-		return fmt.Sprintf("PathPrefix(`%s`)", path)
-	case "host+pathprefix":
-		if domain == "" || path == "" {
-			return ""
-		}
-		return fmt.Sprintf("Host(`%s`) && PathPrefix(`%s`)", domain, path)
-	default:
-		if domain != "" {
-			return fmt.Sprintf("Host(`%s`)", domain)
-		}
-		return ""
+// buildSablierLabels / buildWatchtowerLabels / buildBackupLabels mirror
+// the Traefik builder: emit every label in cfg.Labels that carries the
+// addon's prefix, plus the canonical "enable" label when cfg.Enabled.
+// Pre-filtering on the prefix prevents a config that accidentally
+// smuggled a cross-addon key from leaking across namespaces.
+
+func buildSablierLabels(_ string, cfg SablierServiceCfg) map[string]string {
+	out := filterPrefix(cfg.Labels, "sablier.")
+	if cfg.Enabled {
+		out["sablier.enable"] = "true"
 	}
+	if !cfg.Enabled && len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
-// traefikCfgFromLabels rebuilds the wizard state from every traefik.*
-// label. Recognised keys of a single "primary" router fill the
-// structured fields; everything else — extra routers, tls.options,
-// middlewares with provider qualifiers (`@file`, `@kubernetes`),
-// service-level loadBalancer tweaks, plugins, etc. — lands verbatim in
-// ExtraLabels so the next save preserves it.
-//
-// Router selection (preserveDeterministic):
-//   - prefer `<svcName>` when a router with that name exists (matches
-//     the Docker Compose convention);
-//   - fallback to the lexicographically-first router name (comparing
-//     just the NAME, not the full label key — avoids `-` < `.` ASCII
-//     surprises that made keycloak-int beat keycloak);
-//   - only actually CONSUME the router's labels into structured fields
-//     if the router has BOTH `rule` AND a loadbalancer port. Otherwise
-//     we leave everything in ExtraLabels and the builder re-emits it
-//     verbatim — round-trip safe for hand-authored configs the wizard
-//     can't fully reconstruct.
+func buildWatchtowerLabels(_ string, cfg WatchtowerServiceCfg) map[string]string {
+	out := filterPrefix(cfg.Labels, "com.centurylinklabs.watchtower.")
+	if cfg.Enabled {
+		out["com.centurylinklabs.watchtower.enable"] = "true"
+	}
+	if !cfg.Enabled && len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func buildBackupLabels(_ string, cfg BackupServiceCfg) map[string]string {
+	out := filterPrefix(cfg.Labels, "backup.")
+	if cfg.Enabled {
+		out["backup.enable"] = "true"
+	}
+	if !cfg.Enabled && len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// filterPrefix returns a fresh map with only the entries whose key
+// starts with `prefix`. Safe on nil input.
+func filterPrefix(in map[string]string, prefix string) map[string]string {
+	out := map[string]string{}
+	for k, v := range in {
+		if strings.HasPrefix(k, prefix) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// traefikCfgFromLabels rebuilds the wizard cfg from every traefik.*
+// label of a service. traefik.enable drives cfg.Enabled; everything
+// else lands in cfg.Labels verbatim. Multi-router / tls.options /
+// provider-qualified middlewares round-trip loss-free because there
+// is no "structured subset" competing with the raw label set.
 func traefikCfgFromLabels(labels map[string]string) TraefikServiceCfg {
-	return traefikCfgFromLabelsFor(labels, "")
-}
-
-// traefikCfgFromLabelsFor is the service-aware variant used when we know
-// the compose service name — lets us prefer `<svcName>` as the primary
-// router when both exist.
-func traefikCfgFromLabelsFor(labels map[string]string, svcName string) TraefikServiceCfg {
-	cfg := TraefikServiceCfg{ExtraLabels: map[string]string{}}
+	cfg := TraefikServiceCfg{Labels: map[string]string{}}
 	for k, v := range labels {
-		if strings.HasPrefix(k, "traefik.") {
-			cfg.ExtraLabels[k] = v
+		if !strings.HasPrefix(k, "traefik.") {
+			continue
 		}
-	}
-	enable, hasEnable := labels["traefik.enable"]
-	if !hasEnable || enable != "true" {
-		return cfg
-	}
-	cfg.Enabled = true
-	delete(cfg.ExtraLabels, "traefik.enable")
-
-	routers := collectRouterNames(labels)
-	if len(routers) == 0 {
-		if len(cfg.ExtraLabels) == 0 {
-			cfg.ExtraLabels = nil
+		if k == "traefik.enable" && v == "true" {
+			cfg.Enabled = true
+			continue
 		}
-		return cfg
+		cfg.Labels[k] = v
 	}
-	// Prefer a router whose name matches the compose service.
-	router := routers[0]
-	if svcName != "" {
-		for _, r := range routers {
-			if r == svcName {
-				router = r
-				break
-			}
-		}
-	}
-	ruleKey := fmt.Sprintf("traefik.http.routers.%s.rule", router)
-	portKey := fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", router)
-	rule, hasRule := labels[ruleKey]
-	_, hasPort := labels[portKey]
-	kind, domain, path := parseTraefikRule(rule)
-
-	// Consume the router into structured fields only when we can rebuild
-	// it end-to-end (needs rule + port). Otherwise leave everything in
-	// ExtraLabels so the builder doesn't drop anything.
-	if hasRule && hasPort && kind != "" {
-		cfg.Router = router
-		cfg.RuleType, cfg.Domain, cfg.Path = kind, domain, path
-		delete(cfg.ExtraLabels, ruleKey)
-		consume := func(key string, apply func(string)) {
-			if v, ok := labels[key]; ok {
-				apply(v)
-				delete(cfg.ExtraLabels, key)
-			}
-		}
-		consume(fmt.Sprintf("traefik.http.routers.%s.entrypoints", router), func(v string) { cfg.Entrypoint = v })
-		consume(portKey, func(v string) { fmt.Sscanf(v, "%d", &cfg.Port) })
-		consume(fmt.Sprintf("traefik.http.routers.%s.tls", router), func(v string) {
-			if v == "true" {
-				cfg.TLS = true
-			}
-		})
-		consume(fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", router), func(v string) { cfg.CertResolver = v })
-		consume(fmt.Sprintf("traefik.http.routers.%s.middlewares", router), func(v string) {
-			if v != "" {
-				cfg.Middlewares = strings.Split(v, ",")
-			}
-		})
-	}
-
-	if len(cfg.ExtraLabels) == 0 {
-		cfg.ExtraLabels = nil
+	if len(cfg.Labels) == 0 {
+		cfg.Labels = nil
 	}
 	return cfg
 }
 
-// collectRouterNames returns the set of router names present in the label
-// map (`traefik.http.routers.<name>.*`), sorted alphabetically by NAME.
-// Used for deterministic primary-router selection.
-func collectRouterNames(labels map[string]string) []string {
-	seen := map[string]struct{}{}
-	for k := range labels {
-		const prefix = "traefik.http.routers."
+// traefikCfgFromLabelsFor is kept as an alias for call-site readability:
+// earlier versions preferred a router matching the compose service name.
+// The new flat model doesn't need the hint — the service name is ignored.
+func traefikCfgFromLabelsFor(labels map[string]string, _ string) TraefikServiceCfg {
+	return traefikCfgFromLabels(labels)
+}
+
+// sablierCfgFromLabels / watchtowerCfgFromLabels / backupCfgFromLabels
+// mirror the Traefik reverse parser. `<addon>.enable=true` (canonical
+// signal of "opt in on this service") drives cfg.Enabled; everything
+// else lands in cfg.Labels verbatim.
+
+func sablierCfgFromLabels(labels map[string]string) SablierServiceCfg {
+	cfg := SablierServiceCfg{Labels: map[string]string{}}
+	for k, v := range labels {
+		if !strings.HasPrefix(k, "sablier.") {
+			continue
+		}
+		if k == "sablier.enable" && v == "true" {
+			cfg.Enabled = true
+			continue
+		}
+		cfg.Labels[k] = v
+	}
+	if len(cfg.Labels) == 0 {
+		cfg.Labels = nil
+	}
+	return cfg
+}
+
+func watchtowerCfgFromLabels(labels map[string]string) WatchtowerServiceCfg {
+	const prefix = "com.centurylinklabs.watchtower."
+	cfg := WatchtowerServiceCfg{Labels: map[string]string{}}
+	for k, v := range labels {
 		if !strings.HasPrefix(k, prefix) {
 			continue
 		}
-		rest := k[len(prefix):]
-		if dot := strings.Index(rest, "."); dot > 0 {
-			seen[rest[:dot]] = struct{}{}
+		if k == prefix+"enable" && v == "true" {
+			cfg.Enabled = true
+			continue
 		}
+		cfg.Labels[k] = v
 	}
-	out := make([]string, 0, len(seen))
-	for n := range seen {
-		out = append(out, n)
+	if len(cfg.Labels) == 0 {
+		cfg.Labels = nil
 	}
-	sort.Strings(out)
-	return out
+	return cfg
 }
 
-var (
-	hostRe        = regexp.MustCompile("^Host\\(`([^`]+)`\\)$")
-	pathRe        = regexp.MustCompile("^PathPrefix\\(`([^`]+)`\\)$")
-	hostAndPathRe = regexp.MustCompile("^Host\\(`([^`]+)`\\)\\s*&&\\s*PathPrefix\\(`([^`]+)`\\)$")
-)
-
-func parseTraefikRule(rule string) (kind, domain, path string) {
-	rule = strings.TrimSpace(rule)
-	if m := hostAndPathRe.FindStringSubmatch(rule); len(m) == 3 {
-		return "Host+PathPrefix", m[1], m[2]
+func backupCfgFromLabels(labels map[string]string) BackupServiceCfg {
+	cfg := BackupServiceCfg{Labels: map[string]string{}}
+	for k, v := range labels {
+		if !strings.HasPrefix(k, "backup.") {
+			continue
+		}
+		if k == "backup.enable" && v == "true" {
+			cfg.Enabled = true
+			continue
+		}
+		cfg.Labels[k] = v
 	}
-	if m := hostRe.FindStringSubmatch(rule); len(m) == 2 {
-		return "Host", m[1], ""
+	if len(cfg.Labels) == 0 {
+		cfg.Labels = nil
 	}
-	if m := pathRe.FindStringSubmatch(rule); len(m) == 2 {
-		return "PathPrefix", "", m[1]
-	}
-	return "", "", ""
+	return cfg
 }
 
 // ---------- resources (non-label path) ----------
 
-// applyResources mutates services.<svc>.deploy.resources (swarm) or
-// services.<svc>.{cpus,mem_limit,mem_reservation} (standalone) for every
-// service listed in cfg. Empty strings in the cfg delete the corresponding
-// field — a service listed in cfg.Resources owns its resource fields for
-// the duration of the save.
+// applyResources writes the wizard-captured resource fields under
+// `services.<svc>.deploy.resources.{limits,reservations}` for every
+// service listed in cfg. The layout is identical in both standalone
+// and swarm mode — the parser (types.ForbiddenProperties) refuses
+// the legacy top-level `mem_limit` / `cpus` / `cpu_shares` fields, so
+// using `deploy.resources.*` is the only path that round-trips cleanly
+// through Parse + Deploy.
+//
+// The standalone engine now maps these fields onto
+// container.HostConfig.Resources (see createAndStart) so the wizard
+// picks up runtime enforcement regardless of mode. `mode` is kept in
+// the signature for forward-compatibility in case swarm-only fields
+// (e.g. generic resources) get added later.
+//
+// Empty strings in the cfg delete the corresponding field — a service
+// listed in cfg.Resources owns its resource fields for the duration
+// of the save.
 func applyResources(services *yaml.Node, cfg map[string]ResourcesServiceCfg, mode string) {
+	_ = mode // reserved for future swarm-only extensions
 	if services == nil || services.Kind != yaml.MappingNode {
 		return
 	}
@@ -720,15 +697,22 @@ func applyResources(services *yaml.Node, cfg map[string]ResourcesServiceCfg, mod
 		if svcNode == nil || svcNode.Kind != yaml.MappingNode {
 			continue
 		}
-		if mode == "swarm" {
-			applySwarmResources(svcNode, r)
-		} else {
-			applyStandaloneResources(svcNode, r)
-		}
+		// Always purge the forbidden legacy top-level fields —
+		// legacy stacks written before the wizard unification may
+		// still carry them, and leaving them alone would trip the
+		// parser on the next deploy.
+		removeMappingChild(svcNode, "cpus")
+		removeMappingChild(svcNode, "mem_limit")
+		removeMappingChild(svcNode, "mem_reservation")
+		removeMappingChild(svcNode, "cpu_shares")
+		removeMappingChild(svcNode, "cpu_quota")
+		removeMappingChild(svcNode, "cpuset")
+		removeMappingChild(svcNode, "memswap_limit")
+		applyDeployResources(svcNode, r)
 	}
 }
 
-func applySwarmResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
+func applyDeployResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
 	if r.CPUsLimit == "" && r.MemoryLimit == "" && r.CPUsReservation == "" && r.MemoryReservation == "" {
 		// All-empty: purge the whole resources block so the wizard
 		// tab can clear a service back to "no limit".
@@ -758,12 +742,6 @@ func applySwarmResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
 	}
 }
 
-func applyStandaloneResources(svcNode *yaml.Node, r ResourcesServiceCfg) {
-	setOrRemoveScalar(svcNode, "cpus", r.CPUsLimit)
-	setOrRemoveScalar(svcNode, "mem_limit", r.MemoryLimit)
-	setOrRemoveScalar(svcNode, "mem_reservation", r.MemoryReservation)
-}
-
 // setOrRemoveScalar writes `value` at `key` under `parent`, or removes the
 // key entirely when value is empty. No marker tracking: the wizard owns
 // the namespace once it's in the form.
@@ -788,12 +766,19 @@ func setOrRemoveScalar(parent *yaml.Node, key, value string) {
 	parent.Content = append(parent.Content, k, v)
 }
 
-// resourcesCfgFromService reads resource fields (swarm + standalone paths)
-// into a ResourcesServiceCfg. No marker filtering: every resource field is
-// surfaced to the tab so the operator sees the actual state.
+// resourcesCfgFromService reads resource fields from
+// `services.<svc>.deploy.resources.*` into a ResourcesServiceCfg.
+// Legacy top-level fields (`cpus`, `mem_limit`, `mem_reservation`) are
+// read ONLY as fallback — the parser refuses to load them at deploy
+// time, but a legacy authored YAML may still carry them; surface them
+// to the wizard so the operator sees + migrates the state rather than
+// silently losing values. `deploy.resources.*` takes precedence when
+// both paths are present.
 func resourcesCfgFromService(svcNode *yaml.Node) (ResourcesServiceCfg, bool) {
 	out := ResourcesServiceCfg{}
 	seen := false
+	// Legacy fallback first — overridden below by deploy.resources.*
+	// if also present.
 	if v := scalarValue(svcNode, "cpus"); v != "" {
 		out.CPUsLimit = v
 		seen = true

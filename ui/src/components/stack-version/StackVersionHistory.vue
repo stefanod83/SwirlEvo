@@ -38,7 +38,7 @@
             <n-tag type="info" size="small">rev {{ selected.revision }}</n-tag>
             <n-tag size="small">{{ selected.reason }}</n-tag>
             <span v-if="selected.createdAt" class="muted">
-              {{ selected.createdAt }}
+              {{ formatTimestamp(selected.createdAt) }}
             </span>
             <span v-if="selected.createdBy?.name" class="muted">
               · {{ selected.createdBy.name }}
@@ -122,9 +122,20 @@ const modalTitle = computed(() =>
     : t('stack_version.diff_title')
 )
 
+// formatTimestamp renders the backend-emitted RFC3339-ish timestamp as
+// dd/mm/yyyy HH:mm:ss. Falls back to the raw string when parsing fails.
+function formatTimestamp(ts?: string): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return ts
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
 function formatOption(v: ComposeStackVersion): string {
   const parts: string[] = [`rev ${v.revision}`]
-  if (v.createdAt) parts.push(v.createdAt)
+  const ts = formatTimestamp(v.createdAt)
+  if (ts) parts.push(ts)
   if (v.createdBy?.name) parts.push(v.createdBy.name)
   if (v.reason) parts.push(v.reason)
   return parts.join(' · ')

@@ -2,10 +2,12 @@ package compose
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -419,20 +421,61 @@ func (e *StandaloneEngine) waitForDependency(ctx context.Context, project string
 // collectIgnoredFieldWarnings scans the parsed compose config for fields
 // the standalone engine is known to drop and emits one warning per
 // service. Pure function, no Docker calls — safe to unit test.
+//
+// `deploy.resources.*` is NOT flagged: the standalone engine now maps
+// those onto container.HostConfig.Resources (see createAndStart) so
+// they're honoured end-to-end. Only the genuinely swarm-only
+// sub-blocks (mode/replicas/update_config/placement/etc.) emit a
+// warning, and the message lists which sub-fields so the operator
+// knows what was actually ignored instead of a generic "deploy
+// block ignored".
 func collectIgnoredFieldWarnings(cfg *composetypes.Config) []string {
 	if cfg == nil {
 		return nil
 	}
 	var warnings []string
 	for _, svc := range cfg.Services {
-		// `deploy:` — Swarm-only scheduling/replication block. The
-		// compose spec explicitly says it's ignored by non-Swarm
-		// engines; we echo that to the operator.
-		if !isZeroDeployConfig(svc.Deploy) {
-			warnings = append(warnings, fmt.Sprintf("service %s: deploy: block ignored in standalone mode", svc.Name))
+		if ignored := ignoredDeploySubfields(svc.Deploy); len(ignored) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"service %s: deploy.%s ignored in standalone mode",
+				svc.Name, strings.Join(ignored, " / deploy."),
+			))
 		}
 	}
 	return warnings
+}
+
+// ignoredDeploySubfields returns the ordered list of deploy.* fields
+// that are SET on the service but NOT honoured by the standalone
+// engine. An empty slice means every populated deploy.* field has a
+// standalone equivalent (in practice: only `resources`).
+func ignoredDeploySubfields(d composetypes.DeployConfig) []string {
+	var out []string
+	if d.Mode != "" {
+		out = append(out, "mode")
+	}
+	if d.Replicas != nil {
+		out = append(out, "replicas")
+	}
+	if len(d.Labels) > 0 {
+		out = append(out, "labels")
+	}
+	if d.UpdateConfig != nil {
+		out = append(out, "update_config")
+	}
+	if d.RollbackConfig != nil {
+		out = append(out, "rollback_config")
+	}
+	if d.RestartPolicy != nil {
+		out = append(out, "restart_policy")
+	}
+	if !isZeroPlacement(d.Placement) {
+		out = append(out, "placement")
+	}
+	if d.EndpointMode != "" {
+		out = append(out, "endpoint_mode")
+	}
+	return out
 }
 
 // isZeroDeployConfig reports whether the compose-level DeployConfig is
@@ -1006,6 +1049,55 @@ func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, c
 		LogConfig:     buildLogConfig(svc),
 	}
 
+	// Resource limits — map compose `deploy.resources.{limits,reservations}`
+	// onto the container HostConfig so the standalone path enforces CPU +
+	// memory constraints the same way docker-compose v2 does. Top-level
+	// `mem_limit` / `cpus` / `cpu_shares` are forbidden by the parser
+	// (types.ForbiddenProperties) so we only have `deploy.resources` to
+	// read from.
+	//
+	// Reservation CPU has no direct equivalent in `container.Resources`:
+	// a Swarm "reservation" is scheduling hint, not a runtime guarantee.
+	// We approximate by mapping CPU reservation → CPUShares so under
+	// contention the kernel biases towards the reserved share, without
+	// creating a false impression of a hard floor.
+	if !isZeroResources(svc.Deploy.Resources) {
+		res := container.Resources{}
+		if lim := svc.Deploy.Resources.Limits; lim != nil {
+			if lim.NanoCPUs != "" {
+				if nano, perr := ParseCPUs(lim.NanoCPUs); perr == nil {
+					res.NanoCPUs = nano
+				}
+			}
+			if lim.MemoryBytes > 0 {
+				res.Memory = int64(lim.MemoryBytes)
+			}
+		}
+		if rsv := svc.Deploy.Resources.Reservations; rsv != nil {
+			if rsv.MemoryBytes > 0 {
+				res.MemoryReservation = int64(rsv.MemoryBytes)
+			}
+			if rsv.NanoCPUs != "" {
+				if nano, perr := ParseCPUs(rsv.NanoCPUs); perr == nil {
+					// CPUShares is a relative weight, default 1024 =
+					// "one full CPU share". Scale nano-cpus linearly:
+					//   shares = nano * 1024 / 1e9
+					// 0.5 CPU → 512, 2 CPU → 2048. Clamp to [2, 262144]
+					// per the Linux CFS range.
+					shares := nano * 1024 / 1e9
+					if shares < 2 {
+						shares = 2
+					}
+					if shares > 262144 {
+						shares = 262144
+					}
+					res.CPUShares = shares
+				}
+			}
+		}
+		hcfg.Resources = res
+	}
+
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			primaryNet: {Aliases: aliases[networksOrder[0]]},
@@ -1035,7 +1127,137 @@ func (e *StandaloneEngine) createAndStart(ctx context.Context, project string, c
 		}
 	}
 
-	return e.cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	if err := e.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return err
+	}
+	// Post-start verification: the compose engine returns nil from
+	// ContainerStart the moment the daemon accepts the start command,
+	// NOT when the container actually runs. A container that crashes
+	// during entrypoint (bad env, missing volume, OOM on boot) leaves
+	// the stack labelled "deployed" while the UI then shows the error
+	// on detail view. Short poll window catches these silent failures
+	// and surfaces a real error to the caller, which the biz layer
+	// then persists as the stack status.
+	return e.verifyRunning(ctx, resp.ID, svc.Name)
+}
+
+// verifyRunning confirms the container process survived init. Does
+// NOT wait for the app INSIDE the container to become ready —
+// slow-starting apps (JVM warmup, DB migrations, big entrypoints)
+// report healthy via the image HEALTHCHECK, not via the deploy path.
+//
+// Contract: ContainerStart returns only after the daemon has spawned
+// the container process — image pull is a separate preflight step and
+// is NOT in scope here. So the state is Running essentially the moment
+// ContainerStart returns, UNLESS the entrypoint died in init or the
+// daemon crash-looped it via the restart policy.
+//
+// Detection strategy (no arbitrary "still alive after N seconds"
+// timeout — that would punish legitimately slow app startup):
+//
+//  1. Inspect immediately. If Running with RestartCount=0 → success.
+//  2. If Running with RestartCount>0 → crash-loop already started
+//     before we observed anything; fail with exit code + logs.
+//  3. If already Exited/Dead → init crash; fail with exit code + logs.
+//  4. If still "created" or "restarting" on first inspect, briefly
+//     poll (up to ~1.5s) for a transition — the daemon is
+//     synchronous about state updates so this rarely triggers.
+//  5. If the short poll ends with the container in a non-terminal
+//     non-Running state, give the benefit of the doubt and return
+//     success. Healthcheck + the normal container-status polling
+//     surface any residual issue upstream.
+func (e *StandaloneEngine) verifyRunning(ctx context.Context, containerID, svcName string) error {
+	const (
+		probeTimeout  = 1500 * time.Millisecond
+		probeInterval = 150 * time.Millisecond
+	)
+	deadline := time.Now().Add(probeTimeout)
+	var lastStatus string
+	for {
+		inspect, err := e.cli.ContainerInspect(ctx, containerID)
+		if err != nil {
+			// Transient inspect failure — let the caller proceed.
+			return nil
+		}
+		state := inspect.State
+		if state == nil {
+			return nil
+		}
+		lastStatus = state.Status
+
+		// Terminal crash before we observed Running — the only
+		// certain-fail signal. Report and bail.
+		if state.Status == "exited" || state.Status == "dead" {
+			return e.crashError(ctx, containerID, svcName, state.ExitCode, state.Error)
+		}
+		if state.Running {
+			// Crash-loop that already bounced once (Running now, but
+			// RestartCount > 0). Exit code on the state reflects the
+			// LAST failed run — give the operator that + logs.
+			if inspect.RestartCount > 0 {
+				return e.crashError(ctx, containerID, svcName, state.ExitCode, fmt.Sprintf("restart loop (restart count=%d)", inspect.RestartCount))
+			}
+			return nil
+		}
+
+		// Non-terminal, non-Running (created / restarting / paused).
+		// Poll briefly — the daemon normally transitions sub-second.
+		if time.Now().After(deadline) {
+			// Deliberate success-by-default: we have NO evidence the
+			// container crashed, only that it is taking its sweet
+			// time to transition. Slow boot is legitimate.
+			_ = lastStatus
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(probeInterval):
+		}
+	}
+}
+
+// crashError builds the standard "container failed to start" error:
+// service name + exit code + optional daemon-reported error + tail of
+// combined logs. Keeps the message short enough to fit in the biz
+// layer's ComposeStack.ErrorMessage field.
+func (e *StandaloneEngine) crashError(ctx context.Context, containerID, svcName string, exitCode int, extra string) error {
+	msg := fmt.Sprintf("service %q exited with code %d during start", svcName, exitCode)
+	if extra != "" {
+		msg += ": " + extra
+	}
+	if tail := e.containerLogTail(ctx, containerID, 20); tail != "" {
+		msg += "\n--- last logs ---\n" + tail
+	}
+	return errors.New(msg)
+}
+
+// containerLogTail fetches the last N lines of combined stdout+stderr
+// from the container. Capped at 4 KiB per stream to avoid flooding the
+// deploy error message. Returns an empty string on any read failure —
+// log availability is a nice-to-have for the verifyRunning error.
+func (e *StandaloneEngine) containerLogTail(ctx context.Context, containerID string, lines int) string {
+	rc, err := e.cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       strconv.Itoa(lines),
+	})
+	if err != nil {
+		return ""
+	}
+	defer rc.Close()
+	buf := make([]byte, 0, 8192)
+	tmp := make([]byte, 4096)
+	for len(buf) < cap(buf) {
+		n, rerr := rc.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	return strings.TrimSpace(string(buf))
 }
 
 // buildHealthcheck maps a compose-level HealthCheckConfig onto the Docker SDK

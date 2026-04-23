@@ -1,11 +1,18 @@
 package api
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"time"
+
 	"github.com/cuigh/auxo/data"
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/biz"
 	"github.com/cuigh/swirl/dao"
+	"github.com/cuigh/swirl/docker"
 	"github.com/cuigh/swirl/misc"
+	"github.com/docker/docker/api/types/image"
 )
 
 // ComposeStackHandler exposes Portainer-style compose stack endpoints for standalone mode.
@@ -46,27 +53,45 @@ type ComposeStackHandler struct {
 	// load time + after a version restore so the tabs start in sync
 	// with the persisted content. POST to keep the body out of the URL.
 	ParseAddons web.HandlerFunc `path:"/parse-addons" method:"post" auth:"stack.view" desc:"reverse-parse addon wizard state from compose YAML"`
+	// RegistryCachePreview runs the deploy-time image rewriter in
+	// report-only mode. Given an authored compose YAML + target host,
+	// returns the list of RewriteAction the deployment would emit
+	// without touching any state. Used by the Stack editor to show
+	// the Registry Cache preview table. Auth: stack.view — the only
+	// information leaked is the UpstreamMappings table which is
+	// already visible on the Settings page to anyone who can reach
+	// this editor.
+	RegistryCachePreview web.HandlerFunc `path:"/registry-cache-preview" method:"post" auth:"stack.view" desc:"preview deploy-time image rewrites for a compose stack"`
+	// RegistryCacheWarm pre-pulls every rewritten image through the
+	// local Swirl daemon, populating the mirror's cache before the
+	// target host asks for the first time. Useful on cold deploys
+	// where the target host's link to the mirror is slower than the
+	// portal-to-mirror link. Auth: stack.deploy — same permission
+	// the user needs to actually run the deploy.
+	RegistryCacheWarm web.HandlerFunc `path:"/registry-cache-warm" method:"post" auth:"stack.deploy" desc:"pre-pull rewritten images through the local daemon"`
 }
 
 // NewComposeStack is registered in api.init.
-func NewComposeStack(b biz.ComposeStackBiz, ad biz.AddonDiscoveryBiz) *ComposeStackHandler {
+func NewComposeStack(b biz.ComposeStackBiz, hb biz.HostBiz, ad biz.AddonDiscoveryBiz, d *docker.Docker) *ComposeStackHandler {
 	return &ComposeStackHandler{
-		Search:     composeStackSearch(b),
-		Find:       composeStackFind(b),
-		FindDetail: composeStackFindDetail(b),
-		Save:       composeStackSave(b),
-		Deploy:     composeStackDeploy(b),
-		DeployByID: composeStackDeployByID(b),
-		Import:     composeStackImport(b),
-		Start:      composeStackStart(b),
-		Stop:       composeStackStop(b),
-		Remove:     composeStackRemove(b),
+		Search:         composeStackSearch(b),
+		Find:           composeStackFind(b),
+		FindDetail:     composeStackFindDetail(b),
+		Save:           composeStackSave(b),
+		Deploy:         composeStackDeploy(b),
+		DeployByID:     composeStackDeployByID(b),
+		Import:         composeStackImport(b),
+		Start:          composeStackStart(b),
+		Stop:           composeStackStop(b),
+		Remove:         composeStackRemove(b),
 		Migrate:        composeStackMigrate(b),
 		HostAddons:     composeStackHostAddons(ad),
 		Versions:       composeStackVersions(b),
 		VersionGet:     composeStackVersionGet(b),
 		VersionRestore: composeStackVersionRestore(b),
 		ParseAddons:    composeStackParseAddons(b),
+		RegistryCachePreview: composeStackRegistryCachePreview(hb),
+		RegistryCacheWarm:    composeStackRegistryCacheWarm(hb, d),
 	}
 }
 
@@ -335,6 +360,152 @@ func composeStackParseAddons(b biz.ComposeStackBiz) web.HandlerFunc {
 			return err
 		}
 		return success(c, cfg)
+	}
+}
+
+// composeStackRegistryCachePreview runs the deploy-time image rewriter
+// in report-only mode against an authored compose YAML + target host,
+// returning the RewriteAction list without mutating anything. The UI
+// calls this whenever the operator flips into the Registry Cache tab
+// of the Stack editor, and again after YAML edits.
+//
+// Response shape:
+//
+//	{
+//	  "mirrorEnabled": bool,
+//	  "effectivelyDisabled": bool,   // true when the global + per-host
+//	                                 // decision results in a no-op
+//	  "actions": [RewriteAction]
+//	}
+func composeStackRegistryCachePreview(hb biz.HostBiz) web.HandlerFunc {
+	type Args struct {
+		HostID               string `json:"hostId"`
+		Content              string `json:"content"`
+		DisableRegistryCache bool   `json:"disableRegistryCache"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		ctx, cancel := misc.Context(defaultTimeout)
+		defer cancel()
+
+		var hostExtract *biz.AddonConfigExtract
+		if args.HostID != "" {
+			if ext, err := hb.GetAddonConfigExtract(ctx, args.HostID); err == nil {
+				hostExtract = ext
+			}
+		}
+
+		// Build a throw-away stack carrying the per-request opt-out so
+		// BuildRewriteInput resolves the same scope the Deploy path
+		// would. We do NOT round-trip through the DB here.
+		stack := &dao.ComposeStack{
+			HostID:               args.HostID,
+			DisableRegistryCache: args.DisableRegistryCache,
+		}
+		in := biz.BuildRewriteInput(stack, hostExtract, biz.LiveSettingsSnapshot())
+		_, actions, _ := biz.RewriteImages(args.Content, in)
+
+		return success(c, data.Map{
+			"mirrorEnabled":       biz.LiveRegistryCacheParams() != nil,
+			"effectivelyDisabled": !biz.WillRewrite(in),
+			"actions":             actions,
+		})
+	}
+}
+
+// composeStackRegistryCacheWarm pre-pulls every rewritten image from
+// the local Swirl daemon. Sequential pulls (parallelism bounded by
+// the daemon itself anyway) with per-ref timeouts so a single slow
+// upstream does not starve the rest. Returns a per-ref status list
+// so the UI can show granular success/failure.
+func composeStackRegistryCacheWarm(hb biz.HostBiz, d *docker.Docker) web.HandlerFunc {
+	type Args struct {
+		HostID               string `json:"hostId"`
+		Content              string `json:"content"`
+		DisableRegistryCache bool   `json:"disableRegistryCache"`
+	}
+	type ResultItem struct {
+		Ref       string `json:"ref"`
+		OK        bool   `json:"ok"`
+		Error     string `json:"error,omitempty"`
+		LatencyMs int64  `json:"latencyMs,omitempty"`
+	}
+	return func(c web.Context) error {
+		args := &Args{}
+		if err := c.Bind(args, true); err != nil {
+			return err
+		}
+		// Overall request timeout — the UI shows a loading spinner
+		// while this is in flight, so keep it bounded.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
+		var hostExtract *biz.AddonConfigExtract
+		if args.HostID != "" {
+			if ext, err := hb.GetAddonConfigExtract(ctx, args.HostID); err == nil {
+				hostExtract = ext
+			}
+		}
+		stack := &dao.ComposeStack{
+			HostID:               args.HostID,
+			DisableRegistryCache: args.DisableRegistryCache,
+		}
+		in := biz.BuildRewriteInput(stack, hostExtract, biz.LiveSettingsSnapshot())
+		if !biz.WillRewrite(in) {
+			return web.NewError(http.StatusUnprocessableEntity,
+				"registry cache pre-warm requires an active mirror + enabled stack/host scope")
+		}
+		_, actions, err := biz.RewriteImages(args.Content, in)
+		if err != nil {
+			return err
+		}
+
+		// Collect the rewritten refs. Duplicate-shielded because the
+		// same image may appear on multiple services in the same
+		// stack.
+		seen := map[string]struct{}{}
+		refs := make([]string, 0, len(actions))
+		for _, a := range actions {
+			if a.Rewritten == "" {
+				continue
+			}
+			if _, ok := seen[a.Rewritten]; ok {
+				continue
+			}
+			seen[a.Rewritten] = struct{}{}
+			refs = append(refs, a.Rewritten)
+		}
+
+		cli, err := d.Client()
+		if err != nil {
+			return web.NewError(http.StatusInternalServerError, "registry cache pre-warm: local docker client: "+err.Error())
+		}
+		results := make([]ResultItem, 0, len(refs))
+		for _, ref := range refs {
+			item := ResultItem{Ref: ref}
+			pullCtx, pullCancel := context.WithTimeout(ctx, 5*time.Minute)
+			start := time.Now()
+			rc, perr := cli.ImagePull(pullCtx, ref, image.PullOptions{})
+			if perr == nil {
+				// Drain — the daemon pulls asynchronously; Copy
+				// blocks until the stream ends or an error
+				// surfaces.
+				_, perr = io.Copy(io.Discard, rc)
+				rc.Close()
+			}
+			pullCancel()
+			item.LatencyMs = time.Since(start).Milliseconds()
+			if perr != nil {
+				item.Error = perr.Error()
+			} else {
+				item.OK = true
+			}
+			results = append(results, item)
+		}
+		return success(c, data.Map{"results": results})
 	}
 }
 

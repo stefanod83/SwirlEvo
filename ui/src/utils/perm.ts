@@ -91,4 +91,8 @@ export const perms = [
         key: 'federation',
         actions: ['admin'],
     },
+    {
+        key: 'registry_cache',
+        actions: ['view', 'edit'],
+    },
 ]
