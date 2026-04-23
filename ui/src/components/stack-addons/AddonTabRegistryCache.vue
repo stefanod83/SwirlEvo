@@ -161,8 +161,9 @@ const columns = computed(() => [
       const label = t(labelKey)
       // Tag type mapping: no-match → default (expected upstream not mapped),
       // digest-preserved → info (intentional skip), invalid-ref → error.
-      let type: 'default' | 'info' | 'warning' | 'error' = 'default'
+      let type: 'default' | 'info' | 'success' | 'warning' | 'error' = 'default'
       if (reason === 'digest-preserved') type = 'info'
+      else if (reason === 'already-mirror') type = 'success'
       else if (reason === 'invalid-ref') type = 'error'
       return h(NTag, { size: 'small', type, round: true }, { default: () => label === labelKey ? reason : label })
     },

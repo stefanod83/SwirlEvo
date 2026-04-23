@@ -887,6 +887,7 @@ export default {
         "reason_no_match": "Nessun match — upstream non mappato",
         "reason_digest_preserved": "Pin a digest — preservato",
         "reason_invalid_ref": "Riferimento immagine non valido",
+        "reason_already_mirror": "Già puntata al mirror — preservata",
         "prewarm_btn": "Pre-warm cache mirror",
         "prewarm_hint": "Effettua il pull di ogni immagine riscritta attraverso il daemon Swirl locale, popolando il cache del mirror prima che l'host target lo richieda.",
         "prewarm_ok": "{count} immagine/i pullate con successo nel cache del mirror.",
@@ -949,6 +950,19 @@ export default {
         "federation_sync_pending": "Non ancora sincronizzato. Clicca Sync per pushare il Setting.RegistryCache del portal al peer.",
         "federation_sync_btn": "Sync config al peer",
         "federation_sync_ok": "Config Registry Cache sincronizzata al peer."
+    },
+    "host_addon_generic": {
+        "pointer": "Riferimento",
+        "defaults": "Default",
+        "defaults_desc": "Valori che il tab dell'editor stack pre-popola nelle righe al primo abilitamento (es. schedule di default, session duration, scope).",
+        "empty": "Nessuna voce.",
+        "add_default": "Aggiungi default",
+        "disabled_hint": "{name} è disabilitato su questo host: il relativo tab nell'editor stack è nascosto. Abilitalo per renderlo visibile.",
+        "clear_confirm": "Rimuovere i dati di integrazione da questo host?",
+        "clear_ok": "Dati di integrazione rimossi.",
+        "sablier_subtitle": "Configura lo stack / container di riferimento e i default usati dal tab Sablier dell'editor stack.",
+        "watchtower_subtitle": "Configura lo stack / container di riferimento e i default usati dal tab Watchtower dell'editor stack.",
+        "backup_subtitle": "Configura lo stack / container di riferimento e i default usati dal tab Backup dell'editor stack."
     },
     "host_addon_traefik": {
         "enabled": "Abilitato",

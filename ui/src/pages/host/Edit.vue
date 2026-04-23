@@ -145,6 +145,33 @@
         :collapsed="panel !== 'traefik'"
         @toggle="togglePanel('traefik')"
       />
+      <HostAddonGeneric
+        v-if="isEdit && !isFederation && model.id"
+        :host-id="model.id"
+        addon-key="sablier"
+        title="Sablier"
+        :subtitle="t('host_addon_generic.sablier_subtitle')"
+        :collapsed="panel !== 'sablier'"
+        @toggle="togglePanel('sablier')"
+      />
+      <HostAddonGeneric
+        v-if="isEdit && !isFederation && model.id"
+        :host-id="model.id"
+        addon-key="watchtower"
+        title="Watchtower"
+        :subtitle="t('host_addon_generic.watchtower_subtitle')"
+        :collapsed="panel !== 'watchtower'"
+        @toggle="togglePanel('watchtower')"
+      />
+      <HostAddonGeneric
+        v-if="isEdit && !isFederation && model.id"
+        :host-id="model.id"
+        addon-key="backup"
+        title="Backup"
+        :subtitle="t('host_addon_generic.backup_subtitle')"
+        :collapsed="panel !== 'backup'"
+        @toggle="togglePanel('backup')"
+      />
       <!-- Registry Cache is available for BOTH standalone hosts
            (daemon.json bootstrap path) AND swarm_via_swirl federated
            peers (Setting mirror-to-peer delegation). The component
@@ -185,6 +212,7 @@ import { ArrowBackCircleOutline as ArrowBackIcon } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
 import HostAddonTraefik from "@/components/host-addons/HostAddonTraefik.vue";
+import HostAddonGeneric from "@/components/host-addons/HostAddonGeneric.vue";
 import HostAddonRegistryCache from "@/components/host-addons/HostAddonRegistryCache.vue";
 import * as hostApi from "@/api/host";
 import type { HostInfo } from "@/api/host";

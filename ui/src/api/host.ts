@@ -93,8 +93,24 @@ export interface RegistryCacheExtract {
   appliedFingerprint?: string
 }
 
+// GenericAddonExtract mirrors the backend shape used for
+// Sablier / Watchtower / Backup. Same pattern across the three: a
+// master switch, optional stack/container pointer, pre-fill defaults
+// the stack editor seeds new rows with, and free-form overrides that
+// surface read-only in the stack tab.
+export interface GenericAddonExtract {
+  enabled?: boolean
+  stackId?: string
+  containerName?: string
+  defaults?: Record<string, string>
+  overrides?: Record<string, string>
+}
+
 export interface AddonConfigExtract {
   traefik?: TraefikExtract
+  sablier?: GenericAddonExtract
+  watchtower?: GenericAddonExtract
+  backup?: GenericAddonExtract
   registryCache?: RegistryCacheExtract
 }
 

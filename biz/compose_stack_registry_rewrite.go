@@ -175,6 +175,20 @@ func RewriteImages(content string, in RegistryCacheRewriteInput) (string, []Rewr
 		domain := reference.Domain(ref)
 		path := reference.Path(ref)
 
+		// Mirror pass-through: if the image domain already equals the
+		// configured mirror endpoint, it is a custom / pre-rewritten
+		// ref the operator wants served verbatim (e.g. images pushed
+		// directly to the Harbor proxy, or a previously-deployed YAML
+		// that still carries the mirror-prefixed ref). Rewriting
+		// again would double-nest the mirror hostname and break the
+		// pull. Skip with a diagnostic reason so the preview shows
+		// "already pointing at the mirror".
+		if strings.EqualFold(domain, mirror) {
+			action.Reason = "already-mirror"
+			actions = append(actions, action)
+			continue
+		}
+
 		// Re-emit based on UseUpstreamPrefix:
 		//   true  → <mirror>/<domain>/<path>[:tag]
 		//   false → <mirror>/<path>[:tag]

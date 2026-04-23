@@ -120,6 +120,30 @@
           />
         </n-tab-pane>
 
+        <n-tab-pane v-if="sablierTabVisible" name="sablier" :tab="'Sablier'">
+          <AddonTabSablier
+            :services="serviceNames"
+            :host-refs="sablierHostRefs"
+            v-model="sablierCfgModel"
+          />
+        </n-tab-pane>
+
+        <n-tab-pane v-if="watchtowerTabVisible" name="watchtower" :tab="'Watchtower'">
+          <AddonTabWatchtower
+            :services="serviceNames"
+            :host-refs="watchtowerHostRefs"
+            v-model="watchtowerCfgModel"
+          />
+        </n-tab-pane>
+
+        <n-tab-pane v-if="backupTabVisible" name="backup" :tab="'Backup'">
+          <AddonTabBackup
+            :services="serviceNames"
+            :host-refs="backupHostRefs"
+            v-model="backupCfgModel"
+          />
+        </n-tab-pane>
+
         <n-tab-pane name="resources" :tab="t('stack_addon_resources.title') || 'Resources'">
           <AddonTabResources
             :services="serviceNames"
@@ -260,12 +284,16 @@ import XPanel from "@/components/Panel.vue";
 import XCodeMirror from "@/components/CodeMirror.vue";
 import StackVersionHistory from "@/components/stack-version/StackVersionHistory.vue";
 import AddonTabTraefik from "@/components/stack-addons/AddonTabTraefik.vue";
+import AddonTabSablier from "@/components/stack-addons/AddonTabSablier.vue";
+import AddonTabWatchtower from "@/components/stack-addons/AddonTabWatchtower.vue";
+import AddonTabBackup from "@/components/stack-addons/AddonTabBackup.vue";
 import AddonTabResources from "@/components/stack-addons/AddonTabResources.vue";
 import AddonTabRegistryCache from "@/components/stack-addons/AddonTabRegistryCache.vue";
 import composeStackApi from "@/api/compose_stack";
 import type {
   ComposeStack, HostAddons, AddonsConfig,
   TraefikServiceCfg, ResourcesServiceCfg,
+  SablierServiceCfg, WatchtowerServiceCfg, BackupServiceCfg,
 } from "@/api/compose_stack";
 import { parseServiceNames } from "@/utils/stack-addon-parse";
 import StackSecretsPanel from "@/components/stack-secret/StackSecretsPanel.vue";
@@ -407,6 +435,24 @@ const traefikHostRefs = computed(() => {
 // only rendered when the operator has explicitly enabled the Traefik
 // integration for the selected host from the Host edit page.
 const traefikTabVisible = computed(() => !!hostAddonExtract.value?.traefik?.enabled)
+const sablierTabVisible    = computed(() => !!hostAddonExtract.value?.sablier?.enabled)
+const watchtowerTabVisible = computed(() => !!hostAddonExtract.value?.watchtower?.enabled)
+const backupTabVisible     = computed(() => !!hostAddonExtract.value?.backup?.enabled)
+
+// Helper that turns a GenericAddonExtract subtree into the shape the
+// tab expects (stackId → stackName resolved via the loaded stack list).
+function genericHostRefs(key: 'sablier' | 'watchtower' | 'backup') {
+  const sub = hostAddonExtract.value?.[key]
+  if (!sub) return null
+  return {
+    ...sub,
+    stackName: sub.stackId ? stackNameById.value[sub.stackId] || sub.stackId : undefined,
+  }
+}
+
+const sablierHostRefs    = computed(() => genericHostRefs('sablier'))
+const watchtowerHostRefs = computed(() => genericHostRefs('watchtower'))
+const backupHostRefs     = computed(() => genericHostRefs('backup'))
 
 // hostMode is inferred from the selected host entity and forwarded to the
 // addon tabs — "swarm" means labels land under deploy.labels, otherwise
@@ -420,11 +466,16 @@ const hostMode = computed<'swarm' | 'standalone'>(() => {
 // compose payload on Save/Deploy. It's rebuilt from the persisted content
 // via the server-side parser (POST /compose-stack/parse-addons) so the tabs
 // never drift from what the Go emitter would produce on the next save.
-const addonsConfig = reactive<AddonsConfig>({ traefik: {}, resources: {} })
+const addonsConfig = reactive<AddonsConfig>({
+  traefik: {}, sablier: {}, watchtower: {}, backup: {}, resources: {},
+})
 
 async function reverseParseAddons(content: string) {
   if (!content) {
     addonsConfig.traefik = {}
+    addonsConfig.sablier = {}
+    addonsConfig.watchtower = {}
+    addonsConfig.backup = {}
     addonsConfig.resources = {}
     return
   }
@@ -432,6 +483,9 @@ async function reverseParseAddons(content: string) {
     const r = await composeStackApi.parseAddons(content)
     const cfg = (r.data as AddonsConfig) || {}
     addonsConfig.traefik = cfg.traefik || {}
+    addonsConfig.sablier = cfg.sablier || {}
+    addonsConfig.watchtower = cfg.watchtower || {}
+    addonsConfig.backup = cfg.backup || {}
     addonsConfig.resources = cfg.resources || {}
   } catch {
     // Parsing failure (e.g. invalid YAML mid-edit) leaves the current
@@ -446,6 +500,18 @@ async function reverseParseAddons(content: string) {
 const traefikCfgModel = computed<Record<string, TraefikServiceCfg>>({
   get: () => addonsConfig.traefik || {},
   set: (v) => { addonsConfig.traefik = v },
+})
+const sablierCfgModel = computed<Record<string, SablierServiceCfg>>({
+  get: () => addonsConfig.sablier || {},
+  set: (v) => { addonsConfig.sablier = v },
+})
+const watchtowerCfgModel = computed<Record<string, WatchtowerServiceCfg>>({
+  get: () => addonsConfig.watchtower || {},
+  set: (v) => { addonsConfig.watchtower = v },
+})
+const backupCfgModel = computed<Record<string, BackupServiceCfg>>({
+  get: () => addonsConfig.backup || {},
+  set: (v) => { addonsConfig.backup = v },
 })
 const resourcesCfgModel = computed<Record<string, ResourcesServiceCfg>>({
   get: () => addonsConfig.resources || {},
@@ -487,12 +553,15 @@ async function validate(): Promise<boolean> {
 // addonsPayload filters empty maps so the backend receives `undefined` when
 // the operator didn't touch any wizard tab — a minor payload hygiene tweak.
 function addonsPayload(): AddonsConfig | undefined {
-  const traefik = addonsConfig.traefik && Object.keys(addonsConfig.traefik).length
-    ? addonsConfig.traefik : undefined
-  const resources = addonsConfig.resources && Object.keys(addonsConfig.resources).length
-    ? addonsConfig.resources : undefined
-  if (!traefik && !resources) return undefined
-  return { traefik, resources }
+  const nonEmpty = <T,>(m: Record<string, T> | undefined): Record<string, T> | undefined =>
+    m && Object.keys(m).length ? m : undefined
+  const traefik    = nonEmpty(addonsConfig.traefik)
+  const sablier    = nonEmpty(addonsConfig.sablier)
+  const watchtower = nonEmpty(addonsConfig.watchtower)
+  const backup     = nonEmpty(addonsConfig.backup)
+  const resources  = nonEmpty(addonsConfig.resources)
+  if (!traefik && !sablier && !watchtower && !backup && !resources) return undefined
+  return { traefik, sablier, watchtower, backup, resources }
 }
 
 async function saveStack() {
@@ -644,6 +713,10 @@ onMounted(async () => {
       model.content = s.data.content || ''
       model.envFile = s.data.envFile || ''
       model.errorMessage = s.data.errorMessage || ''
+      // disableRegistryCache persists across sessions — load from the
+      // stored record so the Registry Cache tab reflects the saved
+      // opt-out instead of always starting false.
+      model.disableRegistryCache = !!s.data.disableRegistryCache
     }
     // Reverse-parse the persisted content so the addon tabs start in
     // sync with the YAML (marker-tagged labels/fields → tab state).

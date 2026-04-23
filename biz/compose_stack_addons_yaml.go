@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cuigh/swirl/dao"
 	"gopkg.in/yaml.v3"
 )
 
@@ -179,6 +180,52 @@ func injectAddonLabels(content string, cfg *AddonsConfig, mode string) (string, 
 		return content, fmt.Errorf("addon labels: serialize YAML: %w", err)
 	}
 	return buf, nil
+}
+
+// detectActiveAddons returns the ordered list of addon tags currently
+// emitted by a persisted stack. Cheap — reuses extractAddonConfig's
+// reverse parse. The tags populate ComposeStackSummary.ActiveAddons
+// so the list UI can render at-a-glance chips ("traefik", "backup",
+// "resources", etc.). Order matches the wizard tab order.
+//
+// `registry-cache` surfaces when the stack is NOT opted out and its
+// YAML either references the mirror hostname already or carries the
+// rewriter marker comment — in practice: any stack that would be
+// rewritten on the next deploy, which is what the operator wants to
+// see in the list.
+func detectActiveAddons(s *dao.ComposeStack) []string {
+	if s == nil || strings.TrimSpace(s.Content) == "" {
+		return nil
+	}
+	cfg, err := extractAddonConfig(s.Content)
+	if err != nil || cfg == nil {
+		return nil
+	}
+	var tags []string
+	if len(cfg.Traefik) > 0 {
+		tags = append(tags, "traefik")
+	}
+	if len(cfg.Sablier) > 0 {
+		tags = append(tags, "sablier")
+	}
+	if len(cfg.Watchtower) > 0 {
+		tags = append(tags, "watchtower")
+	}
+	if len(cfg.Backup) > 0 {
+		tags = append(tags, "backup")
+	}
+	if len(cfg.Resources) > 0 {
+		tags = append(tags, "resources")
+	}
+	// Registry Cache: opted-out stacks never surface the chip — they
+	// deliberately bypass the rewriter. Otherwise include the chip
+	// when the YAML shows evidence of a past rewrite (marker comment
+	// on a service image) — cheap to detect at list-time without
+	// touching the live Settings.RegistryCache.
+	if !s.DisableRegistryCache && strings.Contains(s.Content, "swirl-managed-registry-cache") {
+		tags = append(tags, "registry-cache")
+	}
+	return tags
 }
 
 // extractAddonConfig is the reverse parser: walks every service's labels and

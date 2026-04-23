@@ -34,6 +34,11 @@ export interface ComposeStackSummary {
     services: number;
     managed: boolean;
     updatedAt?: string;
+    // activeAddons is the ordered list of addon tags the persisted
+    // YAML emits on the next deploy (traefik, sablier, watchtower,
+    // backup, resources, registry-cache). Populated only for managed
+    // stacks; empty/undefined for externally-discovered ones.
+    activeAddons?: string[];
 }
 
 export interface ComposeContainerBrief {
@@ -153,6 +158,24 @@ export interface TraefikServiceCfg {
     labels?: Record<string, string>;
 }
 
+// Sablier / Watchtower / Backup share the same flat shape as Traefik.
+// Each owns its label-prefix namespace on the service; the backend
+// purge-and-replaces on save.
+export interface SablierServiceCfg {
+    enabled: boolean;
+    labels?: Record<string, string>;
+}
+
+export interface WatchtowerServiceCfg {
+    enabled: boolean;
+    labels?: Record<string, string>;
+}
+
+export interface BackupServiceCfg {
+    enabled: boolean;
+    labels?: Record<string, string>;
+}
+
 export interface ResourcesServiceCfg {
     cpusLimit?: string;
     cpusReservation?: string;
@@ -162,6 +185,9 @@ export interface ResourcesServiceCfg {
 
 export interface AddonsConfig {
     traefik?: Record<string, TraefikServiceCfg>;
+    sablier?: Record<string, SablierServiceCfg>;
+    watchtower?: Record<string, WatchtowerServiceCfg>;
+    backup?: Record<string, BackupServiceCfg>;
     resources?: Record<string, ResourcesServiceCfg>;
 }
 

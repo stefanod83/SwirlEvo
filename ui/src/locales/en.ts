@@ -887,6 +887,7 @@ export default {
         "reason_no_match": "No match — upstream not mapped",
         "reason_digest_preserved": "Digest-pinned — preserved",
         "reason_invalid_ref": "Invalid image reference",
+        "reason_already_mirror": "Already points at the mirror — preserved",
         "prewarm_btn": "Pre-warm mirror cache",
         "prewarm_hint": "Pulls every rewritten image through the local Swirl daemon so the mirror caches it before the target host asks.",
         "prewarm_ok": "{count} image(s) pulled successfully into the mirror cache.",
@@ -949,6 +950,19 @@ export default {
         "federation_sync_pending": "Not synced yet. Click Sync to push the portal Setting.RegistryCache to the peer.",
         "federation_sync_btn": "Sync config to peer",
         "federation_sync_ok": "Registry Cache config synced to the peer."
+    },
+    "host_addon_generic": {
+        "pointer": "Reference",
+        "defaults": "Defaults",
+        "defaults_desc": "Pre-fill values the stack-editor tab seeds new rows with on first enable (e.g. default schedule, session duration, scope).",
+        "empty": "No entries.",
+        "add_default": "Add default",
+        "disabled_hint": "{name} is disabled on this host: its tab in the stack editor is hidden. Enable it to expose the wizard.",
+        "clear_confirm": "Remove the integration data from this host?",
+        "clear_ok": "Integration data removed.",
+        "sablier_subtitle": "Curate reference stack / container + defaults used by the stack-editor Sablier tab.",
+        "watchtower_subtitle": "Curate reference stack / container + defaults used by the stack-editor Watchtower tab.",
+        "backup_subtitle": "Curate reference stack / container + defaults used by the stack-editor Backup tab."
     },
     "host_addon_traefik": {
         "enabled": "Enabled",

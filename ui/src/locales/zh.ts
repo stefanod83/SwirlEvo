@@ -881,6 +881,7 @@ export default {
         "reason_no_match": "未匹配 — 上游未映射",
         "reason_digest_preserved": "Digest 固定 — 已保留",
         "reason_invalid_ref": "镜像引用无效",
+        "reason_already_mirror": "已指向镜像 — 保留",
         "prewarm_btn": "预热镜像缓存",
         "prewarm_hint": "通过本地 Swirl daemon 预拉取每一个重写后的镜像，让镜像在目标主机请求前就已缓存。",
         "prewarm_ok": "已成功将 {count} 个镜像拉入镜像缓存。",
@@ -943,6 +944,19 @@ export default {
         "federation_sync_pending": "尚未同步。点击 Sync 将 portal 的 Setting.RegistryCache 推送给 peer。",
         "federation_sync_btn": "同步配置到 peer",
         "federation_sync_ok": "Registry Cache 配置已同步到 peer。"
+    },
+    "host_addon_generic": {
+        "pointer": "引用",
+        "defaults": "默认值",
+        "defaults_desc": "首次启用时，栈编辑器标签页会使用这些默认值预填新行（例如默认计划、会话时长、scope）。",
+        "empty": "无条目。",
+        "add_default": "添加默认值",
+        "disabled_hint": "此主机上的 {name} 已禁用：栈编辑器中对应标签页已隐藏。启用后向导重新显示。",
+        "clear_confirm": "从该主机移除集成数据？",
+        "clear_ok": "已移除集成数据。",
+        "sablier_subtitle": "配置栈编辑器 Sablier 标签页使用的引用栈 / 容器和默认值。",
+        "watchtower_subtitle": "配置栈编辑器 Watchtower 标签页使用的引用栈 / 容器和默认值。",
+        "backup_subtitle": "配置栈编辑器 Backup 标签页使用的引用栈 / 容器和默认值。"
     },
     "host_addon_traefik": {
         "enabled": "启用",
