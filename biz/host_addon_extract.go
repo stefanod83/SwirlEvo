@@ -15,7 +15,30 @@ import (
 // config file yet — the discovery flow falls back to docker-inspect only.
 type AddonConfigExtract struct {
 	Traefik       *TraefikExtract       `json:"traefik,omitempty"`
+	Sablier       *GenericAddonExtract  `json:"sablier,omitempty"`
+	Watchtower    *GenericAddonExtract  `json:"watchtower,omitempty"`
+	Backup        *GenericAddonExtract  `json:"backup,omitempty"`
 	RegistryCache *RegistryCacheExtract `json:"registryCache,omitempty"`
+}
+
+// GenericAddonExtract is the shared shape for the "simpler" addons
+// (Sablier / Watchtower / Backup). Compared to TraefikExtract it drops
+// the file-upload pipeline (these addons don't ship a canonical static
+// config file Swirl would parse) and keeps only:
+//   - Enabled : master switch that gates the stack-editor tab.
+//   - StackID / ContainerName : optional pointers to the managed stack
+//     (or free-form container name) that runs this addon on the host.
+//     Informational — the stack-editor tab shows them as a badge.
+//   - Defaults : pre-fill values the stack-editor seeds new rows with
+//     (e.g. default schedule for Backup, session duration for Sablier).
+//   - Overrides : free-form key/value hints surfaced read-only in the
+//     stack tab so operators document host-specific conventions.
+type GenericAddonExtract struct {
+	Enabled       bool              `json:"enabled"`
+	StackID       string            `json:"stackId,omitempty"`
+	ContainerName string            `json:"containerName,omitempty"`
+	Defaults      map[string]string `json:"defaults,omitempty"`
+	Overrides     map[string]string `json:"overrides,omitempty"`
 }
 
 // RegistryCacheExtract is the per-host opt-in state for the pull-through
@@ -199,6 +222,20 @@ func (b *hostBiz) UpdateAddonConfigExtract(ctx context.Context, hostID string, e
 		}
 		current.Traefik = &t
 	}
+	// Sablier / Watchtower / Backup — identical shape, replace on
+	// presence. Unset → left as-is so callers can partial-update.
+	if extract != nil && extract.Sablier != nil {
+		s := *extract.Sablier
+		current.Sablier = &s
+	}
+	if extract != nil && extract.Watchtower != nil {
+		w := *extract.Watchtower
+		current.Watchtower = &w
+	}
+	if extract != nil && extract.Backup != nil {
+		bk := *extract.Backup
+		current.Backup = &bk
+	}
 	buf, err := json.Marshal(current)
 	if err != nil {
 		return err
@@ -226,6 +263,12 @@ func (b *hostBiz) ClearAddonConfigExtract(ctx context.Context, hostID, addon str
 	switch addon {
 	case "traefik":
 		current.Traefik = nil
+	case "sablier":
+		current.Sablier = nil
+	case "watchtower":
+		current.Watchtower = nil
+	case "backup":
+		current.Backup = nil
 	case "registryCache":
 		current.RegistryCache = nil
 	}

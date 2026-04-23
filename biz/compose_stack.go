@@ -146,6 +146,13 @@ type ComposeStackSummary struct {
 	Services   int    `json:"services"`
 	Managed    bool   `json:"managed"`
 	UpdatedAt  string `json:"updatedAt,omitempty"`
+	// ActiveAddons lists the addon tags the persisted YAML would emit
+	// on its next deploy. Populated by scanning labels + deploy.resources
+	// + compose-stack flags. The list is ordered (traefik, sablier,
+	// watchtower, backup, resources, registry-cache) so the UI can
+	// render a stable chip sequence. Only populated for managed stacks
+	// (we have the authored YAML); external discovered stacks omit it.
+	ActiveAddons []string `json:"activeAddons,omitempty"`
 }
 
 type composeStackBiz struct {
@@ -211,13 +218,14 @@ func (b *composeStackBiz) Search(ctx context.Context, args *dao.ComposeStackSear
 		key := s.HostID + "|" + s.Name
 		seen[key] = true
 		sum := &ComposeStackSummary{
-			ID:        s.ID,
-			HostID:    s.HostID,
-			HostName:  hostName[s.HostID],
-			Name:      s.Name,
-			Status:    s.Status,
-			Managed:   true,
-			UpdatedAt: formatTime(time.Time(s.UpdatedAt)),
+			ID:           s.ID,
+			HostID:       s.HostID,
+			HostName:     hostName[s.HostID],
+			Name:         s.Name,
+			Status:       s.Status,
+			Managed:      true,
+			UpdatedAt:    formatTime(time.Time(s.UpdatedAt)),
+			ActiveAddons: detectActiveAddons(s),
 		}
 		if info, ok := discovered[key]; ok {
 			sum.Status = info.Status

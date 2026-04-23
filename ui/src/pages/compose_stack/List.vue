@@ -77,6 +77,39 @@ const hostSubtitle = computed(() => {
   return h?.name || ''
 })
 
+// Colour + short label for each addon tag. Keeping the palette
+// unobtrusive (tiny round tag, quaternary-ish intensities) matches
+// the "a colpo d'occhio, poco invadente" brief — the operator sees
+// at a glance which addons are active on each stack without the
+// badges stealing focus from the stack name.
+const ADDON_BADGE_META: Record<string, { label: string; type: 'info' | 'success' | 'warning' | 'default' | 'error' }> = {
+  traefik:         { label: 'Traefik',  type: 'info' },
+  sablier:         { label: 'Sablier',  type: 'warning' },
+  watchtower:      { label: 'Watchtower', type: 'default' },
+  backup:          { label: 'Backup',   type: 'success' },
+  resources:       { label: 'Resources', type: 'warning' },
+  'registry-cache': { label: 'Registry Cache', type: 'info' },
+}
+
+function renderAddonBadges(addons: string[] | undefined) {
+  if (!addons || !addons.length) return null
+  const chips = addons.map(a => {
+    const meta = ADDON_BADGE_META[a] || { label: a, type: 'default' as const }
+    return h(
+      NTag,
+      {
+        size: 'small',
+        type: meta.type,
+        round: true,
+        bordered: false,
+        style: 'font-size: 10px; padding: 0 6px; line-height: 16px; height: 16px',
+      },
+      { default: () => meta.label },
+    )
+  })
+  return h('span', { style: 'display: inline-flex; gap: 4px; flex-wrap: wrap' }, chips)
+}
+
 function actionButton(type: 'default' | 'error' | 'warning' | 'success' | 'info', iconCmp: any, tooltip: string, disabled: boolean, onClick: () => void) {
   return h(NTooltip, { trigger: 'hover' }, {
     trigger: () => h(NButton, { size: 'tiny', quaternary: true, type, disabled, onClick }, { icon: () => h(NIcon, null, { default: () => h(iconCmp) }) }),
@@ -196,7 +229,10 @@ const columns = [
         const badge = h(NTag, { size: 'small', type: 'default', round: true, style: 'margin-left:6px' }, { default: () => t('fields.external') || 'external' })
         return h('span', null, [link, badge])
       }
-      return renderLink({ name: 'std_stack_detail', params: { id: s.id } }, s.name)
+      const link = renderLink({ name: 'std_stack_detail', params: { id: s.id } }, s.name)
+      const addons = renderAddonBadges(s.activeAddons)
+      if (!addons) return link
+      return h('span', { style: 'display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap' }, [link, addons])
     },
   },
   {
