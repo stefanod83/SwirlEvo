@@ -45,8 +45,60 @@
       {{ t('host_addon_registry_cache.mirror_disabled') }}
     </n-alert>
 
-    <!-- Everything below depends on a configured mirror. -->
-    <template v-if="status?.mirrorEnabled">
+    <!-- Federation variant: swarm_via_swirl hosts cannot have their
+         daemon.json edited by this portal (direct socket access is
+         out of scope by design). Instead, the portal PUSHES the
+         local Setting.RegistryCache to the peer Swirl running
+         MODE=swarm, which then runs its own bootstrap internally.
+         Keeps the full standalone / SSH path untouched. -->
+    <template v-if="isFederation && status?.mirrorEnabled">
+      <n-alert type="info" :show-icon="true" style="margin-bottom: 12px">
+        {{ t('host_addon_registry_cache.federation_banner') }}
+      </n-alert>
+      <n-descriptions
+        :column="1"
+        size="small"
+        label-placement="left"
+        bordered
+        style="margin-bottom: 12px"
+      >
+        <n-descriptions-item :label="t('host_addon_registry_cache.mirror_url')">
+          <code style="font-size: 12px">{{ mirrorURL }}</code>
+        </n-descriptions-item>
+        <n-descriptions-item
+          v-if="status?.mirrorFingerprint"
+          :label="t('host_addon_registry_cache.fingerprint')"
+        >
+          <code style="font-size: 11px; word-break: break-all">{{ status.mirrorFingerprint }}</code>
+        </n-descriptions-item>
+      </n-descriptions>
+      <div class="rc-block">
+        <div class="rc-block-title">{{ t('host_addon_registry_cache.federation_sync_title') }}</div>
+        <n-space v-if="status?.lastSyncAt" :size="8" align="center" style="margin-bottom: 8px">
+          <n-tag size="small" :type="syncFingerprintMatches ? 'success' : 'warning'" round>
+            {{ syncFingerprintMatches ? t('host_addon_registry_cache.applied_ok') : t('host_addon_registry_cache.applied_stale') }}
+          </n-tag>
+          <span class="sd-muted">
+            {{ t('host_addon_registry_cache.applied_meta', {
+              date: formatDate(status.lastSyncAt),
+              who: status.lastSyncBy || '—',
+            }) }}
+          </span>
+        </n-space>
+        <n-space v-else style="margin-bottom: 8px">
+          <span class="sd-muted">{{ t('host_addon_registry_cache.federation_sync_pending') }}</span>
+        </n-space>
+        <n-space>
+          <n-button type="primary" size="small" :loading="syncing" @click="syncToPeer">
+            {{ t('host_addon_registry_cache.federation_sync_btn') }}
+          </n-button>
+        </n-space>
+      </div>
+    </template>
+
+    <!-- Everything below is the standalone/SSH bootstrap path. Only
+         shown for non-federation hosts. -->
+    <template v-if="!isFederation && status?.mirrorEnabled">
       <n-alert v-if="!local.enabled" type="info" :show-icon="true" style="margin-bottom: 12px">
         {{ t('host_addon_registry_cache.disabled_hint') }}
       </n-alert>
@@ -179,12 +231,18 @@ import {
 import { useI18n } from 'vue-i18n'
 import XPanel from '@/components/Panel.vue'
 import {
-  registryCacheGet, registryCacheSave, clearAddonExtract,
+  registryCacheGet, registryCacheSave, registryCacheSyncToPeer, clearAddonExtract,
   type RegistryCacheHostStatus,
 } from '@/api/host'
 
 const props = defineProps<{
   hostId: string
+  // Host.Type — lets the component decide between the
+  // standalone/SSH bootstrap path ("standalone") and the federation
+  // delegation variant ("swarm_via_swirl"). The standalone path
+  // generates daemon.json snippets + bootstrap script; the federation
+  // path pushes Setting.RegistryCache to the peer Swirl.
+  hostType?: string
   // Optional parent-controlled collapse (opt-in). Matches the pattern
   // used by HostAddonTraefik so the Host edit page can run a
   // Settings-style single-expanded accordion without every addon
@@ -199,9 +257,11 @@ const message = useMessage()
 
 const isControlled = computed(() => props.collapsed !== undefined)
 const effectiveCollapsed = computed(() => isControlled.value ? !!props.collapsed : false)
+const isFederation = computed(() => props.hostType === 'swarm_via_swirl')
 
 const loading = ref(false)
 const saving = ref(false)
+const syncing = ref(false)
 const status = ref<RegistryCacheHostStatus | null>(null)
 const local = reactive({
   enabled: false,
@@ -221,6 +281,15 @@ const fingerprintMatches = computed(() => {
   if (!status.value?.appliedFingerprint) return true
   if (!status.value?.mirrorFingerprint) return true
   return status.value.appliedFingerprint === status.value.mirrorFingerprint
+})
+
+// Federation fingerprint drift: the portal stamps LastSyncFingerprint
+// at the moment of a successful push; a subsequent CA rotation on the
+// portal leaves the peer behind until the next sync.
+const syncFingerprintMatches = computed(() => {
+  if (!status.value?.lastSyncFingerprint) return true
+  if (!status.value?.mirrorFingerprint) return true
+  return status.value.lastSyncFingerprint === status.value.mirrorFingerprint
 })
 
 function formatDate(s: string): string {
@@ -268,6 +337,20 @@ async function save(markApplied: boolean) {
     message.error(e?.response?.data?.info || e?.message || String(e))
   } finally {
     saving.value = false
+  }
+}
+
+async function syncToPeer() {
+  if (!props.hostId) return
+  syncing.value = true
+  try {
+    await registryCacheSyncToPeer(props.hostId)
+    await refresh()
+    message.success(t('host_addon_registry_cache.federation_sync_ok'))
+  } catch (e: any) {
+    message.error(e?.response?.data?.info || e?.message || String(e))
+  } finally {
+    syncing.value = false
   }
 }
 

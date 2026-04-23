@@ -145,9 +145,15 @@
         :collapsed="panel !== 'traefik'"
         @toggle="togglePanel('traefik')"
       />
+      <!-- Registry Cache is available for BOTH standalone hosts
+           (daemon.json bootstrap path) AND swarm_via_swirl federated
+           peers (Setting mirror-to-peer delegation). The component
+           switches mode based on hostType. Excluded only at create
+           time, when model.id is still empty. -->
       <HostAddonRegistryCache
-        v-if="isEdit && !isFederation && model.id"
+        v-if="isEdit && model.id"
         :host-id="model.id"
+        :host-type="model.type"
         :collapsed="panel !== 'registry_cache'"
         @toggle="togglePanel('registry_cache')"
       />

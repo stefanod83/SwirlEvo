@@ -118,6 +118,12 @@ export interface RegistryCacheHostStatus {
   appliedAt?: string
   appliedBy?: string
   appliedFingerprint?: string
+  // Federation-only fields (populated for swarm_via_swirl hosts):
+  // the portal records every successful push to the peer here so
+  // the UI can show "synced at X" + flag CA fingerprint drift.
+  lastSyncAt?: string
+  lastSyncBy?: string
+  lastSyncFingerprint?: string
   mirrorEnabled: boolean
   mirrorHostname?: string
   mirrorPort?: number
@@ -137,4 +143,14 @@ export function registryCacheSave(payload: {
   markApplied: boolean
 }) {
   return ajax.post('/host/registry-cache-save', payload)
+}
+
+// Registry Cache federation sync (Phase 4). For swarm_via_swirl hosts
+// only: the portal pushes its Setting.RegistryCache to the remote
+// Swirl running MODE=swarm. The peer applies it to its own Settings.
+// Response includes the sync timestamp; the UI also polls
+// registryCacheGet to read back LastSyncAt / LastSyncBy /
+// LastSyncFingerprint drift.
+export function registryCacheSyncToPeer(hostId: string) {
+  return ajax.post<{ syncedAt: string }>('/federation/peers/registry-cache/sync', { hostId })
 }

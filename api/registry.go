@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/cuigh/auxo/net/web"
 	"github.com/cuigh/swirl/biz"
@@ -72,6 +74,12 @@ func registryDelete(b biz.RegistryBiz) web.HandlerFunc {
 			defer cancel()
 
 			err = b.Delete(ctx, args.ID, args.Name, c.User())
+		}
+		// 409 Conflict when the Registry is still referenced as the
+		// Registry Cache source — the UI surfaces a targeted message
+		// ("unlink before deleting") based on this status.
+		if errors.Is(err, biz.ErrRegistryLinked) {
+			return web.NewError(http.StatusConflict, err.Error())
 		}
 		return ajax(c, err)
 	}

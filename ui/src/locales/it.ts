@@ -754,6 +754,8 @@ export default {
     "registry": {
         "skip_tls_verify": "Salta verifica TLS",
         "skip_tls_verify_hint": "Disabilita la verifica TLS per le chiamate di browse/catalog. Utile solo per registry con certificati self-signed. Il push tramite Docker daemon dipende comunque da `insecure-registries` in daemon.json.",
+        "ca_cert_pem": "Certificato CA (PEM)",
+        "ca_fingerprint": "Fingerprint (SHA-256)",
         "repositories": "Repository",
         "repository": "Repository",
         "no_repos": "Nessun repository restituito dal registry.",
@@ -873,7 +875,12 @@ export default {
         "col_upstream": "Upstream → prefix",
         "reason_no_match": "Nessun match — upstream non mappato",
         "reason_digest_preserved": "Pin a digest — preservato",
-        "reason_invalid_ref": "Riferimento immagine non valido"
+        "reason_invalid_ref": "Riferimento immagine non valido",
+        "prewarm_btn": "Pre-warm cache mirror",
+        "prewarm_hint": "Effettua il pull di ogni immagine riscritta attraverso il daemon Swirl locale, popolando il cache del mirror prima che l'host target lo richieda.",
+        "prewarm_ok": "{count} immagine/i pullate con successo nel cache del mirror.",
+        "prewarm_partial": "{ok} immagine/i pullate, {fail} fallite — controlla i log del mirror.",
+        "prewarm_fail": "Tutte le {count} pull sono fallite — verifica che il daemon locale sia bootstrappato per il mirror."
     },
     "stack_addon_traefik": {
         "detected": "Traefik",
@@ -917,7 +924,12 @@ export default {
         "mark_applied": "Marca come applicato",
         "save_ok": "Salvato.",
         "clear_ok": "Opt-in Registry Cache rimosso per questo host.",
-        "clear_confirm": "Rimuovere l'opt-in Registry Cache da questo host? Il bootstrap applicato sul daemon resta: puoi revertirlo manualmente."
+        "clear_confirm": "Rimuovere l'opt-in Registry Cache da questo host? Il bootstrap applicato sul daemon resta: puoi revertirlo manualmente.",
+        "federation_banner": "Questo è un peer swarm federato tramite Swirl. La configurazione a livello daemon non può essere pushata da qui — il portal SINCRONIZZA invece il proprio Setting.RegistryCache al peer Swirl, che poi esegue il bootstrap sui propri nodi.",
+        "federation_sync_title": "Sync con peer",
+        "federation_sync_pending": "Non ancora sincronizzato. Clicca Sync per pushare il Setting.RegistryCache del portal al peer.",
+        "federation_sync_btn": "Sync config al peer",
+        "federation_sync_ok": "Config Registry Cache sincronizzata al peer."
     },
     "host_addon_traefik": {
         "enabled": "Abilitato",
@@ -1059,23 +1071,27 @@ export default {
         "ca_cert_pem": "Certificato CA (PEM)",
         "ca_fingerprint": "Fingerprint (SHA-256)",
         "ca_key_pem": "Chiave privata (PEM)",
-        "upstreams": "Mapping upstream",
-        "upstream_placeholder": "docker.io",
-        "prefix_placeholder": "dockerhub",
-        "upstreams_hint": "Mappa ogni dominio registry upstream (docker.io, gcr.io, quay.io, …) su un prefisso di path sotto il mirror. I prefissi devono essere unici e in formato slug (a-z, 0-9, trattini).",
+        "use_upstream_prefix": "Prefissa il registry upstream al path",
+        "use_upstream_prefix_hint": "Quando ATTIVO (default), le immagini riscritte finiscono a <mirror>/<dominio-registry>/<repo>:<tag> — layout multi-upstream alla Harbor/Nexus, con ogni registry sorgente sotto il proprio prefisso. Quando SPENTO, il dominio viene rimosso e le immagini finiscono a <mirror>/<repo>:<tag> — adatto a un mirror single-upstream che proxyza esattamente un registry (tipicamente Docker Hub).",
         "rewrite_mode": "Modalità rewriting",
         "rewrite_off": "Disattivato",
         "rewrite_per_host": "Per host (solo host con opt-in)",
         "rewrite_always": "Sempre (tutti gli host)",
         "preserve_digests": "Preserva immagini con digest",
-        "preserve_digests_hint": "Se attivo, le immagini referenziate con @sha256:… non vengono riscritte — i pin a digest indicano solitamente un requisito upstream esplicito.",
+        "preserve_digests_hint": "Se attivo, le immagini referenziate via digest sha256 non vengono riscritte — i pin a digest indicano solitamente un requisito upstream esplicito.",
         "gen_ca": "Genera CA",
         "gen_ca_title": "CA self-signed — generazione una tantum",
         "gen_ca_warning": "La chiave privata viene mostrata UNA sola volta. Scaricala ora; Swirl non la persiste mai. Usala sul tuo mirror per firmare il certificato del server, poi clicca 'Usa certificato' per popolare il campo CA.",
         "download_cert": "Scarica certificato",
         "download_key": "Scarica chiave",
         "use_cert": "Usa questo certificato",
-        "cert_applied": "Certificato applicato — ricordati di salvare."
+        "cert_applied": "Certificato applicato — ricordati di salvare.",
+        "ping_btn": "Ping mirror",
+        "ping_ok": "Raggiungibile — HTTP {status} in {ms}ms",
+        "ping_fail": "Non raggiungibile: {error}",
+        "linked_registry": "Link a Registry",
+        "linked_registry_placeholder": "— configurazione inline —",
+        "linked_registry_hint": "Hostname, porta, credenziali e CA vengono prese dal Registry linkato. Gli update sul Registry si propagano automaticamente."
     },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork). Tutti i diritti riservati.",
 }

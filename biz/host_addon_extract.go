@@ -45,6 +45,16 @@ type RegistryCacheExtract struct {
 	// Phase 5 to flag hosts whose daemon trust is stale after a CA
 	// rotation.
 	AppliedFingerprint string `json:"appliedFingerprint,omitempty"`
+	// LastSyncAt / LastSyncBy record the federation-delegation push
+	// (Phase 4) for swarm_via_swirl hosts: the portal cannot rewrite
+	// daemon.json on the peer's nodes directly, so it mirrors the
+	// global Setting.RegistryCache to the peer's own Settings via
+	// /api/federation/registry-cache/receive. These fields are only
+	// populated for swarm_via_swirl hosts; standalone hosts use
+	// AppliedAt instead.
+	LastSyncAt          time.Time `json:"lastSyncAt,omitempty"`
+	LastSyncBy          string    `json:"lastSyncBy,omitempty"`
+	LastSyncFingerprint string    `json:"lastSyncFingerprint,omitempty"`
 }
 
 // TraefikExtract carries the host-level Traefik configuration the operator

@@ -265,6 +265,25 @@ export class ComposeStackApi {
     }) {
         return ajax.post<RegistryCachePreviewResponse>('/compose-stack/registry-cache-preview', payload)
     }
+
+    registryCacheWarm(payload: {
+        hostId: string
+        content: string
+        disableRegistryCache: boolean
+    }) {
+        return ajax.post<RegistryCacheWarmResponse>('/compose-stack/registry-cache-warm', payload)
+    }
+}
+
+export interface RegistryCacheWarmResultItem {
+    ref: string
+    ok: boolean
+    error?: string
+    latencyMs?: number
+}
+
+export interface RegistryCacheWarmResponse {
+    results: RegistryCacheWarmResultItem[]
 }
 
 export interface RegistryCacheRewriteAction {

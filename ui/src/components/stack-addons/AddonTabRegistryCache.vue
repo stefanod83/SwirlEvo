@@ -22,6 +22,33 @@
       <span class="hint">{{ t('stack_addon_registry_cache.disable_hint') }}</span>
     </n-space>
 
+    <!-- Pre-warm: pre-pulls every rewritten image through the local
+         Swirl daemon. Populates the mirror's cache before the first
+         target-host deploy so the heavy layer traffic hits the faster
+         portal-to-mirror link. Enabled only when we have rewrite
+         actions (no point pulling nothing). -->
+    <n-space
+      v-if="hasRewrites"
+      :size="8"
+      align="center"
+      style="margin-bottom: 12px"
+    >
+      <n-button size="small" :loading="warming" @click="prewarm">
+        {{ t('stack_addon_registry_cache.prewarm_btn') }}
+      </n-button>
+      <span class="hint">{{ t('stack_addon_registry_cache.prewarm_hint') }}</span>
+    </n-space>
+    <n-alert
+      v-if="warmSummary"
+      :type="warmSummaryType"
+      :show-icon="true"
+      closable
+      style="margin-bottom: 12px"
+      @close="warmSummary = null"
+    >
+      {{ warmSummary }}
+    </n-alert>
+
     <!-- Preview table: one row per service. Rewrites show as
          original → rewritten with the matched upstream/prefix; skips
          show the reason. -->
@@ -61,6 +88,49 @@ const { t } = useI18n()
 
 const loading = ref(false)
 const preview = ref<RegistryCachePreviewResponse | null>(null)
+const warming = ref(false)
+const warmSummary = ref<string | null>(null)
+const warmSummaryType = ref<'success' | 'warning' | 'error'>('success')
+
+// hasRewrites reflects whether at least one preview action has a
+// non-empty Rewritten target. Used to hide the pre-warm button when
+// there is literally nothing to pull (empty stack / all digest-pinned /
+// rewriter disabled).
+const hasRewrites = computed(() => {
+  if (!preview.value?.actions) return false
+  return preview.value.actions.some(a => !!a.rewritten)
+})
+
+async function prewarm() {
+  if (!props.hostId || !props.content) return
+  warming.value = true
+  warmSummary.value = null
+  try {
+    const r = await composeStackApi.registryCacheWarm({
+      hostId: props.hostId,
+      content: props.content,
+      disableRegistryCache: props.disabled,
+    })
+    const results = r.data?.results || []
+    const ok = results.filter((x: any) => x.ok).length
+    const fail = results.length - ok
+    if (fail === 0) {
+      warmSummaryType.value = 'success'
+      warmSummary.value = t('stack_addon_registry_cache.prewarm_ok', { count: ok })
+    } else if (ok === 0) {
+      warmSummaryType.value = 'error'
+      warmSummary.value = t('stack_addon_registry_cache.prewarm_fail', { count: fail })
+    } else {
+      warmSummaryType.value = 'warning'
+      warmSummary.value = t('stack_addon_registry_cache.prewarm_partial', { ok, fail })
+    }
+  } catch (e: any) {
+    warmSummaryType.value = 'error'
+    warmSummary.value = e?.response?.data?.info || e?.message || String(e)
+  } finally {
+    warming.value = false
+  }
+}
 
 function onToggleDisable(v: boolean) {
   emit('update:disabled', v)
@@ -100,14 +170,10 @@ const columns = computed(() => [
   {
     title: t('stack_addon_registry_cache.col_upstream'),
     key: 'upstream',
-    width: 180,
+    width: 140,
     render: (r: RegistryCacheRewriteAction) => {
       if (!r.upstream) return h('span', { class: 'sd-muted' }, '—')
-      return h('span', {}, [
-        h('code', { style: 'font-size: 11px' }, r.upstream),
-        ' → ',
-        h('code', { style: 'font-size: 11px' }, r.prefix || ''),
-      ])
+      return h('code', { style: 'font-size: 11px' }, r.upstream)
     },
   },
 ])

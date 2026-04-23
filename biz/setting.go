@@ -163,10 +163,17 @@ func (b *settingBiz) Save(ctx context.Context, id string, options interface{}, u
 	}
 
 	// Per-id normalization (e.g. derived fields like the registry_cache
-	// CA fingerprint) and validation (e.g. uniqueness of upstream
-	// prefixes). Validation errors bubble up to the API handler, which
-	// wraps them with 422 in the settingSave path.
+	// CA fingerprint) and validation. Validation errors bubble up to
+	// the API handler, which wraps them with 422 in the settingSave
+	// path.
 	options = normalizeSettingOptions(id, options)
+	if id == "registry_cache" {
+		// Registry-linked mode: when Setting.RegistryCache.RegistryID
+		// is set, overlay Hostname/Port/Username/Password/CA* from
+		// the referenced Registry so the stored blob always tracks
+		// the Registry catalog (no drift).
+		options = overlayRegistryCacheFromRegistry(ctx, b.d, options)
+	}
 	if err = validateSettingOptions(id, options); err != nil {
 		return
 	}

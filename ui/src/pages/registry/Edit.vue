@@ -31,6 +31,26 @@
             {{ t('registry.skip_tls_verify_hint') }}
           </n-checkbox>
         </n-form-item-gi>
+        <!-- Optional CA PEM: distributed to managed hosts by the
+             Registry Cache bootstrap when this Registry is linked as
+             the mirror source. Plain text — public material. -->
+        <n-gi :span="2">
+          <n-form-item :label="t('registry.ca_cert_pem')" path="caCertPem">
+            <n-input
+              type="textarea"
+              :autosize="{ minRows: 3, maxRows: 10 }"
+              placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+              v-model:value="model.caCertPem"
+            />
+          </n-form-item>
+          <div
+            v-if="model.caFingerprint"
+            style="margin: -6px 0 12px 0; padding: 6px 10px; font-size: 12px; color: var(--n-text-color-3, #666); background-color: rgba(128,128,128,0.06); border-left: 3px solid rgba(64,128,255,0.45); border-radius: 4px"
+          >
+            <strong>{{ t('registry.ca_fingerprint') }}:</strong>
+            <code style="font-size: 11px; word-break: break-all">{{ model.caFingerprint }}</code>
+          </div>
+        </n-gi>
         <n-gi :span="2">
           <n-button
             @click.prevent="submit"
@@ -59,6 +79,7 @@ import {
   NInput,
   NIcon,
   NForm,
+  NFormItem,
   NGrid,
   NGi,
   NFormItemGi,

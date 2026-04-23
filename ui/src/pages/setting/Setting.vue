@@ -825,9 +825,27 @@
         <n-form-item :label="t('fields.enabled')" path="registry_cache.enabled" label-align="right">
           <n-switch v-model:value="setting.registry_cache.enabled" />
         </n-form-item>
+        <!-- Link to Registry catalog: single source of truth for
+             hostname / port / credentials / CA. When selected, the
+             inline mirror fields become read-only (overlayed on Save
+             from the Registry). Clearing reverts to inline mode. -->
+        <n-form-item :label="t('registry_cache.linked_registry')" path="registry_cache.registry_id" label-align="right">
+          <n-select
+            v-model:value="setting.registry_cache.registry_id"
+            :options="registryOptions"
+            :placeholder="t('registry_cache.linked_registry_placeholder')"
+            clearable
+            style="min-width: 320px"
+          />
+        </n-form-item>
+        <div v-if="rcIsLinked" class="hint">
+          <strong>{{ t('registry_cache.linked_registry') }}:</strong>
+          {{ t('registry_cache.linked_registry_hint') }}
+        </div>
         <n-form-item :label="t('registry_cache.hostname')" path="registry_cache.hostname" label-align="right">
           <n-input
             :placeholder="t('registry_cache.hostname_placeholder')"
+            :disabled="rcIsLinked"
             v-model:value="setting.registry_cache.hostname"
           />
         </n-form-item>
@@ -835,6 +853,7 @@
           <n-input-number
             :min="1"
             :max="65535"
+            :disabled="rcIsLinked"
             v-model:value="setting.registry_cache.port"
             style="width: 160px"
           />
@@ -858,6 +877,7 @@
         <n-form-item :label="t('registry_cache.username')" path="registry_cache.username" label-align="right">
           <n-input
             :placeholder="t('registry_cache.username_placeholder')"
+            :disabled="rcIsLinked"
             v-model:value="setting.registry_cache.username"
           />
         </n-form-item>
@@ -866,6 +886,7 @@
             type="password"
             show-password-on="click"
             :placeholder="t('registry_cache.password_placeholder')"
+            :disabled="rcIsLinked"
             v-model:value="setting.registry_cache.password"
           />
         </n-form-item>
@@ -875,6 +896,7 @@
             type="textarea"
             :autosize="{ minRows: 3, maxRows: 10 }"
             placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+            :disabled="rcIsLinked"
             v-model:value="setting.registry_cache.ca_cert_pem"
           />
         </n-form-item>
@@ -883,25 +905,39 @@
           <code style="font-size: 11px; word-break: break-all">{{ setting.registry_cache.ca_fingerprint }}</code>
         </div>
 
-        <n-form-item :label="t('registry_cache.upstreams')" label-align="right" :show-feedback="false">
-          <n-dynamic-input
-            v-model:value="rcUpstreamPairs"
-            :on-create="() => ({ upstream: '', prefix: '' })"
-            #="{ value }"
+        <!-- Live ping probe: POST /api/registry-cache/ping. Operator
+             can verify the mirror is reachable without leaving the
+             Settings tab. Badge updates on-demand (click) so we do
+             not hammer the mirror every page load. -->
+        <n-space
+          v-if="setting.registry_cache.enabled"
+          :size="8"
+          align="center"
+          style="margin-top: 8px; margin-bottom: 8px"
+        >
+          <n-button size="small" :loading="rcPinging" @click="pingMirror">
+            {{ t('registry_cache.ping_btn') }}
+          </n-button>
+          <n-tag
+            v-if="rcPingResult"
+            :type="rcPingResult.ok ? 'success' : 'error'"
+            size="small"
+            round
           >
-            <n-input
-              :placeholder="t('registry_cache.upstream_placeholder')"
-              v-model:value="value.upstream"
-              style="flex: 1"
-            />
-            <n-input
-              :placeholder="t('registry_cache.prefix_placeholder')"
-              v-model:value="value.prefix"
-              style="flex: 1; margin-left: 8px"
-            />
-          </n-dynamic-input>
+            {{ rcPingResult.ok
+              ? t('registry_cache.ping_ok', { status: rcPingResult.status, ms: rcPingResult.latencyMs || 0 })
+              : t('registry_cache.ping_fail', { error: rcPingResult.error || String(rcPingResult.status) }) }}
+          </n-tag>
+        </n-space>
+
+        <n-form-item
+          :label="t('registry_cache.use_upstream_prefix')"
+          path="registry_cache.use_upstream_prefix"
+          label-align="right"
+        >
+          <n-switch v-model:value="setting.registry_cache.use_upstream_prefix" />
         </n-form-item>
-        <div class="hint">{{ t('registry_cache.upstreams_hint') }}</div>
+        <div class="hint">{{ t('registry_cache.use_upstream_prefix_hint') }}</div>
 
         <n-space style="margin-top: 12px">
           <n-button
@@ -910,7 +946,7 @@
             @click="saveRegistryCache"
           >{{ t('buttons.save') }}</n-button>
           <n-button
-            v-if="canEditRegistryCache"
+            v-if="canEditRegistryCache && !rcIsLinked"
             :loading="rcGenerating"
             @click="openGenCA"
           >{{ t('registry_cache.gen_ca') }}</n-button>
@@ -1045,7 +1081,8 @@ import selfDeployApi, {
 } from "@/api/self-deploy";
 import composeStackApi, { type ComposeStackSummary } from "@/api/compose_stack";
 import { useAutoDeployProgress } from "@/composables/useAutoDeployProgress";
-import registryCacheApi, { type GenCAResult } from "@/api/registry-cache";
+import registryCacheApi, { type GenCAResult, type PingResult } from "@/api/registry-cache";
+import registryApi from "@/api/registry";
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -1057,13 +1094,14 @@ const { t } = useI18n()
 function rcDefaults() {
   return {
     enabled: false,
+    registry_id: '',
     hostname: '',
     port: 5000,
     ca_cert_pem: '',
     ca_fingerprint: '',
     username: '',
     password: '',
-    upstreams: [] as { upstream: string; prefix: string }[],
+    use_upstream_prefix: true,
     rewrite_mode: 'per-host' as 'off' | 'per-host' | 'always',
     preserve_digests: true,
   }
@@ -1140,13 +1178,39 @@ const rcGenOpen = ref(false)
 const rcGenerating = ref(false)
 const rcGenResult = ref<GenCAResult | null>(null)
 
-// Upstream mappings bound to n-dynamic-input via a separate top-level
-// ref. Mirrors the Keycloak groupRolePairs pattern — avoids the
-// reactivity edge cases that n-dynamic-input hits when v-model:value
-// targets a nested path inside a ref-wrapped object.
-// Hydrated from setting.registry_cache.upstreams in fetchData; copied
-// back to it in the registry_cache save handler.
-const rcUpstreamPairs = ref<{ upstream: string; prefix: string }[]>([])
+const rcPinging = ref(false)
+const rcPingResult = ref<PingResult | null>(null)
+
+// Registry catalog options bound to the "Link to Registry" selector.
+// Populated at mount from /api/registry/search. When the operator
+// selects one, its id is stored in setting.registry_cache.registry_id
+// and the overlay on Save pulls hostname/port/credentials/CA from
+// the Registry entity.
+const registryOptions = ref<{ label: string; value: string }[]>([])
+const rcIsLinked = computed(() => !!setting.value.registry_cache?.registry_id)
+
+async function loadRegistryOptions() {
+  try {
+    const r = await registryApi.search()
+    registryOptions.value = (r.data || []).map(reg => ({
+      label: `${reg.name} (${reg.url})`,
+      value: reg.id,
+    }))
+  } catch { /* silent — the dropdown just stays empty */ }
+}
+
+async function pingMirror() {
+  rcPinging.value = true
+  try {
+    const r = await registryCacheApi.ping()
+    rcPingResult.value = (r.data ?? null) as PingResult | null
+  } catch (e: any) {
+    rcPingResult.value = { ok: false, error: e?.response?.data?.info || e?.message || String(e) }
+  } finally {
+    rcPinging.value = false
+  }
+}
+
 
 async function openGenCA() {
   rcGenerating.value = true
@@ -1162,13 +1226,6 @@ async function openGenCA() {
 }
 
 async function saveRegistryCache() {
-  // Sync the separate n-dynamic-input ref back into the nested
-  // setting.registry_cache.upstreams just before sending to the
-  // backend. Filter out empty rows so the backend never sees empty
-  // upstream/prefix pairs.
-  setting.value.registry_cache.upstreams = rcUpstreamPairs.value
-    .map(p => ({ upstream: (p.upstream || '').trim(), prefix: (p.prefix || '').trim() }))
-    .filter(p => p.upstream && p.prefix)
   await save('registry_cache', setting.value.registry_cache)
 }
 
@@ -1547,12 +1604,8 @@ async function fetchData() {
     rcDefaults(),
     setting.value.registry_cache || {},
   ) as any
-  // n-dynamic-input + the radio group misbehave on non-array /
-  // non-matching values — coerce just in case a legacy blob ships
-  // something unexpected.
-  if (!Array.isArray(setting.value.registry_cache.upstreams)) {
-    setting.value.registry_cache.upstreams = []
-  }
+  // Coerce just in case a legacy blob ships unexpected values for
+  // the enum/numeric fields.
   const rcRm = setting.value.registry_cache.rewrite_mode
   if (rcRm !== 'off' && rcRm !== 'per-host' && rcRm !== 'always') {
     setting.value.registry_cache.rewrite_mode = 'per-host'
@@ -1560,11 +1613,9 @@ async function fetchData() {
   if (typeof setting.value.registry_cache.port !== 'number' || setting.value.registry_cache.port === 0) {
     setting.value.registry_cache.port = 5000
   }
-  // Mirror upstreams into the dedicated ref consumed by n-dynamic-input.
-  rcUpstreamPairs.value = (setting.value.registry_cache.upstreams || []).map(p => ({
-    upstream: p.upstream || '',
-    prefix: p.prefix || '',
-  }))
+  if (typeof setting.value.registry_cache.use_upstream_prefix !== 'boolean') {
+    setting.value.registry_cache.use_upstream_prefix = true
+  }
 
   // load roles for the dropdown
   try {
@@ -1743,6 +1794,7 @@ onMounted(async () => {
   await fetchData()
   await loadSelfDeploy()
   loadSourceStacks()
+  loadRegistryOptions()
   startSelfDeployPolling()
   // If we landed here mid-deploy (e.g. the browser reloaded during the
   // sidekick swap), the sessionStorage-backed flag in the store is

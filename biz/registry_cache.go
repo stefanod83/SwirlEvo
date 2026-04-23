@@ -1,10 +1,12 @@
 package biz
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
@@ -12,9 +14,13 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"regexp"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cuigh/swirl/dao"
 )
 
 // Registry Cache lives as a global Setting keyed by "registry_cache" and is
@@ -29,11 +35,6 @@ import (
 // does NOT manage the mirror's container lifecycle. The operator deploys
 // registry:2 / Harbor / Nexus themselves and points Swirl at it.
 
-// RegistryCachePrefixPattern is the allowed character set for mirror path
-// prefixes. Slug-style keeps the resulting URL clean and unambiguous
-// (`<hostname>:<port>/<prefix>/<repo>:<tag>`).
-var RegistryCachePrefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
-
 // validRewriteModes enumerates the RewriteMode values accepted by the
 // deploy-time image rewriter in Phase 3. Anything else is rejected at
 // Save time.
@@ -44,10 +45,10 @@ var validRewriteModes = map[string]bool{
 }
 
 // normalizeRegistryCache fills in derived fields (CA fingerprint, default
-// port, default RewriteMode) and trims whitespace so follow-up validation
-// operates on a clean payload. The input/output type is the generic
-// map[string]interface{} that SettingBiz.Save decodes from the incoming
-// JSON RawMessage.
+// port, default RewriteMode, default UseUpstreamPrefix) and trims
+// whitespace so follow-up validation operates on a clean payload. Input/
+// output is the generic map[string]interface{} SettingBiz.Save decodes
+// from the incoming JSON RawMessage.
 func normalizeRegistryCache(v interface{}) interface{} {
 	m, ok := v.(map[string]interface{})
 	if !ok {
@@ -82,31 +83,108 @@ func normalizeRegistryCache(v interface{}) interface{} {
 	if rm, _ := m["rewrite_mode"].(string); rm == "" {
 		m["rewrite_mode"] = "per-host"
 	}
-	// Normalize upstream mappings — trim + lower-case host, trim prefix.
-	if raw, ok := m["upstreams"].([]interface{}); ok {
-		out := make([]interface{}, 0, len(raw))
-		for _, item := range raw {
-			entry, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			if u, ok := entry["upstream"].(string); ok {
-				entry["upstream"] = strings.ToLower(strings.TrimSpace(u))
-			}
-			if p, ok := entry["prefix"].(string); ok {
-				entry["prefix"] = strings.ToLower(strings.TrimSpace(p))
-			}
-			out = append(out, entry)
-		}
-		m["upstreams"] = out
+	// Default UseUpstreamPrefix = true (multi-upstream layout, matches
+	// the typical Harbor/Nexus project convention). Legacy blobs that
+	// lacked this field take the same default on first read.
+	if _, present := m["use_upstream_prefix"]; !present {
+		m["use_upstream_prefix"] = true
+	}
+	// Drop legacy per-upstream mapping table if still present in the
+	// stored blob — the flag supersedes it. Removing the key avoids
+	// the Go unmarshal silently carrying it onto an unknown field.
+	delete(m, "upstreams")
+	return m
+}
+
+// overlayRegistryCacheFromRegistry applies the "linked Registry"
+// semantics. When `registry_id` is set in the incoming blob, load the
+// referenced Registry and OVERLAY Hostname/Port/Username/Password/
+// CACertPEM/CAFingerprint on the blob — any value the UI submitted
+// for those fields is discarded. When `registry_id` is empty, return
+// the blob unchanged.
+//
+// Runs after normalizeRegistryCache so the CA fingerprint derivation
+// (for the inline case) has already finalised.
+func overlayRegistryCacheFromRegistry(ctx context.Context, di dao.Interface, v interface{}) interface{} {
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return v
+	}
+	id, _ := m["registry_id"].(string)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return m
+	}
+	r, err := di.RegistryGet(ctx, id)
+	if err != nil || r == nil {
+		// Unknown RegistryID → downgrade silently to inline values;
+		// validation will still refuse an empty hostname if enabled.
+		// Also blank the stale fields so the UI cannot silently keep
+		// referencing a deleted Registry.
+		m["registry_id"] = ""
+		return m
+	}
+	host, port := splitMirrorURL(r.URL)
+	if host != "" {
+		m["hostname"] = host
+	}
+	if port > 0 {
+		m["port"] = float64(port)
+	}
+	m["username"] = r.Username
+	if r.Password != "" {
+		m["password"] = r.Password
+	}
+	// When the Registry is linked, its CA is authoritative — overwrite
+	// whatever inline value the UI sent.
+	m["ca_cert_pem"] = r.CACertPEM
+	if r.CAFingerprint != "" {
+		m["ca_fingerprint"] = r.CAFingerprint
+	} else if fp, fpErr := ComputeCAFingerprint(r.CACertPEM); fpErr == nil {
+		m["ca_fingerprint"] = fp
+	} else {
+		m["ca_fingerprint"] = ""
 	}
 	return m
 }
 
+// splitMirrorURL parses the Registry URL (e.g. https://mirror.lan:5000
+// or https://mirror.lan) and returns its host + port. Empty + 0 when
+// parsing fails. Ports are inferred from scheme when absent: 443 for
+// https, 80 for http.
+func splitMirrorURL(raw string) (string, int) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", 0
+	}
+	// url.Parse requires a scheme to populate Host — assume https when
+	// missing, which matches the Registry.URL convention.
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", 0
+	}
+	host := u.Hostname()
+	portStr := u.Port()
+	if portStr == "" {
+		if u.Scheme == "http" {
+			return host, 80
+		}
+		return host, 443
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return host, 0
+	}
+	return host, port
+}
+
 // validateRegistryCache enforces the invariants the downstream consumers
-// rely on: non-empty hostname + port when enabled, unique prefixes,
-// well-formed prefix slugs. Disabled settings are allowed to contain
-// partial/empty values so operators can save work-in-progress.
+// rely on: non-empty hostname + port when enabled. Disabled settings are
+// allowed to contain partial/empty values so operators can save
+// work-in-progress.
 func validateRegistryCache(v interface{}) error {
 	m, ok := v.(map[string]interface{})
 	if !ok {
@@ -127,37 +205,6 @@ func validateRegistryCache(v interface{}) error {
 	}
 	if rm, _ := m["rewrite_mode"].(string); !validRewriteModes[rm] {
 		return fmt.Errorf("registry_cache: invalid rewrite_mode %q (expected off|per-host|always)", rm)
-	}
-	ups, ok := m["upstreams"].([]interface{})
-	if !ok || len(ups) == 0 {
-		return errors.New("registry_cache: at least one upstream mapping is required when enabled")
-	}
-	seenPrefix := make(map[string]bool, len(ups))
-	seenUpstream := make(map[string]bool, len(ups))
-	for i, item := range ups {
-		entry, ok := item.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("registry_cache: upstreams[%d] is not an object", i)
-		}
-		up, _ := entry["upstream"].(string)
-		pref, _ := entry["prefix"].(string)
-		if up == "" {
-			return fmt.Errorf("registry_cache: upstreams[%d].upstream is required", i)
-		}
-		if pref == "" {
-			return fmt.Errorf("registry_cache: upstreams[%d].prefix is required", i)
-		}
-		if !RegistryCachePrefixPattern.MatchString(pref) {
-			return fmt.Errorf("registry_cache: upstreams[%d].prefix %q is not a valid slug (allowed: [a-z0-9][a-z0-9-]{0,31})", i, pref)
-		}
-		if seenPrefix[pref] {
-			return fmt.Errorf("registry_cache: duplicate prefix %q", pref)
-		}
-		if seenUpstream[up] {
-			return fmt.Errorf("registry_cache: duplicate upstream %q", up)
-		}
-		seenPrefix[pref] = true
-		seenUpstream[up] = true
 	}
 	return nil
 }
@@ -402,6 +449,73 @@ func portOrDefault(p int) int {
 		return 5000
 	}
 	return p
+}
+
+// RegistryCachePingResult reports whether the configured mirror is
+// reachable. `Status` is the HTTP status returned by /v2/: 200 means
+// anonymous access OK, 401 means the mirror requires auth (still a
+// healthy signal since TLS + routing worked). Anything else → treat as
+// error. `LatencyMs` measures the full round-trip (DNS + TLS + HTTP).
+type RegistryCachePingResult struct {
+	OK        bool   `json:"ok"`
+	Status    int    `json:"status,omitempty"`
+	Error     string `json:"error,omitempty"`
+	LatencyMs int64  `json:"latencyMs,omitempty"`
+	MirrorURL string `json:"mirrorUrl,omitempty"`
+}
+
+// PingRegistryCache performs a best-effort probe of the configured
+// pull-through mirror by issuing GET /v2/ over HTTPS. Honours the
+// operator-uploaded CA (rc.CACertPEM) via a temporary root pool so
+// self-signed mirrors validate without tripping the system trust
+// store. A missing CA falls back to the system trust; this matches
+// what Docker does when daemon.json carries a mirror URL without a
+// dedicated cert in /etc/docker/certs.d.
+func PingRegistryCache(ctx context.Context) *RegistryCachePingResult {
+	live := LiveRegistryCacheParams()
+	if live == nil {
+		return &RegistryCachePingResult{Error: "registry_cache: feature is not enabled"}
+	}
+	url := BuildMirrorURL(&RegistryCacheParams{Hostname: live.Hostname, Port: live.Port})
+	if url == "" {
+		return &RegistryCachePingResult{Error: "registry_cache: mirror hostname is empty"}
+	}
+	target := url + "/v2/"
+
+	tlsCfg := &tls.Config{}
+	if strings.TrimSpace(live.CACertPEM) != "" {
+		pool := x509.NewCertPool()
+		if pool.AppendCertsFromPEM([]byte(live.CACertPEM)) {
+			tlsCfg.RootCAs = pool
+		}
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: tlsCfg,
+		},
+	}
+
+	start := time.Now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return &RegistryCachePingResult{Error: fmt.Sprintf("build request: %v", err), MirrorURL: url}
+	}
+	resp, err := client.Do(req)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return &RegistryCachePingResult{Error: err.Error(), LatencyMs: latency, MirrorURL: url}
+	}
+	defer resp.Body.Close()
+	// 200 (anonymous access) and 401 (auth required) both prove the
+	// mirror is alive + TLS is fine. Anything else is degraded.
+	ok := resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusUnauthorized
+	return &RegistryCachePingResult{
+		OK:        ok,
+		Status:    resp.StatusCode,
+		LatencyMs: latency,
+		MirrorURL: url,
+	}
 }
 
 func modeLabel(insecure bool) string {

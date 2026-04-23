@@ -9,6 +9,18 @@ export interface GenCAResult {
     keyPEM: string;
 }
 
+// Response of POST /api/registry-cache/ping. Mirror the Go
+// biz.RegistryCachePingResult shape. 200 and 401 from /v2/ both count
+// as `ok=true` — the mirror is alive + TLS is fine; auth is a
+// registry-specific concern the browse feature handles elsewhere.
+export interface PingResult {
+    ok: boolean;
+    status?: number;
+    error?: string;
+    latencyMs?: number;
+    mirrorUrl?: string;
+}
+
 export class RegistryCacheApi {
     /**
      * Generate a self-signed CA certificate + ECDSA P-256 private key.
@@ -24,6 +36,16 @@ export class RegistryCacheApi {
         return ajax.post<GenCAResult>('/registry-cache/gen-ca', {
             commonName: commonName || '',
         })
+    }
+
+    /**
+     * Probe the configured mirror URL. Returns status + latency so the
+     * Settings tab can show a live badge and the Host edit panel can
+     * reassure operators that the copy-paste bootstrap will land on a
+     * reachable mirror.
+     */
+    ping() {
+        return ajax.post<PingResult>('/registry-cache/ping')
     }
 }
 

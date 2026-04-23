@@ -166,12 +166,15 @@ func hostRegistryCacheGet(b biz.HostBiz) web.HandlerFunc {
 			rc = &biz.RegistryCacheExtract{}
 		}
 		out := map[string]interface{}{
-			"enabled":            rc.Enabled,
-			"insecureMode":       rc.InsecureMode,
-			"appliedAt":          rc.AppliedAt,
-			"appliedBy":          rc.AppliedBy,
-			"appliedFingerprint": rc.AppliedFingerprint,
-			"mirrorEnabled":      false,
+			"enabled":             rc.Enabled,
+			"insecureMode":        rc.InsecureMode,
+			"appliedAt":           rc.AppliedAt,
+			"appliedBy":           rc.AppliedBy,
+			"appliedFingerprint":  rc.AppliedFingerprint,
+			"lastSyncAt":          rc.LastSyncAt,
+			"lastSyncBy":          rc.LastSyncBy,
+			"lastSyncFingerprint": rc.LastSyncFingerprint,
+			"mirrorEnabled":       false,
 		}
 		if live := biz.LiveRegistryCacheParams(); live != nil {
 			out["mirrorEnabled"] = true

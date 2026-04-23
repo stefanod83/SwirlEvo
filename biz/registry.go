@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/cuigh/auxo/net/web"
@@ -11,6 +12,12 @@ import (
 	swirldocker "github.com/cuigh/swirl/docker"
 	"github.com/docker/docker/api/types/registry"
 )
+
+// ErrRegistryLinked is returned by Delete when a Registry is still
+// referenced as the Registry Cache source (Setting.RegistryCache.
+// RegistryID). The API handler maps this to HTTP 409 so the UI can
+// surface an actionable message ("unlink before deleting").
+var ErrRegistryLinked = errors.New("registry is linked as the Registry Cache source — unlink first in Settings")
 
 // RegistryBrowseResult is a paginated slice of repository names returned
 // by Browse. `Next` is the opaque cursor for the follow-up call (empty
@@ -35,14 +42,40 @@ type RegistryBiz interface {
 	Ping(ctx context.Context, id string) error
 }
 
-func NewRegistry(d dao.Interface, eb EventBiz) RegistryBiz {
-	return &registryBiz{d: d, eb: eb, rc: swirldocker.NewRegistryClient()}
+func NewRegistry(d dao.Interface, eb EventBiz, sb SettingBiz) RegistryBiz {
+	return &registryBiz{d: d, eb: eb, sb: sb, rc: swirldocker.NewRegistryClient()}
 }
 
 type registryBiz struct {
 	d  dao.Interface
 	eb EventBiz
+	sb SettingBiz
 	rc *swirldocker.RegistryClient
+}
+
+// refreshLinkedRegistryCache re-saves Setting.RegistryCache when this
+// Registry is referenced as its source. Copies fresh field values via
+// the overlay in Save. Best-effort: a failure here does not roll back
+// the Registry update — operators can re-Save Setting.RegistryCache
+// manually to recover.
+func (b *registryBiz) refreshLinkedRegistryCache(ctx context.Context, registryID string, user web.User) {
+	if registryID == "" || b.sb == nil {
+		return
+	}
+	live := LiveSettingsSnapshot()
+	if live == nil || live.RegistryCache.RegistryID != registryID {
+		return
+	}
+	// Round-trip the current RegistryCache blob through Save so the
+	// overlay in settingBiz.Save re-fetches the Registry and rewrites
+	// the cached fields. Marshalling the live struct keeps every
+	// existing value (including preserve_digests, rewrite_mode) intact
+	// — only Hostname/Port/Username/Password/CA* are overlayed.
+	buf, err := json.Marshal(live.RegistryCache)
+	if err != nil {
+		return
+	}
+	_ = b.sb.Save(ctx, "registry_cache", json.RawMessage(buf), user)
 }
 
 func (b *registryBiz) Create(ctx context.Context, r *dao.Registry, user web.User) (err error) {
@@ -51,6 +84,17 @@ func (b *registryBiz) Create(ctx context.Context, r *dao.Registry, user web.User
 	r.UpdatedAt = r.CreatedAt
 	r.CreatedBy = newOperator(user)
 	r.UpdatedBy = r.CreatedBy
+	// Derive CA fingerprint from the PEM so the UI can show it
+	// without recomputing client-side. Empty PEM → empty fingerprint.
+	if r.CACertPEM != "" {
+		if fp, fpErr := ComputeCAFingerprint(r.CACertPEM); fpErr == nil {
+			r.CAFingerprint = fp
+		} else {
+			r.CAFingerprint = ""
+		}
+	} else {
+		r.CAFingerprint = ""
+	}
 
 	err = b.d.RegistryCreate(ctx, r)
 	if err == nil {
@@ -62,9 +106,22 @@ func (b *registryBiz) Create(ctx context.Context, r *dao.Registry, user web.User
 func (b *registryBiz) Update(ctx context.Context, r *dao.Registry, user web.User) (err error) {
 	r.UpdatedAt = now()
 	r.UpdatedBy = newOperator(user)
+	if r.CACertPEM != "" {
+		if fp, fpErr := ComputeCAFingerprint(r.CACertPEM); fpErr == nil {
+			r.CAFingerprint = fp
+		} else {
+			r.CAFingerprint = ""
+		}
+	} else {
+		r.CAFingerprint = ""
+	}
 	err = b.d.RegistryUpdate(ctx, r)
 	if err == nil {
 		b.eb.CreateRegistry(EventActionUpdate, r.ID, r.Name, user)
+		// Refresh the linked RegistryCache snapshot so the updated
+		// URL / credentials / CA propagate to the rewriter without
+		// an explicit re-save from the operator.
+		b.refreshLinkedRegistryCache(ctx, r.ID, user)
 	}
 	return
 }
@@ -106,6 +163,13 @@ func (b *registryBiz) GetAuth(ctx context.Context, url string) (auth string, err
 }
 
 func (b *registryBiz) Delete(ctx context.Context, id, name string, user web.User) (err error) {
+	// Refuse deletion when this Registry is the configured source of
+	// the Registry Cache — pulling the rug would silently break every
+	// deploy that relies on the rewriter. Operators can unlink the
+	// reference in Settings first and then retry.
+	if live := LiveSettingsSnapshot(); live != nil && live.RegistryCache.RegistryID == id {
+		return ErrRegistryLinked
+	}
 	err = b.d.RegistryDelete(ctx, id)
 	if err == nil {
 		b.eb.CreateRegistry(EventActionDelete, id, name, user)

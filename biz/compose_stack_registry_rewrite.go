@@ -85,9 +85,6 @@ func (in RegistryCacheRewriteInput) shouldRun() (bool, bool) {
 	if in.Setting == nil || !in.Setting.RegistryCache.Enabled {
 		return false, false
 	}
-	if len(in.Setting.RegistryCache.Upstreams) == 0 {
-		return false, false
-	}
 	if in.Setting.RegistryCache.Hostname == "" {
 		return false, false
 	}
@@ -139,10 +136,7 @@ func RewriteImages(content string, in RegistryCacheRewriteInput) (string, []Rewr
 
 	rc := &in.Setting.RegistryCache
 	mirror := fmt.Sprintf("%s:%d", rc.Hostname, portOrDefault(rc.Port))
-	prefixByUpstream := make(map[string]string, len(rc.Upstreams))
-	for _, up := range rc.Upstreams {
-		prefixByUpstream[strings.ToLower(strings.TrimSpace(up.Upstream))] = strings.TrimSpace(up.Prefix)
-	}
+	useUpstreamPrefix := rc.UseUpstreamPrefix
 	preserveDigests := rc.PreserveDigests
 
 	actions := make([]RewriteAction, 0, len(services.Content)/2)
@@ -180,17 +174,10 @@ func RewriteImages(content string, in RegistryCacheRewriteInput) (string, []Rewr
 		}
 		domain := reference.Domain(ref)
 		path := reference.Path(ref)
-		prefix, ok := prefixByUpstream[strings.ToLower(domain)]
-		if !ok || prefix == "" {
-			action.Reason = "no-match"
-			actions = append(actions, action)
-			continue
-		}
 
-		// Re-emit `mirror/prefix/<path>[:tag]`. We drop any existing
-		// tag-less default here by re-using reference.TagNameOnly so
-		// the rewritten ref carries an explicit tag (better for cache
-		// matching — `:latest` is implicit otherwise).
+		// Re-emit based on UseUpstreamPrefix:
+		//   true  → <mirror>/<domain>/<path>[:tag]
+		//   false → <mirror>/<path>[:tag]
 		var tagPart string
 		if tagged, ok := ref.(reference.Tagged); ok {
 			tagPart = ":" + tagged.Tag()
@@ -199,10 +186,19 @@ func RewriteImages(content string, in RegistryCacheRewriteInput) (string, []Rewr
 			// `:latest` for unqualified refs).
 			tagPart = ":latest"
 		}
-		rewritten := fmt.Sprintf("%s/%s/%s%s", mirror, prefix, path, tagPart)
+		var rewritten string
+		if useUpstreamPrefix {
+			rewritten = fmt.Sprintf("%s/%s/%s%s", mirror, domain, path, tagPart)
+		} else {
+			rewritten = fmt.Sprintf("%s/%s%s", mirror, path, tagPart)
+		}
 		action.Rewritten = rewritten
 		action.Upstream = domain
-		action.Prefix = prefix
+		// Prefix is kept in the action for audit continuity — equals
+		// the domain when UseUpstreamPrefix is true, empty otherwise.
+		if useUpstreamPrefix {
+			action.Prefix = domain
+		}
 		actions = append(actions, action)
 
 		imgNode.Value = rewritten

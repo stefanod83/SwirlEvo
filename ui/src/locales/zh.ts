@@ -748,6 +748,8 @@ export default {
     "registry": {
         "skip_tls_verify": "跳过 TLS 验证",
         "skip_tls_verify_hint": "针对 browse/catalog 调用禁用 TLS 验证。仅对自签名证书的 registry 有用。Docker daemon 的 push 仍依赖 daemon.json 中的 `insecure-registries`。",
+        "ca_cert_pem": "CA 证书 (PEM)",
+        "ca_fingerprint": "指纹 (SHA-256)",
         "repositories": "仓库列表",
         "repository": "仓库",
         "no_repos": "registry 未返回仓库。",
@@ -867,7 +869,12 @@ export default {
         "col_upstream": "上游 → 前缀",
         "reason_no_match": "未匹配 — 上游未映射",
         "reason_digest_preserved": "Digest 固定 — 已保留",
-        "reason_invalid_ref": "镜像引用无效"
+        "reason_invalid_ref": "镜像引用无效",
+        "prewarm_btn": "预热镜像缓存",
+        "prewarm_hint": "通过本地 Swirl daemon 预拉取每一个重写后的镜像，让镜像在目标主机请求前就已缓存。",
+        "prewarm_ok": "已成功将 {count} 个镜像拉入镜像缓存。",
+        "prewarm_partial": "{ok} 个镜像已拉取，{fail} 个失败 — 请检查镜像日志。",
+        "prewarm_fail": "全部 {count} 个拉取均失败 — 请确认本地 daemon 已完成镜像 bootstrap。"
     },
     "stack_addon_traefik": {
         "detected": "Traefik",
@@ -911,7 +918,12 @@ export default {
         "mark_applied": "标记为已应用",
         "save_ok": "已保存。",
         "clear_ok": "已清除本主机的 Registry Cache 启用状态。",
-        "clear_confirm": "从本主机移除 Registry Cache 启用状态？daemon 上已应用的 bootstrap 保留不变 — 你可以手动回退。"
+        "clear_confirm": "从本主机移除 Registry Cache 启用状态？daemon 上已应用的 bootstrap 保留不变 — 你可以手动回退。",
+        "federation_banner": "此主机是通过 Swirl 联邦的 swarm peer。无法从此处推送 daemon 级配置 — portal 会将本地 Setting.RegistryCache 同步到 peer Swirl，由后者在其节点上执行 bootstrap。",
+        "federation_sync_title": "与 peer 同步",
+        "federation_sync_pending": "尚未同步。点击 Sync 将 portal 的 Setting.RegistryCache 推送给 peer。",
+        "federation_sync_btn": "同步配置到 peer",
+        "federation_sync_ok": "Registry Cache 配置已同步到 peer。"
     },
     "host_addon_traefik": {
         "enabled": "启用",
@@ -1053,23 +1065,27 @@ export default {
         "ca_cert_pem": "CA 证书 (PEM)",
         "ca_fingerprint": "指纹 (SHA-256)",
         "ca_key_pem": "私钥 (PEM)",
-        "upstreams": "上游映射",
-        "upstream_placeholder": "docker.io",
-        "prefix_placeholder": "dockerhub",
-        "upstreams_hint": "把每个上游 registry 域 (docker.io、gcr.io、quay.io …) 映射到镜像下的 URL 路径前缀。前缀必须唯一且为 slug 格式 (a-z、0-9、短横线)。",
+        "use_upstream_prefix": "在路径前加上上游 registry",
+        "use_upstream_prefix_hint": "启用 (默认) 时，重写后的镜像为 <镜像>/<registry 域>/<仓库>:<tag> — 多上游 Harbor/Nexus 布局，每个源 registry 各自占一个路径前缀。禁用时，domain 被剥离，镜像为 <镜像>/<仓库>:<tag> — 适合只代理单一上游 (通常 Docker Hub) 的单上游镜像。",
         "rewrite_mode": "重写模式",
         "rewrite_off": "关闭",
         "rewrite_per_host": "按主机 (仅已启用的主机)",
         "rewrite_always": "始终 (所有主机)",
         "preserve_digests": "保留 digest 固定的镜像",
-        "preserve_digests_hint": "启用时，通过 @sha256:… 引用的镜像不会被重写 — digest 固定通常意味着明确的上游要求。",
+        "preserve_digests_hint": "启用时，通过 sha256 digest 引用的镜像不会被重写 — digest 固定通常意味着明确的上游要求。",
         "gen_ca": "生成 CA",
         "gen_ca_title": "自签 CA — 一次性生成",
         "gen_ca_warning": "私钥仅显示一次。请立即下载；Swirl 不会保存私钥。用它在你的镜像上签署服务器证书，然后点击 '使用此证书' 填充 CA 字段。",
         "download_cert": "下载证书",
         "download_key": "下载私钥",
         "use_cert": "使用此证书",
-        "cert_applied": "证书已填入 — 记得点击保存。"
+        "cert_applied": "证书已填入 — 记得点击保存。",
+        "ping_btn": "Ping 镜像",
+        "ping_ok": "可达 — HTTP {status}，{ms}ms",
+        "ping_fail": "不可达：{error}",
+        "linked_registry": "链接到 Registry",
+        "linked_registry_placeholder": "— 内联配置 —",
+        "linked_registry_hint": "主机名、端口、凭据和 CA 均从已链接的 Registry 获取。在 Registry 中的修改会自动生效。"
     },
     "copyright": "© 2017-2021 cuigh · © 2025-2026 Stefano Donno (SwirlEvo fork)。保留所有权利。",
 }

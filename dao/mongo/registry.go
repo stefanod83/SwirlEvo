@@ -20,6 +20,8 @@ func (d *Dao) RegistryUpdate(ctx context.Context, registry *dao.Registry) (err e
 		"url":             registry.URL,
 		"username":        registry.Username,
 		"skip_tls_verify": registry.SkipTLSVerify,
+		"ca_cert_pem":     registry.CACertPEM,
+		"ca_fingerprint":  registry.CAFingerprint,
 		"updated_at":      registry.UpdatedAt,
 		"updated_by":      registry.UpdatedBy,
 	}
