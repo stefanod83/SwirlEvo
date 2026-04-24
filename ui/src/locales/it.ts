@@ -1026,6 +1026,7 @@ export default {
         "enabled": "Abilitato",
         "source_stack": "Stack sorgente",
         "source_stack_hint": "Lo stack compose che gestisce Swirl.",
+        "import_first": "importa prima",
         "auto_rollback": "Rollback automatico su errore",
         "deploy_timeout": "Timeout deploy (secondi)",
         "actions": {

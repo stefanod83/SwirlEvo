@@ -527,11 +527,25 @@ function unionOrdered(a: string[], b: string[]): string[] {
   return out
 }
 
+// parseTraefikFile extracts entrypoints / cert resolvers / middlewares
+// / networks from an uploaded static Traefik config. Names defined in
+// the file provider are suffixed `@file` so they arrive in the
+// dropdowns already in the form Traefik expects on router labels
+// (e.g. `traefik.http.routers.<r>.middlewares=cross@file`). Only
+// applies the suffix if the name doesn't already carry a provider
+// qualifier — operators who authored their file with explicit `@file`
+// wouldn't want the double suffix.
 function parseTraefikFile(text: string) {
   const doc = yaml.load(text) as any
-  const entryPoints = Object.keys(doc?.entryPoints || {})
-  const certResolvers = Object.keys(doc?.certificatesResolvers || {})
-  const middlewares = Object.keys(doc?.http?.middlewares || {})
+  const withFileQualifier = (name: string) =>
+    name.includes('@') ? name : `${name}@file`
+  const entryPoints = Object.keys(doc?.entryPoints || {}).map(withFileQualifier)
+  const certResolvers = Object.keys(doc?.certificatesResolvers || {}).map(withFileQualifier)
+  const middlewares = Object.keys(doc?.http?.middlewares || {}).map(withFileQualifier)
+  // Networks come from the Docker provider — not a file-provider
+  // object — so they keep their plain name. The `@docker` suffix
+  // is only meaningful for objects (routers / middlewares / services
+  // / cert resolvers), not network names.
   const networks: string[] = []
   if (doc?.providers?.docker?.network) networks.push(String(doc.providers.docker.network))
   return { entryPoints, certResolvers, middlewares, networks }

@@ -60,6 +60,7 @@ import composeStackSecretApi from "@/api/compose-stack-secret";
 import type { ComposeStackSummary } from "@/api/compose_stack";
 import { useDataTable } from "@/utils/data-table";
 import { renderLink, renderTag } from "@/utils/render";
+import { renderAddonBadges } from "@/utils/addon-badges";
 import { buildZip } from "@/utils/zip";
 import { useRouter } from "vue-router";
 import { useI18n } from 'vue-i18n'
@@ -82,33 +83,6 @@ const hostSubtitle = computed(() => {
 // the "a colpo d'occhio, poco invadente" brief — the operator sees
 // at a glance which addons are active on each stack without the
 // badges stealing focus from the stack name.
-const ADDON_BADGE_META: Record<string, { label: string; type: 'info' | 'success' | 'warning' | 'default' | 'error' }> = {
-  traefik:         { label: 'Traefik',  type: 'info' },
-  sablier:         { label: 'Sablier',  type: 'warning' },
-  watchtower:      { label: 'Watchtower', type: 'default' },
-  backup:          { label: 'Backup',   type: 'success' },
-  resources:       { label: 'Resources', type: 'warning' },
-  'registry-cache': { label: 'Registry Cache', type: 'info' },
-}
-
-function renderAddonBadges(addons: string[] | undefined) {
-  if (!addons || !addons.length) return null
-  const chips = addons.map(a => {
-    const meta = ADDON_BADGE_META[a] || { label: a, type: 'default' as const }
-    return h(
-      NTag,
-      {
-        size: 'small',
-        type: meta.type,
-        round: true,
-        bordered: false,
-        style: 'font-size: 10px; padding: 0 6px; line-height: 16px; height: 16px',
-      },
-      { default: () => meta.label },
-    )
-  })
-  return h('span', { style: 'display: inline-flex; gap: 4px; flex-wrap: wrap' }, chips)
-}
 
 function actionButton(type: 'default' | 'error' | 'warning' | 'success' | 'info', iconCmp: any, tooltip: string, disabled: boolean, onClick: () => void) {
   return h(NTooltip, { trigger: 'hover' }, {

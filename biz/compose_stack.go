@@ -432,19 +432,13 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 		return id, fmt.Errorf("%s", errMsg)
 	}
 
-	// 5. Registry Cache active mirror. Two-step flow:
-	//     (a) RewriteImages computes the rewritten refs (original
-	//         → mirror-host/<prefix>/<path>:<tag>) for every
-	//         service whose image matches the cache scope rules.
-	//         The persisted stack.Content stays untouched — rewrite
-	//         is transport-layer, not an authoring concern.
-	//     (b) mirrorActionsToCache actively pulls each upstream
-	//         image, retags it with the cache ref, and pushes it
-	//         to the mirror so the bytes are available before
-	//         the engine issues its own pull. Hard-fail on error
-	//         (D3a): a cache out of sync is worse than a clear
-	//         "cannot mirror foo/bar:tag: ..." at deploy time.
+	// 5. Registry Cache rewrite — SYNC step (fast, pure YAML parsing).
+	//    Produces the effective content the engine will deploy and the
+	//    list of mirror actions to run in the goroutine. The actual
+	//    pull + push to the cache is deferred to runDeploy so the API
+	//    response isn't held while multi-GB image layers move around.
 	stackContent := stack.Content
+	var mirrorActions []RewriteAction
 	if hostExtract, rcErr := b.hb.GetAddonConfigExtract(ctx, stack.HostID); rcErr == nil {
 		liveSettingsMu.RLock()
 		ls := liveSettings
@@ -452,35 +446,51 @@ func (b *composeStackBiz) Deploy(ctx context.Context, stack *dao.ComposeStack, p
 		rcIn := BuildRewriteInput(stack, hostExtract, ls)
 		if rewritten, actions, rwErr := RewriteImages(stackContent, rcIn); rwErr == nil {
 			stackContent = rewritten
-			if _, mErr := mirrorActionsToCache(ctx, cli, b.rb, actions, pullImages); mErr != nil {
-				errMsg := fmt.Sprintf("registry cache mirror: %v", mErr)
-				_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
-				_ = b.di.ComposeStackUpdateError(ctx, id, errMsg)
-				return id, fmt.Errorf("%s", errMsg)
-			}
+			mirrorActions = actions
 		}
 	}
 
 	// 6. Fire the actual deploy on a detached context. The goroutine
-	//    closes over local values only; no shared mutable state.
+	//    closes over local values only; no shared mutable state. The
+	//    mirror pull+push runs inside runDeploy so image transfers
+	//    don't block the HTTP response.
 	stackName := stack.Name
 	envFile := stack.EnvFile
 	hostID := stack.HostID
-	go b.runDeploy(cli, id, hostID, stackName, stackContent, envFile, pullImages, hook, user)
+	go b.runDeploy(cli, id, hostID, stackName, stackContent, envFile, pullImages, hook, user, mirrorActions)
 
 	return id, nil
 }
 
 // runDeploy is the goroutine entry point spawned by Deploy. It MUST use
 // context.Background() rather than the HTTP ctx — the latter is cancelled
-// when the API response is written. A deploy taking more than a few
-// seconds (image pulls, long BeforeDeploy hooks) would otherwise abort
-// mid-flight.
-func (b *composeStackBiz) runDeploy(cli *dockerclient.Client, id, hostID, name, content, envFile string, pullImages bool, hook compose.DeployHook, user web.User) {
-	// Allow up to 10 minutes for a single deploy — matches the push
-	// timeout used elsewhere in the codebase for similarly heavy ops.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+// when the API response is written. Generous timeout (30 min) because
+// Registry Cache mirror (pull upstream + push cache) can move multi-GB
+// images; legit deploys with slow daemons and network-attached storage
+// occasionally cross 10 min even without a cache.
+func (b *composeStackBiz) runDeploy(
+	cli *dockerclient.Client,
+	id, hostID, name, content, envFile string,
+	pullImages bool,
+	hook compose.DeployHook,
+	user web.User,
+	mirrorActions []RewriteAction,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+
+	// Registry Cache mirror — moved from the sync Deploy path so the
+	// HTTP response returns immediately and the UI polls stack.status
+	// for progress. A failure here marks the stack in error exactly
+	// like an engine-side pre-flight would.
+	if len(mirrorActions) > 0 {
+		if _, mErr := mirrorActionsToCache(ctx, cli, b.rb, mirrorActions, pullImages); mErr != nil {
+			errMsg := fmt.Sprintf("registry cache mirror: %v", mErr)
+			_ = b.di.ComposeStackUpdateStatus(ctx, id, "error")
+			_ = b.di.ComposeStackUpdateError(ctx, id, errMsg)
+			return
+		}
+	}
 
 	engine := compose.NewStandaloneEngine(cli)
 	res, err := engine.DeployWithResult(ctx, name, content, compose.DeployOptions{

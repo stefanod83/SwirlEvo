@@ -1026,6 +1026,7 @@ export default {
         "enabled": "Enabled",
         "source_stack": "Source stack",
         "source_stack_hint": "The compose stack that Swirl is managed by.",
+        "import_first": "import first",
         "auto_rollback": "Auto-rollback on failure",
         "deploy_timeout": "Deploy timeout (seconds)",
         "actions": {

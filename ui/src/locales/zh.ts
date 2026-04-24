@@ -1020,6 +1020,7 @@ export default {
         "enabled": "启用",
         "source_stack": "源 Stack",
         "source_stack_hint": "管理 Swirl 的 compose stack。",
+        "import_first": "请先导入",
         "auto_rollback": "失败时自动回滚",
         "deploy_timeout": "部署超时（秒）",
         "actions": {

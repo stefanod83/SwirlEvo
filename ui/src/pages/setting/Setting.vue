@@ -1726,12 +1726,20 @@ async function loadSourceStacks() {
   try {
     const r = await composeStackApi.search({ pageIndex: 1, pageSize: 200 })
     const items: ComposeStackSummary[] = (r?.data?.items as any) || []
-    sourceStackOptions.value = items
-      .filter(s => !!s.id) // only managed stacks (external have no id)
-      .map(s => ({
-        label: s.hostName ? `${s.hostName} / ${s.name}` : s.name,
-        value: s.id,
-      }))
+    // Show BOTH managed (persisted, have id) and unmanaged (CLI-
+    // discovered, id==""). Self-deploy needs a managed stack as
+    // source because the deploy pipeline reads stack.Content from
+    // the DB — so unmanaged options are rendered disabled, with a
+    // hint telling the operator to import the stack first.
+    sourceStackOptions.value = items.map((s) => {
+      const base = s.hostName ? `${s.hostName} / ${s.name}` : s.name
+      if (s.id) return { label: base, value: s.id }
+      return {
+        label: `${base} · ${t('fields.external') || 'external'} — ${t('self_deploy.import_first') || 'import first'}`,
+        value: `external:${s.hostId}:${s.name}`,
+        disabled: true,
+      }
+    })
   } catch {
     sourceStackOptions.value = []
   } finally {

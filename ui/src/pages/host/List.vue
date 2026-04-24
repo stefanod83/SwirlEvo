@@ -45,6 +45,7 @@ import XPageHeader from "@/components/PageHeader.vue";
 import XAnchor from "@/components/Anchor.vue";
 import * as hostApi from "@/api/host";
 import type { Host } from "@/api/host";
+import { renderAddonBadges } from "@/utils/addon-badges";
 import { useStore } from "vuex";
 import { useRouter } from "vue-router";
 import { useI18n } from 'vue-i18n'
@@ -62,6 +63,25 @@ function statusType(status: string): 'default' | 'error' | 'info' | 'success' | 
     case 'error': return 'error'
     default: return 'warning'
   }
+}
+
+// enabledAddonsOf decodes Host.AddonConfigExtract (JSON string) and
+// returns the list of addon keys flagged `enabled=true` on the host.
+// Badge order mirrors the column-picker order used in the stack list
+// (traefik, sablier, watchtower, backup, registry-cache). Safe on
+// malformed / empty input.
+function enabledAddonsOf(h: Host): string[] {
+  const raw = h.addonConfigExtract
+  if (!raw) return []
+  let blob: any
+  try { blob = JSON.parse(raw) } catch { return [] }
+  const out: string[] = []
+  if (blob?.traefik?.enabled) out.push('traefik')
+  if (blob?.sablier?.enabled) out.push('sablier')
+  if (blob?.watchtower?.enabled) out.push('watchtower')
+  if (blob?.backup?.enabled) out.push('backup')
+  if (blob?.registryCache?.enabled) out.push('registry-cache')
+  return out
 }
 
 async function deleteHost(id: string, name: string) {
@@ -130,6 +150,11 @@ const columns: any[] = [
     title: 'OS/Arch',
     key: 'os',
     render: (r: Host) => r.os && r.arch ? r.os + '/' + r.arch : '-',
+  },
+  {
+    title: t('fields.tags') || 'Addons',
+    key: 'addons',
+    render: (r: Host) => renderAddonBadges(enabledAddonsOf(r)) || '-',
   },
   {
     title: t('fields.updated_at'),

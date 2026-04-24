@@ -23,6 +23,10 @@ export interface Host {
   updatedAt: number
   createdBy: { id: string; name: string }
   updatedBy: { id: string; name: string }
+  // Raw JSON blob carrying per-addon host-level config (enabled flag
+  // + defaults + overrides). The host list decodes it client-side to
+  // render an "active addons" badge column.
+  addonConfigExtract?: string
 }
 
 export interface HostInfo {
