@@ -1,5 +1,5 @@
 <template>
-  <x-page-header :subtitle="user.id">
+  <x-page-header :subtitle="user.name || user.loginName || user.id">
     <template #action>
       <n-button secondary size="small" @click="onReturn">
         <template #icon>

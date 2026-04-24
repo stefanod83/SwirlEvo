@@ -1,5 +1,5 @@
 <template>
-  <x-page-header>
+  <x-page-header :subtitle="model.title">
     <template #action>
       <n-button secondary size="small" @click="onReturn">
         <template #icon>
