@@ -21,9 +21,24 @@
         >{{ t('buttons.stop') }} ({{ checkedIds.length }})</n-button>
         <n-button
           v-if="checkedIds.length"
+          secondary size="small" type="error"
+          @click="bulkActionConfirm('kill')"
+        >{{ t('buttons.kill') }} ({{ checkedIds.length }})</n-button>
+        <n-button
+          v-if="checkedIds.length"
           secondary size="small" type="info"
           @click="bulkAction('restart')"
         >{{ t('buttons.restart') }} ({{ checkedIds.length }})</n-button>
+        <n-button
+          v-if="checkedIds.length"
+          secondary size="small" type="warning"
+          @click="bulkAction('pause')"
+        >{{ t('buttons.pause') }} ({{ checkedIds.length }})</n-button>
+        <n-button
+          v-if="checkedIds.length"
+          secondary size="small" type="success"
+          @click="bulkAction('unpause')"
+        >{{ t('buttons.unpause') }} ({{ checkedIds.length }})</n-button>
         <n-button
           v-if="checkedIds.length"
           secondary size="small" type="error"
@@ -81,6 +96,7 @@
         :loading="state.loading"
         :pagination="pagination"
         :show-stack-column="isStandalone"
+        :metrics-enabled="metricsEnabled"
         selectable
         :checked-keys="checkedIds"
         @update:checked-keys="(k: string[]) => checkedIds = k"
@@ -110,6 +126,7 @@ import XPageHeader from "@/components/PageHeader.vue";
 import containerApi from "@/api/container";
 import composeStackApi from "@/api/compose_stack";
 import nodeApi from "@/api/node";
+import settingApi from "@/api/setting";
 import XContainerTable from "@/components/ContainerTable.vue";
 import XEmptyHostPrompt from "@/components/EmptyHostPrompt.vue";
 import { useDataTable } from "@/utils/data-table";
@@ -128,6 +145,11 @@ const nodes: any = ref([])
 const stackOptions: any = ref([])
 const checkedIds = ref<string[]>([])
 const showEmpty = computed(() => isStandalone.value && !selectedHostId.value)
+// metricsEnabled gates the Stats quick-action: loaded once from the
+// system settings on mount. Non-empty `metric.prometheus` means an
+// operator has wired up a Prometheus endpoint, which is the contract
+// the user asked us to honour ("stats se ci sono attive le metriche").
+const metricsEnabled = ref(false)
 
 const statusOptions = [
   { label: t('container.all_states'), value: '' },
@@ -178,7 +200,7 @@ async function prune() {
   })
 }
 
-async function bulkAction(action: 'start' | 'stop' | 'restart') {
+async function bulkAction(action: 'start' | 'stop' | 'restart' | 'pause' | 'unpause') {
   const ids = [...checkedIds.value]
   const errors: string[] = []
   for (const id of ids) {
@@ -188,6 +210,8 @@ async function bulkAction(action: 'start' | 'stop' | 'restart') {
         case 'start': await containerApi.start(filter.node, id, name); break
         case 'stop': await containerApi.stop(filter.node, id, name); break
         case 'restart': await containerApi.restart(filter.node, id, name); break
+        case 'pause': await containerApi.pause(filter.node, id, name); break
+        case 'unpause': await containerApi.unpause(filter.node, id, name); break
       }
     } catch (e: any) {
       errors.push(`${id.substring(0, 12)}: ${e?.message || e}`)
@@ -234,7 +258,17 @@ watch(selectedHostId, async (v) => {
   }
 })
 
+async function loadMetricsFlag() {
+  try {
+    const r = await settingApi.load()
+    metricsEnabled.value = !!(r.data as any)?.metric?.prometheus
+  } catch {
+    metricsEnabled.value = false
+  }
+}
+
 onMounted(async () => {
+  loadMetricsFlag()
   if (isStandalone.value) {
     if (selectedHostId.value) {
       filter.node = selectedHostId.value

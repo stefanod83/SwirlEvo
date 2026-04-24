@@ -307,6 +307,11 @@ type Container struct {
 	State       string              `json:"state"`
 	Status      string              `json:"status"`
 	NetworkMode string              `json:"networkMode"`
+	// Networks carries the per-network endpoint IPs for the container.
+	// Populated from NetworkSettings.Networks in both Summary and Inspect
+	// responses. The List UI picks the first non-empty IPv4 to render in
+	// the "IP Address" column.
+	Networks    []*ContainerNetwork `json:"networks,omitempty"`
 	Mounts      []*ContainerMount   `json:"mounts"`
 	PID         int                 `json:"pid,omitempty"`
 	StartedAt   string              `json:"startedAt,omitempty"`
@@ -350,6 +355,15 @@ type ContainerPort struct {
 	PrivatePort uint16 `json:"privatePort,omitempty"`
 	PublicPort  uint16 `json:"publicPort,omitempty"`
 	Type        string `json:"type,omitempty"`
+}
+
+// ContainerNetwork is the per-endpoint subset of
+// network.EndpointSettings operators care about: the network name, the
+// IPv4 and the IPv6 the container has on that network.
+type ContainerNetwork struct {
+	Name     string `json:"name"`
+	IP       string `json:"ip,omitempty"`
+	IPv6     string `json:"ipv6,omitempty"`
 }
 
 type ContainerMount struct {
@@ -427,6 +441,18 @@ func newContainerSummary(c *container.Summary) *Container {
 			Type:        p.Type,
 		})
 	}
+	if c.NetworkSettings != nil {
+		for name, ep := range c.NetworkSettings.Networks {
+			if ep == nil {
+				continue
+			}
+			ctr.Networks = append(ctr.Networks, &ContainerNetwork{
+				Name: name,
+				IP:   ep.IPAddress,
+				IPv6: ep.GlobalIPv6Address,
+			})
+		}
+	}
 	for _, m := range c.Mounts {
 		ctr.Mounts = append(ctr.Mounts, newContainerMount(m))
 	}
@@ -470,6 +496,18 @@ func newContainerDetail(c *container.InspectResponse) *Container {
 	}
 	for _, m := range c.Mounts {
 		ctr.Mounts = append(ctr.Mounts, newContainerMount(m))
+	}
+	if c.NetworkSettings != nil {
+		for name, ep := range c.NetworkSettings.Networks {
+			if ep == nil {
+				continue
+			}
+			ctr.Networks = append(ctr.Networks, &ContainerNetwork{
+				Name: name,
+				IP:   ep.IPAddress,
+				IPv6: ep.GlobalIPv6Address,
+			})
+		}
 	}
 	if c.HostConfig != nil {
 		r := c.HostConfig.Resources

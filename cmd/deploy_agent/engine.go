@@ -290,3 +290,20 @@ func pullImageRaw(ctx context.Context, cli *client.Client, ref string) error {
 	}
 	return nil
 }
+
+// imageExists reports whether the Docker daemon already has the given
+// reference cached locally. Used as a fallback after ImagePull fails:
+// operators who build the image on the host (e.g. `docker build -t
+// swirl:standalone .`) never push it to a registry, so ImagePull is
+// guaranteed to return "access denied" / "not found" for them — but
+// the image is perfectly usable. Returning `true` here lets the deploy
+// proceed against the cached local tag.
+func imageExists(ctx context.Context, cli *client.Client, ref string) bool {
+	if ref == "" {
+		return false
+	}
+	if _, _, err := cli.ImageInspectWithRaw(ctx, ref); err != nil {
+		return false
+	}
+	return true
+}

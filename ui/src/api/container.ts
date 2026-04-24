@@ -19,6 +19,11 @@ export interface Container {
         publicPort: number;
         type: string;
     }[];
+    networks?: {
+        name: string;
+        ip?: string;
+        ipv6?: string;
+    }[];
     mounts?: {
         type: string;
         name: string;

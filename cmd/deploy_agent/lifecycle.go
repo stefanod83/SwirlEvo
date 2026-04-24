@@ -96,7 +96,7 @@ func runDeploy(ctx context.Context, j *biz.SelfDeployJob, sw *stateWriter) error
 	sw.SetPhase(biz.SelfDeployPhasePulling)
 	sw.Logf("pulling image %s", j.TargetImageTag)
 	pullBudget := splitPullBudget(timeout)
-	if err := pullImage(deployCtx, cli, j.TargetImageTag, pullBudget); err != nil {
+	if err := pullImage(deployCtx, cli, j.TargetImageTag, pullBudget, sw); err != nil {
 		return handleDeployFailure(deployCtx, cli, j, sw, logger, originalName, fmt.Errorf("image pull: %w", err))
 	}
 
@@ -255,10 +255,38 @@ func removePrevious(ctx context.Context, cli *client.Client) error {
 	return removeContainer(ctx, cli, previousContainerName)
 }
 
-func pullImage(ctx context.Context, cli *client.Client, ref string, budget time.Duration) error {
+// pullImage attempts a registry pull, then falls back to the local
+// image cache if the pull fails.
+//
+// Rationale: operators often self-deploy against an image they built
+// locally (`docker build -t swirl:custom .`) and never pushed to a
+// registry. For those tags ImagePull ALWAYS fails with "access denied"
+// / "repository does not exist" — there is no upstream to query. But
+// the image is perfectly usable as-is. On pull failure we probe the
+// daemon's image store; if the ref is cached locally we log a warning
+// and continue the deploy against the cached copy.
+//
+// Operators pulling from a real registry still get fresh images on
+// every deploy — the fallback only triggers when the pull itself
+// errors out.
+func pullImage(ctx context.Context, cli *client.Client, ref string, budget time.Duration, sw *stateWriter) error {
 	pullCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	return pullImageRaw(pullCtx, cli, ref)
+	pullErr := pullImageRaw(pullCtx, cli, ref)
+	if pullErr == nil {
+		return nil
+	}
+	// Pull failed — check whether the image is already cached locally.
+	// Use the original (non-budgeted) context because ImageInspect is a
+	// sub-second call and we don't want to fail it if the pull budget
+	// was already exhausted.
+	if imageExists(ctx, cli, ref) {
+		if sw != nil {
+			sw.Logf("pull failed (%v); image is present locally, continuing with cached tag", pullErr)
+		}
+		return nil
+	}
+	return pullErr
 }
 
 func deployNew(ctx context.Context, cli *client.Client, projectName, composeYAML string, envVars map[string]string) error {

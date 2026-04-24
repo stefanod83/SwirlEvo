@@ -7,6 +7,11 @@
     the page picker. The older "remote" external-pagination pattern has
     been removed — see `ui/src/utils/data-table.ts` and
     `feedback_naive_ui_remote_sort.md` for the rationale.
+
+    Per-row action buttons have been replaced by a compact "Quick Actions"
+    column (logs / inspect / stats / console). Lifecycle actions (start,
+    stop, kill, restart, pause, resume, remove) live on the parent List
+    as bulk operations driven by the row-selection checkbox.
   -->
   <n-data-table
     remote
@@ -28,14 +33,14 @@
 <script setup lang="ts">
 import { h, computed, ref, watch } from "vue";
 import {
-  NDataTable, NButton, NButtonGroup, NIcon, NTooltip, NCheckbox, NSpace, NText,
-  useDialog, useMessage,
+  NDataTable, NButton, NButtonGroup, NIcon, NTooltip, NText, NTag,
 } from "naive-ui";
 import {
-  PlayOutline, StopOutline, RefreshOutline, PauseOutline,
-  FlashOffOutline, TrashOutline, EyeOutline,
+  DocumentTextOutline as LogsIcon,
+  InformationCircleOutline as InspectIcon,
+  PulseOutline as StatsIcon,
+  TerminalOutline as ConsoleIcon,
 } from "@vicons/ionicons5";
-import containerApi from "@/api/container";
 import type { Container } from "@/api/container";
 import { renderLink, renderTag } from "@/utils/render";
 import { useRouter } from "vue-router";
@@ -49,6 +54,10 @@ const props = defineProps<{
   showStackColumn?: boolean;
   selectable?: boolean;
   checkedKeys?: string[];
+  // When true the "Stats" quick-action is rendered (gated on the
+  // parent-side metrics-enabled check). Logs / Inspect / Console are
+  // always rendered because they are native Docker operations.
+  metricsEnabled?: boolean;
 }>()
 
 const emit = defineEmits<{
@@ -60,53 +69,50 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const router = useRouter()
-const dialog = useDialog()
-const message = useMessage()
 
-function actionButton(type: 'default' | 'error' | 'warning' | 'success' | 'info', iconCmp: any, tooltip: string, disabled: boolean, onClick: () => void) {
+function quickActionBtn(iconCmp: any, tooltip: string, onClick: () => void) {
   return h(NTooltip, { trigger: 'hover' }, {
-    trigger: () => h(NButton, { size: 'tiny', quaternary: true, type, disabled, onClick }, { icon: () => h(NIcon, null, { default: () => h(iconCmp) }) }),
+    trigger: () => h(NButton, {
+      size: 'tiny',
+      quaternary: true,
+      onClick,
+    }, { icon: () => h(NIcon, null, { default: () => h(iconCmp) }) }),
     default: () => tooltip,
-  })
-}
-
-async function runAction(fn: () => Promise<any>, msg: string) {
-  try { await fn(); message.success(msg); emit('refresh') }
-  catch (e: any) { message.error(e?.message || String(e)) }
-}
-
-function confirmDelete(c: Container) {
-  // Dedicated reactive flag per dialog — the checkbox writes to it and the
-  // positive-click handler reads it at submit time, so unchecked stays the
-  // safe default and the user has to opt in explicitly to dropping
-  // anonymous volumes. Named volumes are never touched by this flag; see
-  // docker.ContainerRemove comment.
-  const removeVolumes = ref(false)
-  dialog.warning({
-    title: t('buttons.delete'),
-    content: () => h(NSpace, { vertical: true, size: 8 }, {
-      default: () => [
-        h(NText, null, { default: () => t('prompts.delete') }),
-        h(NCheckbox, {
-          checked: removeVolumes.value,
-          'onUpdate:checked': (v: boolean) => { removeVolumes.value = v },
-        }, { default: () => t('prompts.remove_anonymous_volumes') }),
-        h(NText, { depth: 3, style: 'font-size:12px' }, {
-          default: () => t('tips.remove_anonymous_volumes'),
-        }),
-      ],
-    }),
-    positiveText: t('buttons.confirm'),
-    negativeText: t('buttons.cancel'),
-    onPositiveClick: () => runAction(
-      () => containerApi.delete(props.node, c.id, c.name, removeVolumes.value),
-      t('buttons.delete'),
-    ),
   })
 }
 
 function projectOf(c: Container): string {
   return c.labels?.find(l => l.name === 'com.docker.compose.project')?.value || ''
+}
+
+// Pick the first non-empty IPv4 endpoint from the container's network
+// list. Falls back to the legacy `ports[*].ip` entry when no explicit
+// network info is available (older backends).
+function primaryIp(c: Container): string {
+  const n = (c.networks || []).find(n => !!n.ip)
+  if (n?.ip) return n.ip
+  const p = (c.ports || []).find(p => !!p.ip && p.ip !== '0.0.0.0' && p.ip !== '::')
+  return p?.ip || ''
+}
+
+// Render the published ports column as a vertically-stacked list of
+// "<publicPort>:<privatePort>/<type>" pairs. Unpublished ports (no
+// publicPort) are omitted — the list is for "what's reachable from
+// outside the container" not the full exposed set.
+function renderPublishedPorts(c: Container) {
+  const pubs = (c.ports || [])
+    .filter(p => p.publicPort && p.privatePort)
+    // Dedup by (public, private, type) — Docker reports one entry per
+    // listen address (0.0.0.0 + ::) and we want to collapse them.
+    .reduce((acc, p) => {
+      const key = `${p.publicPort}:${p.privatePort}/${p.type || 'tcp'}`
+      if (!acc.find(a => a === key)) acc.push(key)
+      return acc
+    }, [] as string[])
+  if (pubs.length === 0) return h(NText, { depth: 3 }, { default: () => '—' })
+  return h('div', { style: 'display: flex; flex-direction: column; gap: 2px;' },
+    pubs.map(p => h(NTag, { size: 'tiny', bordered: false, type: 'info' }, { default: () => p }))
+  )
 }
 
 const allColumns = computed(() => {
@@ -175,21 +181,38 @@ function onPageSizeChange(s: number) {
 // result set.
 watch(() => props.data, () => { localPage.value = 1 })
 
+// Build the available state filter values (collected from the dataset so
+// we don't surface empty options). Naive UI's column-level filter renders
+// a dropdown above the state column with a checkbox list.
+const stateFilterOptions = computed(() => {
+  const set = new Set<string>()
+  for (const c of props.data || []) {
+    if (c.state) set.add(c.state)
+  }
+  return [...set].sort().map(s => ({ label: s, value: s }))
+})
+
 const columns = computed(() => {
   const base: any[] = [
     {
       title: t('fields.state'),
       key: "state",
       fixed: "left" as const,
-      width: 90,
+      filter: stateFilterOptions.value.length
+        ? ((value: any, row: Container) => row.state === value)
+        : undefined,
+      filterOptions: stateFilterOptions.value.length
+        ? stateFilterOptions.value
+        : undefined,
+      filterMultiple: true,
       sorter: (a: Container, b: Container) => (a.state || '').localeCompare(b.state || ''),
       render(c: Container) {
         // Healthcheck-aware state tag:
-        //   healthy   → green   (container passing its healthcheck)
-        //   running   → green   (running but no healthcheck)
+        //   healthy   → green   (running + healthcheck passing)
+        //   running   → green   (running, no healthcheck)
         //   starting  → warning (healthcheck warm-up window)
         //   paused    → warning
-        //   unhealthy → red     (healthcheck failing)
+        //   unhealthy → red
         //   everything else (exited, dead, …) → red
         let type: 'success' | 'warning' | 'error' = 'error'
         switch (c.state) {
@@ -201,7 +224,7 @@ const columns = computed(() => {
             type = 'warning'; break
         }
         return renderTag(c.state, type as any)
-      }
+      },
     },
     {
       title: t('fields.name'),
@@ -209,14 +232,41 @@ const columns = computed(() => {
       sorter: (a: Container, b: Container) => (a.name || '').localeCompare(b.name || ''),
       render: (c: Container) => {
         const node = c.labels?.find(l => l.name === 'com.docker.swarm.node.id')
-        const name = c.name.length > 32 ? c.name.substring(0, 32) + '...' : c.name
-        return renderLink({ name: 'container_detail', params: { id: c.id, node: node?.value || props.node || '-' } }, name)
+        // Manual truncation instead of `ellipsis: { tooltip: true }`.
+        // Ellipsis requires a column width to kick in, and giving Name
+        // a width in a `scroll-x="max-content"` table alongside a
+        // fixed-left `state` column collapses the rest of the layout
+        // (see feedback_naive_ui_fixed_ellipsis_layout.md).
+        const name = c.name && c.name.length > 32
+          ? c.name.substring(0, 32) + '…'
+          : c.name
+        return renderLink(
+          { name: 'container_detail', params: { id: c.id, node: node?.value || props.node || '-' } },
+          name,
+        )
       },
     },
     {
-      title: t('objects.image'),
-      key: "image",
-      sorter: (a: Container, b: Container) => (a.image || '').localeCompare(b.image || ''),
+      title: t('fields.quick_actions'),
+      key: "quick_actions",
+      render: (c: Container) => {
+        const node = c.labels?.find(l => l.name === 'com.docker.swarm.node.id')?.value
+          || props.node || '-'
+        const goTab = (tab: string) => router.push({
+          name: 'container_detail',
+          params: { id: c.id, node },
+          query: { tab },
+        })
+        const buttons = [
+          quickActionBtn(LogsIcon, t('fields.logs'), () => goTab('logs')),
+          quickActionBtn(InspectIcon, t('fields.inspect'), () => goTab('detail')),
+        ]
+        if (props.metricsEnabled) {
+          buttons.push(quickActionBtn(StatsIcon, t('fields.stats'), () => goTab('stats')))
+        }
+        buttons.push(quickActionBtn(ConsoleIcon, t('fields.execute'), () => goTab('exec')))
+        return h(NButtonGroup, null, { default: () => buttons })
+      },
     },
   ]
   if (props.showStackColumn) {
@@ -233,9 +283,13 @@ const columns = computed(() => {
   }
   base.push(
     {
-      title: t('fields.status'),
-      key: "status",
-      sorter: (a: Container, b: Container) => (a.status || '').localeCompare(b.status || ''),
+      title: t('objects.image'),
+      key: "image",
+      sorter: (a: Container, b: Container) => (a.image || '').localeCompare(b.image || ''),
+      render: (c: Container) => {
+        const img = c.image || ''
+        return img.length > 60 ? img.substring(0, 60) + '…' : img
+      },
     },
     {
       title: t('fields.created_at'),
@@ -243,39 +297,20 @@ const columns = computed(() => {
       sorter: (a: Container, b: Container) => (a.createdAt || '').localeCompare(b.createdAt || ''),
     },
     {
-      title: t('fields.actions'),
-      key: "actions",
-      width: 260,
-      render(c: Container) {
-        // State is healthcheck-aware (see deriveContainerState in biz/
-        // container.go): a running container can appear as "healthy",
-        // "unhealthy" or "starting" instead of "running". All four are
-        // variants of "alive" for the purpose of action gating —
-        // Start must be disabled, Stop/Restart/Kill enabled, etc.
-        const runningLike = c.state === 'running'
-          || c.state === 'healthy'
-          || c.state === 'unhealthy'
-          || c.state === 'starting'
-        const paused = c.state === 'paused'
-        const alive = runningLike || paused
-        const buttons = [
-          actionButton('success', PlayOutline, t('buttons.start'), alive,
-            () => runAction(() => containerApi.start(props.node, c.id, c.name), t('buttons.start'))),
-          actionButton('warning', StopOutline, t('buttons.stop'), !alive,
-            () => runAction(() => containerApi.stop(props.node, c.id, c.name), t('buttons.stop'))),
-          actionButton('info', RefreshOutline, t('buttons.restart'), !runningLike,
-            () => runAction(() => containerApi.restart(props.node, c.id, c.name), t('buttons.restart'))),
-          actionButton('warning', PauseOutline, paused ? t('buttons.unpause') : t('buttons.pause'), !alive,
-            () => runAction(() => paused ? containerApi.unpause(props.node, c.id, c.name) : containerApi.pause(props.node, c.id, c.name), paused ? t('buttons.unpause') : t('buttons.pause'))),
-          actionButton('error', FlashOffOutline, t('buttons.kill'), !runningLike,
-            () => runAction(() => containerApi.kill(props.node, c.id, c.name), t('buttons.kill'))),
-          actionButton('default', EyeOutline, t('buttons.view'), false,
-            () => router.push({ name: 'container_detail', params: { id: c.id, node: props.node || '-' } })),
-          actionButton('error', TrashOutline, t('buttons.delete'), alive, () => confirmDelete(c)),
-        ]
-        return h(NButtonGroup, null, { default: () => buttons })
+      title: t('fields.ip_address'),
+      key: "ip",
+      sorter: (a: Container, b: Container) => primaryIp(a).localeCompare(primaryIp(b)),
+      render: (c: Container) => {
+        const ip = primaryIp(c)
+        if (!ip) return h(NText, { depth: 3 }, { default: () => '—' })
+        return h('code', { style: 'font-size: 12px;' }, ip)
       },
-    }
+    },
+    {
+      title: t('fields.published_ports'),
+      key: "ports",
+      render: (c: Container) => renderPublishedPorts(c),
+    },
   )
   return base
 })
