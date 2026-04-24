@@ -999,6 +999,17 @@ export default {
         "overrides_empty": "Nessun override personalizzato.",
         "add_override": "Aggiungi override"
     },
+    "password": {
+        "symbols": "Inserisci carattere speciale",
+        "generate": "Genera password robusta",
+        "copy": "Copia negli appunti",
+        "copied": "Password copiata negli appunti.",
+        "copy_failed": "Copia fallita — il browser ha bloccato l'accesso agli appunti.",
+        "weak": "Debole",
+        "fair": "Sufficiente",
+        "good": "Buona",
+        "strong": "Forte"
+    },
     "stack_version": {
         "pick_hint": "Seleziona una versione precedente per confrontarla e ripristinarla",
         "loading": "Caricamento storico…",

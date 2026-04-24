@@ -993,6 +993,17 @@ export default {
         "overrides_empty": "没有自定义覆盖。",
         "add_override": "添加覆盖"
     },
+    "password": {
+        "symbols": "插入特殊字符",
+        "generate": "生成强密码",
+        "copy": "复制到剪贴板",
+        "copied": "密码已复制到剪贴板。",
+        "copy_failed": "复制失败 — 浏览器阻止了剪贴板访问。",
+        "weak": "弱",
+        "fair": "一般",
+        "good": "良好",
+        "strong": "强"
+    },
     "stack_version": {
         "pick_hint": "选择历史版本以进行对比或恢复",
         "loading": "正在加载历史…",

@@ -21,10 +21,9 @@
           <n-input :placeholder="t('fields.login_name')" v-model:value="user.loginName" />
         </n-form-item-gi>
         <n-form-item-gi :label="t('fields.password')" path="password" v-if="!user.id && user.type === 'internal'">
-          <n-input
-            type="password"
+          <PasswordInput
             :placeholder="t('fields.password')"
-            v-model:value="user.password"
+            v-model="user.password"
           />
         </n-form-item-gi>
         <n-form-item-gi
@@ -32,10 +31,9 @@
           path="passwordConfirm"
           v-if="!user.id && user.type === 'internal'"
         >
-          <n-input
-            type="password"
+          <PasswordInput
             :placeholder="t('fields.password_confirm')"
-            v-model:value="user.passwordConfirm"
+            v-model="user.passwordConfirm"
           />
         </n-form-item-gi>
         <n-form-item-gi :label="t('fields.email')" path="email">
@@ -149,6 +147,7 @@ import {
   CopyOutline as CopyIcon,
 } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
+import PasswordInput from "@/components/PasswordInput.vue";
 import { useRoute } from "vue-router";
 import { router } from "@/router/router";
 import userApi from "@/api/user";

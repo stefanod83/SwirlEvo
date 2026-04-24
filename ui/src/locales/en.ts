@@ -999,6 +999,17 @@ export default {
         "overrides_empty": "No custom overrides.",
         "add_override": "Add override"
     },
+    "password": {
+        "symbols": "Insert special character",
+        "generate": "Generate strong password",
+        "copy": "Copy to clipboard",
+        "copied": "Password copied to clipboard.",
+        "copy_failed": "Copy failed — your browser blocked clipboard access.",
+        "weak": "Weak",
+        "fair": "Fair",
+        "good": "Good",
+        "strong": "Strong"
+    },
     "stack_version": {
         "pick_hint": "Select a previous version to diff and restore",
         "loading": "Loading history…",

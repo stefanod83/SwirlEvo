@@ -106,17 +106,14 @@
               />
             </n-form-item-gi>
             <n-form-item-gi first path="new" :label="t('fields.password_new')">
-              <n-input
-                v-model:value="password.new"
-                type="password"
+              <PasswordInput
+                v-model="password.new"
                 :placeholder="t('fields.password_new')"
               />
             </n-form-item-gi>
             <n-form-item-gi first path="confirm" :label="t('fields.password_confirm')">
-              <n-input
-                :disabled="!password.new"
-                v-model:value="password.confirm"
-                type="password"
+              <PasswordInput
+                v-model="password.confirm"
                 :placeholder="t('fields.password_confirm')"
               />
             </n-form-item-gi>
@@ -204,6 +201,7 @@ import {
 } from "@vicons/ionicons5";
 import XPageHeader from "@/components/PageHeader.vue";
 import XPanel from "@/components/Panel.vue";
+import PasswordInput from "@/components/PasswordInput.vue";
 import userApi from "@/api/user";
 import type { User } from "@/api/user";
 import { useForm, emailRule, requiredRule, customRule, lengthRule } from "@/utils/form";

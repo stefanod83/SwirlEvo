@@ -18,19 +18,10 @@
           </n-input>
         </n-form-item>
         <n-form-item path="password" :label="t('fields.password')" first>
-          <n-input
-            round
-            v-model:value="model.password"
-            type="password"
+          <PasswordInput
+            v-model="model.password"
             :placeholder="t('fields.password')"
-            clearable
-          >
-            <template #prefix>
-              <n-icon>
-                <lock-closed-outline />
-              </n-icon>
-            </template>
-          </n-input>
+          />
         </n-form-item>
         <n-form-item path="name" :label="t('fields.username')">
           <n-input round v-model:value="model.name" :placeholder="t('fields.username')" clearable>
@@ -69,6 +60,7 @@ import { useRouter } from "vue-router";
 import { NForm, NFormItem, NInput, NButton, NIcon } from "naive-ui";
 import { PersonOutline, LockClosedOutline, MailOutline } from "@vicons/ionicons5";
 import systemApi from "@/api/system";
+import PasswordInput from "@/components/PasswordInput.vue";
 import { useIsMobile } from "@/utils";
 import { useForm, requiredRule, emailRule, passwordRule, lengthRule } from "@/utils/form";
 import { useI18n } from 'vue-i18n'
